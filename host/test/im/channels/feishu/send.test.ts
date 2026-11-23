@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { sendTextMessage, sendCardMessage } from '../../../../src/im/channels/feishu/send.ts'
+import { sendTextMessage } from '../../../../src/im/channels/feishu/send.ts'
 
 describe('Feishu send api', () => {
   const originalFetch = global.fetch
@@ -30,25 +30,6 @@ describe('Feishu send api', () => {
 
     expect(result.messageId).toBe('om_1')
     expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('sends card message and returns message id', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ code: 0, data: { message_id: 'om_2' } }),
-    })
-    global.fetch = fetchMock as any
-
-    const result = await sendCardMessage({
-      apiBaseUrl: 'https://open.feishu.cn',
-      botToken: 'token_1',
-      receiveIdType: 'chat_id',
-      receiveId: 'oc_1',
-      card: { schema: '2.0', config: { wide_screen_mode: true } },
-    })
-
-    expect(result.messageId).toBe('om_2')
   })
 
   it('throws when feishu returns non-zero code', async () => {

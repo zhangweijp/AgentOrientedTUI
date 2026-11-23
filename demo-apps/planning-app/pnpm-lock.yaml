@@ -5,7 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@aotui/runtime': link:../../runtime
   '@aotui/sdk': link:../../sdk
   picomatch@4.0.3: 4.0.4
   rollup: ^4.60.1
@@ -14,9 +13,6 @@ importers:
 
   .:
     dependencies:
-      '@aotui/runtime':
-        specifier: link:../../runtime
-        version: link:../../runtime
       '@aotui/sdk':
         specifier: link:../../sdk
         version: link:../../sdk

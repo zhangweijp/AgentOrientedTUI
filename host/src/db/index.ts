@@ -13,7 +13,7 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import type { Topic, Project } from '../types.js';
-import { createMessagesV2Table } from '../db-v2.js';
+import { createMessagesTable } from './messages.js';
 import { createLLMConfigsTable } from './llm-config-db.js';
 import { isIMSessionKey } from '../im/routing.js';
 
@@ -50,21 +50,22 @@ export async function initDatabase(): Promise<Database> {
         SQL = await initSqlJs();
     }
 
-    // 3. Load Data from Disk (if exists) or Create New
     const exists = existsSync(dbFile);
-    if (exists) {
-        const buffer = readFileSync(dbFile);
-        db = new SQL.Database(buffer);
-        console.log('[DB] WASM Database loaded from disk:', dbFile);
-    } else {
-        db = new SQL.Database();
-        console.log('[DB] New WASM Database created in memory');
-        initSchema(); // Only init schema for new DB
+    const opened = exists ? new SQL.Database(readFileSync(dbFile)) : new SQL.Database();
+    try {
+        initSchema(opened);
+        // CREATE IF NOT EXISTS leaves the columns of existing tables intact.
+        opened.exec(`
+            SELECT project_id, model_override, prompt_override, agent_id, source_controls, context_compaction_controls
+            FROM topics LIMIT 0;
+            SELECT account_id, source_controls FROM im_sessions LIMIT 0;
+        `);
+        if (!exists) writeFileSync(dbFile, opened.export());
+    } catch (cause) {
+        opened.close();
+        throw new Error(`Unable to initialize the current Host database at ${dbFile}. Use a current database or a new DB_PATH.`, { cause });
     }
-
-    // 4. Run Migrations (Safe to run multiple times)
-    migrateSchema();
-    if (!exists) saveToDisk();
+    db = opened;
 
     return db;
 }
@@ -79,7 +80,7 @@ function saveToDisk() {
 }
 
 /**
- * Export saveToDisk for use by other modules (e.g., MessageServiceV2)
+ * Export saveToDisk for use by other modules (e.g., MessageService)
  */
 export function persistDatabase(): void {
     saveToDisk();
@@ -88,9 +89,7 @@ export function persistDatabase(): void {
 /**
  * Initialize Tables
  */
-function initSchema() {
-    if (!db) return;
-
+function initSchema(db: Database) {
     db.run(`
         CREATE TABLE IF NOT EXISTS topics (
             id TEXT PRIMARY KEY,
@@ -98,10 +97,6 @@ function initSchema() {
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'hot',
-            -- Chat App Enhancement Fields
-            summary TEXT DEFAULT NULL,
-            stage TEXT DEFAULT NULL,
-            last_snapshot_time INTEGER DEFAULT NULL,
             project_id TEXT REFERENCES projects(id),
             model_override TEXT DEFAULT NULL,
             prompt_override TEXT DEFAULT NULL,
@@ -146,150 +141,8 @@ function initSchema() {
             created_at INTEGER NOT NULL
         );
     `);
-    createMessagesV2Table(db);
-}
-
-/**
- * Migrate Schema (Add new columns/tables)
- */
-function migrateSchema() {
-    if (!db) return;
-
-    // [LLM Configs] Create llm_configs table
-    console.log('[DB] Ensuring llm_configs table exists...');
+    createMessagesTable(db);
     createLLMConfigsTable(db);
-
-    createMessagesV2Table(db);
-
-    console.log('[DB] Ensuring im_messages table exists...');
-    db.run(`
-        CREATE TABLE IF NOT EXISTS im_messages (
-            id TEXT PRIMARY KEY,
-            session_key TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp INTEGER NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_im_messages_session_key ON im_messages(session_key);
-        CREATE INDEX IF NOT EXISTS idx_im_messages_timestamp ON im_messages(timestamp);
-    `);
-
-    console.log('[DB] Ensuring im_sessions table exists...');
-    db.run(`
-        CREATE TABLE IF NOT EXISTS im_sessions (
-            session_key TEXT PRIMARY KEY,
-            agent_id TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            chat_type TEXT NOT NULL,
-            peer_id TEXT NOT NULL,
-            account_id TEXT DEFAULT NULL,
-            source_controls TEXT DEFAULT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            last_access_time INTEGER NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_im_sessions_updated_at ON im_sessions(updated_at);
-        CREATE INDEX IF NOT EXISTS idx_im_sessions_channel ON im_sessions(channel);
-    `);
-
-    const imSessionColumns = db.exec('PRAGMA table_info(im_sessions)')[0]?.values;
-    if (!imSessionColumns?.some(column => column[1] === 'source_controls')) {
-        db.run('ALTER TABLE im_sessions ADD COLUMN source_controls TEXT DEFAULT NULL');
-        saveToDisk();
-    }
-
-    // [RFC-025] Add Projects table
-    db.run(`
-        CREATE TABLE IF NOT EXISTS projects (
-            id TEXT PRIMARY KEY,
-            path TEXT NOT NULL,
-            name TEXT NOT NULL,
-            last_opened_at INTEGER,
-            created_at INTEGER NOT NULL
-        );
-    `);
-
-    // [RFC-025] Add project_id to topics
-    try {
-        // Check if column exists
-        const result = db.exec("SELECT project_id FROM topics LIMIT 1");
-    } catch (e) {
-        // Column doesn't exist, add it
-        console.log('[DB] Migrating: Adding project_id to topics table');
-        try {
-            db.run("ALTER TABLE topics ADD COLUMN project_id TEXT REFERENCES projects(id)");
-            saveToDisk();
-        } catch (alterError) {
-            console.error('[DB] Migration failed:', alterError);
-        }
-    }
-
-    // Topic model override
-    try {
-        db.exec("SELECT model_override FROM topics LIMIT 1");
-    } catch {
-        console.log('[DB] Migrating: Adding model_override to topics table');
-        try {
-            db.run("ALTER TABLE topics ADD COLUMN model_override TEXT DEFAULT NULL");
-            saveToDisk();
-        } catch (alterError) {
-            console.error('[DB] Migration failed:', alterError);
-        }
-    }
-
-    // Topic prompt override
-    try {
-        db.exec("SELECT prompt_override FROM topics LIMIT 1");
-    } catch {
-        console.log('[DB] Migrating: Adding prompt_override to topics table');
-        try {
-            db.run("ALTER TABLE topics ADD COLUMN prompt_override TEXT DEFAULT NULL");
-            saveToDisk();
-        } catch (alterError) {
-            console.error('[DB] Migration failed:', alterError);
-        }
-    }
-
-    // Topic agent override
-    try {
-        db.exec("SELECT agent_id FROM topics LIMIT 1");
-    } catch {
-        console.log('[DB] Migrating: Adding agent_id to topics table');
-        try {
-            db.run("ALTER TABLE topics ADD COLUMN agent_id TEXT DEFAULT NULL");
-            saveToDisk();
-        } catch (alterError) {
-            console.error('[DB] Migration failed:', alterError);
-        }
-    }
-
-    // Topic source controls snapshot
-    try {
-        db.exec("SELECT source_controls FROM topics LIMIT 1");
-    } catch {
-        console.log('[DB] Migrating: Adding source_controls to topics table');
-        try {
-            db.run("ALTER TABLE topics ADD COLUMN source_controls TEXT DEFAULT NULL");
-            saveToDisk();
-        } catch (alterError) {
-            console.error('[DB] Migration failed:', alterError);
-        }
-    }
-
-    // Topic context compaction controls snapshot
-    try {
-        db.exec("SELECT context_compaction_controls FROM topics LIMIT 1");
-    } catch {
-        console.log('[DB] Migrating: Adding context_compaction_controls to topics table');
-        try {
-            db.run("ALTER TABLE topics ADD COLUMN context_compaction_controls TEXT DEFAULT NULL");
-            saveToDisk();
-        } catch (alterError) {
-            console.error('[DB] Migration failed:', alterError);
-        }
-    }
 }
 
 /**
@@ -313,9 +166,6 @@ function rowToTopic(row: any): Topic {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         status: row.status,
-        summary: row.summary ?? undefined,
-        stage: row.stage ?? undefined,
-        lastSnapshotTime: row.last_snapshot_time ?? undefined,
         projectId: row.project_id ?? undefined,
         modelOverride: row.model_override ?? undefined,
         promptOverride: row.prompt_override ?? undefined,
@@ -378,11 +228,11 @@ function queryOne<T>(sql: string, params: any[] = [], mapper: (row: any) => T): 
 export function createTopic(topic: Topic): void {
     const db = getDb();
     db.run(`
-        INSERT INTO topics (id, title, created_at, updated_at, status, summary, stage, last_snapshot_time, project_id, model_override, prompt_override, agent_id, source_controls, context_compaction_controls)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO topics (id, title, created_at, updated_at, status, project_id, model_override, prompt_override, agent_id, source_controls, context_compaction_controls)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
         topic.id, topic.title, topic.createdAt, topic.updatedAt, topic.status,
-        topic.summary ?? null, topic.stage ?? null, topic.lastSnapshotTime ?? null, topic.projectId ?? null,
+        topic.projectId ?? null,
         topic.modelOverride ?? null, topic.promptOverride ?? null, topic.agentId ?? null, topic.sourceControls ? JSON.stringify(topic.sourceControls) : null,
         topic.contextCompaction ? JSON.stringify(topic.contextCompaction) : null
     ]);
@@ -406,9 +256,6 @@ export function updateTopic(id: string, updates: Partial<Topic>): void {
     if (updates.title !== undefined) { fields.push('title = ?'); values.push(updates.title); }
     if (updates.updatedAt !== undefined) { fields.push('updated_at = ?'); values.push(updates.updatedAt); }
     if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status); }
-    if (updates.summary !== undefined) { fields.push('summary = ?'); values.push(updates.summary); }
-    if (updates.stage !== undefined) { fields.push('stage = ?'); values.push(updates.stage); }
-    if (updates.lastSnapshotTime !== undefined) { fields.push('last_snapshot_time = ?'); values.push(updates.lastSnapshotTime); }
     if (updates.projectId !== undefined) { fields.push('project_id = ?'); values.push(updates.projectId); }
     if (updates.modelOverride !== undefined) { fields.push('model_override = ?'); values.push(updates.modelOverride); }
     if (updates.promptOverride !== undefined) { fields.push('prompt_override = ?'); values.push(updates.promptOverride); }

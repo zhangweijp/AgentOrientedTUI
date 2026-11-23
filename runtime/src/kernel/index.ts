@@ -1,42 +1,29 @@
-// [DIP FIX] Kernel now depends ONLY on interfaces from SPI, not concrete Engine classes
-import type {
-    IKernel,
-    DesktopID,
-    IDesktop,
-    IRuntimeContext, // New
-    ReinitializeDesktopAppsOptions,
-    ReinitializeDesktopAppsResult,
-} from '../spi/index.js';
-import type { IDesktopManager } from '../spi/runtime/desktop-manager.interface.js';
-
-import { AOTUIError } from '../spi/core/errors.js';
-import type { DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
+import type { DesktopID } from '@aotui/core';
+import { createDesktopId } from '../spi/core/id-factory.js';
+import type { IKernel, IDesktop, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../spi/runtime/kernel.interface.js';
+import { RUNTIME_DEFAULTS, type RuntimeConfig } from '../spi/config/index.js';
+import { Desktop } from '../engine/core/desktop.js';
+import { WorkerCapacity } from '../engine/app/worker-capacity.js';
+import type { StateStorageBackend } from '@aotui/core/internal';
+import { AOTUIError } from '@aotui/core';
+import type { DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
 import { appInstallFields, captureOptions } from '../engine/app/interaction-config.js';
 import { appInteractionUnavailable, type AppInteractionResult } from '../spi/runtime/app-interaction.interface.js';
-import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy } from '@aotui/core';
 
-/**
- * Kernel - The core orchestrator of the AOTUI Runtime.
- * 
- * Responsibilities:
- * - Creates and manages Desktop instances (via IDesktopManager)
- * - Exposes App instance interaction
- * - Manages Desktop lifecycle (create and close)
- * 
- */
 export class Kernel implements IKernel {
+    private readonly desktops = new Map<DesktopID, Desktop>();
+    private readonly workerCapacity: WorkerCapacity;
     private shutdownPromise: Promise<void> | null = null;
     private closing?: RuntimeCloseHandle;
     private readonly inFlight = new Set<Promise<unknown>>();
-    private managerClose?: RuntimeCloseHandle;
-    private managerReport?: RuntimeCloseReport;
-    private readonly lateDesktopCloses = new Set<DesktopCloseHandle>();
-    private shutdownDesktopIds?: Set<DesktopID>;
-    private readonly closingDesktops = new WeakSet<IDesktop>();
-    private closeState = newCloseState('runtime');
+    private readonly shutdownTargets = new Map<Desktop, DesktopCloseHandle | undefined>();
+    private readonly closeState = newCloseState('runtime');
 
-    constructor(private desktopManager: IDesktopManager) { }
+    constructor(private readonly config: RuntimeConfig = RUNTIME_DEFAULTS, private readonly storageBackend?: StateStorageBackend) {
+        this.workerCapacity = new WorkerCapacity(config.worker.maxWorkers);
+    }
 
     private assertRuntimeAvailable(): void {
         if (this.closing) throw new AOTUIError('RUNTIME_SHUTDOWN');
@@ -52,15 +39,12 @@ export class Kernel implements IKernel {
         catch (error) { release();reject(error); }
         void promise.catch(() => {});return promise;
     }
-    private isDesktopClosing(desktop: IDesktop): boolean {
-        return this.closingDesktops.has(desktop) || (desktop as IDesktop & { readonly isClosing?: boolean }).isClosing === true;
-    }
     private assertDesktopAvailable(desktop: IDesktop): void {
-        if (this.isDesktopClosing(desktop))
+        if (desktop.isClosing)
             throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
     }
     private acceptsDesktopDiagnostics(desktop: IDesktop, desktopId: DesktopID): boolean {
-        return !this.closing && this.desktopManager.get(desktopId) === desktop && !this.isDesktopClosing(desktop);
+        return !this.closing && this.desktops.get(desktopId) === desktop && !desktop.isClosing;
     }
 
     /**
@@ -72,19 +56,29 @@ export class Kernel implements IKernel {
      * Product Layer handles app discovery and installation.
      * 
      * @param desktopId - Optional: specify a custom Desktop ID (for historical topics)
-     * @param context - Optional: Runtime Context to inject into the Desktop
      * @returns The unique identifier of the created Desktop
      */
-    createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> { return this.business(() => this.createDesktopAccepted(desktopId, context)); }
-    private async createDesktopAccepted(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> {
-        this.assertRuntimeAvailable();
-        const id = await this.desktopManager.create(desktopId, context);
+    createDesktop(desktopId?: DesktopID): Promise<DesktopID> { return this.business(() => this.createDesktopAccepted(desktopId)); }
+    private async createDesktopAccepted(desktopId?: DesktopID): Promise<DesktopID> {
+        const desktop = await this.createDesktopInstance(desktopId);
         if (this.closing) {
-            const handle = this.beginDesktopShutdown(id);
-            if (!this.shutdownDesktopIds?.has(id)) this.lateDesktopCloses.add(handle);
-            await handle.completion;throw new AOTUIError('RUNTIME_SHUTDOWN');
+            await this.startDesktopShutdown(desktop)?.completion.catch(() => {});
+            throw new AOTUIError('RUNTIME_SHUTDOWN');
         }
-        return id;
+        this.assertDesktopAvailable(desktop);
+        return desktop.id;
+    }
+    private createDesktopInstance(id?: DesktopID): Desktop {
+        const key = id ?? createDesktopId();
+        if (this.desktops.has(key)) throw closeError('DESKTOP_ALREADY_EXISTS');
+        const desktop = new Desktop(key, {
+            runtimeConfig: this.config, workerCapacity: this.workerCapacity, storageBackend: this.storageBackend,
+            onResourcesReleased: released => {
+                if (this.desktops.get(key) === released) this.desktops.delete(key);
+            },
+        });
+        this.desktops.set(key, desktop);
+        return desktop;
     }
 
     /**
@@ -103,7 +97,7 @@ export class Kernel implements IKernel {
      * @throws {Error} E_NOT_FOUND if Desktop doesn't exist
      */
     getDesktop(desktopId: DesktopID): IDesktop {
-        const desktop = this.desktopManager.get(desktopId);
+        const desktop = this.desktops.get(desktopId);
         if (!desktop) {
             throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
         }
@@ -111,7 +105,7 @@ export class Kernel implements IKernel {
     }
 
     getAppInteraction(desktopId: DesktopID, appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult {
-        const desktop = this.desktopManager.get(desktopId);
+        const desktop = this.desktops.get(desktopId);
         const current = () => !!desktop && this.acceptsDesktopDiagnostics(desktop, desktopId);
         if (!current()) return appInteractionUnavailable();
         const create = desktop!.getAppInteraction;
@@ -137,10 +131,7 @@ export class Kernel implements IKernel {
         options?: Parameters<IKernel['installDynamicWorkerApp']>[2]
     ): Promise<string> {
         this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);
-        if (!desktop) {
-            throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
-        }
+        const desktop = this.getDesktop(desktopId);
         this.assertDesktopAvailable(desktop);
         return desktop.installDynamicWorkerApp(appModulePath, options);
     }
@@ -151,10 +142,7 @@ export class Kernel implements IKernel {
         options?: ReinitializeDesktopAppsOptions
     ): Promise<ReinitializeDesktopAppsResult> {
         this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);
-        if (!desktop) {
-            throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
-        }
+        const desktop = this.getDesktop(desktopId);
 
         this.assertDesktopAvailable(desktop);return desktop.reinitializeApps(options);
     }
@@ -167,37 +155,69 @@ export class Kernel implements IKernel {
     beginDesktopShutdown(desktopId: DesktopID, options?: ShutdownOptions): DesktopCloseHandle { return this.beginDesktopClose(desktopId, options); }
 
     private beginDesktopClose(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseHandle {
-        closeTimeout(options);const callback = options?.beforeClose, intent = options?.intent ?? 'close';
+        const desktop = this.desktops.get(desktopId);
+        if (desktop) return desktop.beginClose(options);
+        closeTimeout(options);
+        const callback = options?.beforeClose, intent = options?.intent ?? 'close';
         if (intent !== 'close' && intent !== 'delete' || callback !== undefined && typeof callback !== 'function') throw closeError('CLOSE_OPTIONS_INVALID');
-        const captured = this.desktopManager.get(desktopId);if (captured) this.closingDesktops.add(captured);
-        return this.desktopManager.beginDesktopShutdown(desktopId, options);
+        const state = newCloseState('desktop', intent);
+        state.state = 'settled';
+        const report: DesktopCloseReport = freezeClose({ ...snapshotClose(state), scope: 'desktop',
+            intent, desktopId: displayCloseId(desktopId), found: false });
+        return createCloseHandle(() => report, Promise.resolve(report));
+    }
+
+    private startDesktopShutdown(desktop: Desktop): DesktopCloseHandle | undefined {
+        if (this.shutdownTargets.has(desktop)) return this.shutdownTargets.get(desktop);
+        this.shutdownTargets.set(desktop, undefined);
+        try {
+            const handle = desktop.beginClose();
+            this.shutdownTargets.set(desktop, handle);
+            return handle;
+        } catch {
+            const state = this.closeState;
+            state.resourcesReleased = false;
+            state.desktops.accepted++;
+            state.desktops.settled++;
+            state.desktops.notVerifiedReleased++;
+            addCloseFailure(state, 'admission', ['DESKTOP_CLEANUP_FAILED'], { desktopId: desktop.id });
+        }
     }
 
     private report(): RuntimeCloseReport {
-        const state = structuredClone(this.closeState), manager = this.managerClose?.inspect() ?? this.managerReport;
-        if (manager) { mergeCloseReport(state, manager);state.workers = { ...manager.workers }; }
-        for (const handle of this.lateDesktopCloses) mergeCloseReport(state, handle.inspect());
+        const state = structuredClone(this.closeState);
+        for (const handle of this.shutdownTargets.values()) if (handle) mergeCloseReport(state, handle.inspect());
         state.pendingTasks = this.inFlight.size;
-        if (state.pendingTasks) state.resourcesReleased = false;
+        const workers = this.workerCapacity.getReport();
+        state.workers = { ownership: 'owned', report: workers };
+        state.resourcesReleased &&= state.pendingTasks === 0 && workers.state === 'closed';
         return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
     }
 
     beginShutdown(): RuntimeCloseHandle {
         if (this.closing) return this.closing;
-        this.shutdownDesktopIds = new Set(this.desktopManager.listDesktopIds());
         let complete!: (value: RuntimeCloseReport) => void;
         const completion = new Promise<RuntimeCloseReport>(resolve => { complete = resolve; });
         this.closing = createCloseHandle(() => this.report(), completion);
         // Snapshot accepted calls after synchronously stopping admission.
         const accepted = [...this.inFlight];
-        const managerTask = (async () => {
-            try { this.managerClose = this.desktopManager.beginShutdown();this.managerReport = await this.managerClose.completion;this.managerClose = undefined; }
-            catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED']); }
+        const capacity = this.workerCapacity.close();
+        for (const desktop of [...this.desktops.values()]) this.startDesktopShutdown(desktop);
+        void (async () => {
+            await Promise.allSettled([capacity, ...accepted]);
+            await Promise.all([...this.shutdownTargets].map(async ([desktop, handle]) => {
+                if (!handle) return;
+                try { await handle.completion; }
+                catch {
+                    this.closeState.resourcesReleased = false;
+                    addCloseFailure(this.closeState, 'admission', ['DESKTOP_CLEANUP_FAILED'], { desktopId: desktop.id });
+                }
+            }));
+            for (const handle of this.shutdownTargets.values()) if (handle) mergeCloseReport(this.closeState, handle.inspect());
+            this.shutdownTargets.clear();
+            this.closeState.state = 'settled';
+            complete(this.report());
         })();
-        void Promise.allSettled([managerTask, ...accepted]).then(results => {
-            if (results[0]?.status === 'rejected') { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED']); }
-            this.closeState.state = 'settled';complete(this.report());
-        });
         return this.closing;
     }
 

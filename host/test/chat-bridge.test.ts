@@ -45,21 +45,21 @@ describe('ChatBridge Host-only', () => {
 
     it('loads the first preview without a cached snapshot or a user message', async () => {
         const bridge = ChatBridge.getInstance();
-        const markup = '<desktop>Installed apps</desktop><application id="app_0" name="ide"></application>';
+        const preview = { applications: [{ installationId: 'app_0', name: 'ide', status: 'pending', views: [] }], diagnostics: [] };
         const create = vi.fn().mockResolvedValue({ id: topic.id });
-        const query = vi.fn().mockResolvedValue({ markup });
+        const query = vi.fn().mockResolvedValue(preview);
         const subscribe = vi.fn().mockReturnValue({ unsubscribe: vi.fn() });
         const notify = vi.fn();
         (bridge as any).getTrpcClient = () => ({ session: {
-            create: { mutate: create }, snapshot: { query }, events: { subscribe },
+            create: { mutate: create }, preview: { query }, events: { subscribe },
         } });
         bridge.subscribe(notify);
-        expect(bridge.getSnapshot(topic.id)).toBe('');
-        await bridge.requestSnapshot(topic.id);
+        expect(bridge.getDesktopPreview(topic.id)).toBeUndefined();
+        await bridge.requestDesktopPreview(topic.id);
         expect(create).toHaveBeenCalledWith({ id: topic.id, lazy: true });
         expect(query).toHaveBeenCalledWith({ id: topic.id });
         expect(subscribe).toHaveBeenCalledOnce();
-        expect(bridge.getSnapshot(topic.id)).toBe(markup);
+        expect(bridge.getDesktopPreview(topic.id)).toBe(preview);
         expect(notify).toHaveBeenCalledWith({ type: 'snapshot', topicId: topic.id });
     });
 

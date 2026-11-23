@@ -1,16 +1,17 @@
-import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
-import type { createRefCapture, RefCapture } from '@aotui/runtime/spi';
+import { sharedPreactContext } from '../context/shared-preact-context.js';
+import type { createRefCapture } from '@aotui/core';
+import type { CapturedPublication } from '../app-factory/refs.js';
 
 export interface RefRegistry {
     captureRef: ReturnType<typeof createRefCapture>;
-    registerRef(id: string, data: RefCapture, refType?: string): {
-        update(value: RefCapture): void;
+    registerRef(data: CapturedPublication): {
+        update(value: CapturedPublication): void;
         release(): void;
     };
 }
 
-export const ViewRuntimeContext = createContext<(RefRegistry & { readonly viewId: string }) | null>(null);
+export const ViewRuntimeContext = sharedPreactContext<RefRegistry & { readonly viewId: string }>('view');
 
 export function useRefRegistry(hook: 'useDataRef' | 'useArrayRef', refId: string): RefRegistry {
     const context = useContext(ViewRuntimeContext);

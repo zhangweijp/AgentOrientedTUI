@@ -5,33 +5,35 @@
  */
 
 import type { ModelMessage } from 'ai';
-import { AgentDriverV2, ModelInputError, type LLMConfig } from '@aotui/agent-driver-v2';
-import type { AppConfigEntry } from '@aotui/runtime';
-import type { IDesktop, IKernel } from '@aotui/runtime/spi';
+import { AgentDriverV2, ModelInputError, ProviderToolSchemaError, type LLMConfig, type MessageWithTimestamp } from '@aotui/agent-driver-v2';
+import { createDesktopId, type IDesktop, type IKernel } from '@aotui/runtime';
+import type { AppConfigEntry } from '../app-distribution/app-catalog.js';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import { readSemanticDesktopSnapshot } from './semantic-desktop-snapshot.js';
-import { MessageServiceV2 } from './message-service-v2.js';
+import { readDesktopPreview } from './desktop-preview.js';
+import { MessageService } from './message-service.js';
 import { Logger } from '../utils/logger.js';
 import { EventEmitter } from 'events';
 import { LLMConfigService } from './llm-config-service.js';
 import { SessionManagerV3 } from './session-manager-v3.js';
 import type { ModelRegistry } from '../services/model-registry.js';
-import type { GuiUpdateEvent } from '../types/session.js';
+import type { GuiUpdateEvent, ModelUsageEvent } from '../types/session.js';
 import type {
     CatalogSearchResponse,
-    CatalogSearchEntry,
     InstallAppOptions,
     InstallAppResult
 } from './desktop-manager.js';
 import { SystemPromptDrivenSource } from '../adapters/system-prompt-source.js';
 import { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import { McpDrivenSource } from '../mcp/source.js';
-import { IMSessionManager } from '../im/im-session-manager.js';
+import { IMSessionManager, type IMCreatedAgentDriver } from '../im/im-session-manager.js';
 import { IMDrivenSource } from '../im/im-driven-source.js';
 import type { IMInboundMessage } from '../im/types.js';
 import { appendIMMessage, listIMMessages, replaceIMMessages } from '../im/message-store.js';
 import { deleteIMSession, getIMSession, listIMSessions, upsertIMSession, type IMPersistedSession } from '../im/session-store.js';
 import { Config } from '../config/config.js';
+import { checkCloseTasks } from './desktop-close.js';
+import { PendingAppReceipts, type AppReceiptMessageQuery } from './pending-app-receipts.js';
+import type { ReceiptAccess } from '@aotui/runtime';
 import {
     applySourceControlsToSources,
     createSourceControlsFromAgent,
@@ -44,21 +46,23 @@ import {
 export class HostManagerV2 {
     private sessionManager: SessionManagerV3 | null = null;
     private imSessionManager: IMSessionManager | null = null;
-    private messageService: MessageServiceV2;
+    private messageService: MessageService;
     private currentTopicId: string;
     private logger: Logger;
-    private guiEventEmitter: EventEmitter;
+    private events: EventEmitter;
     private llmConfigService: LLMConfigService;
     private kernel: IKernel | null = null;
     private imRuntimeProvider: (() => unknown) | null = null;
+    private readonly imMessageIds = new WeakMap<MessageWithTimestamp, string>();
+    private readonly imAppReceipts = new WeakMap<object, { receipts: PendingAppReceipts; source: SemanticAOTUIDrivenSource }>();
 
     private desktopManager: import('./desktop-manager.js').DesktopManager | null = null;
 
     constructor(defaultTopicId: string, modelRegistry: ModelRegistry) {
         this.currentTopicId = defaultTopicId;
-        this.messageService = new MessageServiceV2();
+        this.messageService = new MessageService();
         this.logger = new Logger('HostManagerV2');
-        this.guiEventEmitter = new EventEmitter();
+        this.events = new EventEmitter();
         this.llmConfigService = new LLMConfigService(modelRegistry);
     }
 
@@ -86,30 +90,21 @@ export class HostManagerV2 {
         this.sessionManager.on('message', (event: GuiUpdateEvent) => {
             this.emitGuiUpdate(event);
         });
+        this.sessionManager.on('model-usage', (event: ModelUsageEvent) => this.events.emit('model-usage', event));
 
         this.imSessionManager = new IMSessionManager({
-            createDesktop: async ({ sessionKey, workspaceDirPath }) => {
-                const manager = this.requireDesktopManager();
-                const runtimeKernel = this.requireKernel();
-                const info = await manager.createDesktop(sessionKey as any, {
-                    workspaceDirPath,
-                });
-                const desktop = runtimeKernel.getDesktop(info.desktopId);
-                if (!desktop) {
-                    throw new Error(`Desktop not found for IM session: ${sessionKey}`);
-                }
-
-                const desktopWithDestroy = desktop as IDesktop & { destroy?: () => Promise<void> };
-                desktopWithDestroy.destroy = async () => {
-                    await manager.deleteDesktop(info.desktopId);
-                };
-                return desktopWithDestroy;
+            createDesktop: async sessionKey => {
+                const { desktop } = await this.requireDesktopManager().createDesktop(createDesktopId(sessionKey));
+                return desktop;
             },
             createSource: ({ sessionKey }) => new IMDrivenSource({
                 sessionKey,
-                loadHistory: async (key) => listIMMessages(key),
-                persistMessage: async (key, message) => appendIMMessage(key, message),
-                replaceHistory: async (key, messages) => replaceIMMessages(key, messages),
+                loadHistory: async (key) => listIMMessages(key).map(({ id, ...message }) => {
+                    this.imMessageIds.set(message, id);
+                    return message;
+                }),
+                persistMessage: (key, message) => { this.imMessageIds.set(message, appendIMMessage(key, message)); },
+                replaceHistory: async (key, messages) => replaceIMMessages(key, messages, this.imMessageIds),
             }),
             persistSession: async (session) => {
                 upsertIMSession(session);
@@ -117,14 +112,7 @@ export class HostManagerV2 {
             deletePersistedSession: async (sessionKey) => {
                 deleteIMSession(sessionKey);
             },
-            createAgentDriver: async ({ sessionKey, agentId, desktop, source }) => {
-                return this.createIMAgentDriver({
-                    sessionKey,
-                    agentId,
-                    desktop: desktop as IDesktop,
-                    source,
-                });
-            },
+            createAgentDriver: input => this.createIMAgentDriver(input),
         });
         
         // ✅ 修复: 不再提前创建 Session，等 GUI 连接时按需创建
@@ -158,25 +146,15 @@ export class HostManagerV2 {
             throw new Error('IMSessionManager not initialized. Call initAgentDriver first.');
         }
 
-        const session = await this.imSessionManager.ensureSession(message.sessionKey, message.agentId);
         const compactionPolicy = await this.resolveIMCompactionPolicy(message.agentId);
-        const fallbackCompaction = session.source.maybeCompactByThreshold
-            ? await session.source.maybeCompactByThreshold({
-                enabled: compactionPolicy.enabled,
-                maxContextTokens: compactionPolicy.hardFallbackThresholdTokens,
-                minMessages: compactionPolicy.minMessages,
-                keepRecentMessages: compactionPolicy.keepRecentMessages,
-                modelHint: compactionPolicy.modelHint,
-            })
-            : {
-                compacted: false,
-                syntheticMessages: [],
-                summary: '',
-                compactedMessageCount: 0,
-                cleanedToolResultCount: 0,
-                currentTokens: 0,
-                thresholdTokens: compactionPolicy.hardFallbackThresholdTokens,
-            };
+        const session = await this.imSessionManager.ensureSession(message.sessionKey, message.agentId);
+        const fallbackCompaction = await session.source.maybeCompactByThreshold({
+            enabled: compactionPolicy.enabled,
+            maxContextTokens: compactionPolicy.hardFallbackThresholdTokens,
+            minMessages: compactionPolicy.minMessages,
+            keepRecentMessages: compactionPolicy.keepRecentMessages,
+            modelHint: compactionPolicy.modelHint,
+        });
         if (fallbackCompaction.compacted) {
             for (const syntheticMessage of fallbackCompaction.syntheticMessages) {
                 this.emitGuiUpdate({
@@ -229,10 +207,7 @@ export class HostManagerV2 {
             throw new Error('SessionManager not initialized. Call initAgentDriver first.');
         }
         
-        const previous = this.sessionManager.getSession(topicId);
-        const session = await this.sessionManager.ensureSession(topicId);
-        // The Topic stream can outlive an idle/evicted Session; announce a replacement only after creation settles.
-        if (session !== previous) this.emitGuiUpdate({ topicId, type: 'snapshot' });
+        await this.sessionManager.ensureSession(topicId);
         this.logger.info('Session initialized for topic', { topicId });
     }
 
@@ -268,8 +243,17 @@ export class HostManagerV2 {
      * 监听 GUI 更新事件
      */
     onGuiUpdate(callback: (event: any) => void): () => void {
-        this.guiEventEmitter.on('gui-update', callback);
-        return () => this.guiEventEmitter.off('gui-update', callback);
+        this.events.on('gui-update', callback);
+        return () => this.events.off('gui-update', callback);
+    }
+
+    onModelUsage(listener: (event: ModelUsageEvent) => void): () => void {
+        const observe = async (event: ModelUsageEvent) => {
+            try { await listener(event); }
+            catch (error) { this.logger.warn('Model usage observer failed', { sessionId: event.sessionId, error }); }
+        };
+        this.events.on('model-usage', observe);
+        return () => this.events.off('model-usage', observe);
     }
 
     /**
@@ -287,8 +271,18 @@ export class HostManagerV2 {
         return getIMSession(sessionKey);
     }
 
-    getIMMessages(sessionKey: string): Array<{ role: string; content: unknown; timestamp: number }> {
+    getIMMessages(sessionKey: string): ReturnType<typeof listIMMessages> {
         return listIMMessages(sessionKey);
+    }
+
+    readIMAppReceipt(sessionKey: string, query: AppReceiptMessageQuery, timeoutMs?: number): Promise<ReceiptAccess> {
+        const session = this.imSessionManager?.getSession(sessionKey);
+        const binding = session && this.imAppReceipts.get(session.source);
+        if (!session || !binding) return Promise.resolve({ kind: 'unavailable', code: 'RECEIPT_LOCATOR_UNAVAILABLE',
+            message: 'The owning IM session is unavailable.' });
+        return binding.receipts.read(query, { desktop: session.desktop, kernel: this.requireKernel(),
+            isCurrent: () => this.imSessionManager?.getSession(sessionKey) === session,
+            isAppEnabled: installationId => binding.source.isAppEnabled(installationId) }, timeoutMs);
     }
 
     setIMRuntimeProvider(provider: (() => unknown) | null): void {
@@ -299,11 +293,8 @@ export class HostManagerV2 {
         return this.imRuntimeProvider ? this.imRuntimeProvider() : {};
     }
 
-    /**
-     * 获取指定 Topic 的最新 Snapshot（用于 GUI TUI View）
-     */
-    async getSnapshot(topicId: string): Promise<{ markup: string | null; structured?: unknown } | null> {
-        if (!this.sessionManager || !this.kernel) {
+    async getDesktopPreview(topicId: string) {
+        if (!this.sessionManager) {
             throw new Error('SessionManager not initialized. Call initAgentDriver first.');
         }
 
@@ -312,7 +303,7 @@ export class HostManagerV2 {
         if (!session || session.state === 'destroyed') {
             throw new Error(`Session not available for preview: ${topicId}`);
         }
-        return readSemanticDesktopSnapshot(session.desktop, this.kernel);
+        return readDesktopPreview(session.desktop);
     }
 
     /**
@@ -403,8 +394,8 @@ export class HostManagerV2 {
     }
 
     private emitGuiUpdate(event: GuiUpdateEvent): void {
-        console.log(`[HostManagerV2] Forward message: topic=${event.topicId}, type=${event.type}, listeners=${this.guiEventEmitter.listenerCount('gui-update')}`);
-        this.guiEventEmitter.emit('gui-update', {
+        console.log(`[HostManagerV2] Forward message: topic=${event.topicId}, type=${event.type}, listeners=${this.events.listenerCount('gui-update')}`);
+        this.events.emit('gui-update', {
             type: event.type,
             message: event.message,
             topicId: event.topicId,
@@ -418,13 +409,16 @@ export class HostManagerV2 {
         agentId: string;
         desktop: IDesktop;
         source: IMDrivenSource;
-    }): Promise<{ agentDriver: AgentDriverV2; sourceControls: SourceControlsSnapshot }> {
+    }): Promise<IMCreatedAgentDriver> {
         const { llmConfig, systemPrompt, sourceControls } = await this.resolveIMAgentConfig(input.agentId);
+        const { model: modelId, provider: { id: providerId } } = llmConfig;
         const systemPromptSource = new SystemPromptDrivenSource({
             systemPrompt,
         });
+        const receipts = new PendingAppReceipts();
         const aotuiSource = new SemanticAOTUIDrivenSource(input.desktop, this.requireKernel(), {
             includeInstruction: true,
+            onReceiptPending: (locator, result, subcallId) => receipts.remember(locator, result, subcallId),
         });
         const skillDrivenSource = new SkillDrivenSource();
         const mcpDrivenSource = new McpDrivenSource(new Set(sourceControls.mcp.allowedServers));
@@ -433,6 +427,7 @@ export class HostManagerV2 {
             mcpSource: mcpDrivenSource,
             skillSource: skillDrivenSource,
         });
+        const isCurrent = () => this.imSessionManager?.getSession(input.sessionKey)?.source === input.source;
 
         const agentDriver = new AgentDriverV2({
             sources: [
@@ -444,6 +439,7 @@ export class HostManagerV2 {
             ],
             llm: this.llmConfigService.withModelInputBudget(llmConfig),
             onAssistantMessage: (message) => {
+                if (!isCurrent()) return;
                 input.source.addMessage(message);
                 this.emitGuiUpdate({
                     topicId: input.sessionKey,
@@ -451,8 +447,12 @@ export class HostManagerV2 {
                     message,
                 });
             },
-            onToolResult: (message) => {
-                input.source.addMessage(message);
+            onToolResult: (message, results) => {
+                const available = isCurrent();
+                if (!available && !this.imSessionManager?.ownsSource(input.sessionKey, input.source)) return;
+                const saved = input.source.addMessage(message);
+                if (results) receipts.associate(this.imMessageIds.get(saved), results);
+                if (!available) return;
                 if (!agentDriver.hasPendingUpdate()) {
                     input.source.notifyUpdate();
                 }
@@ -463,6 +463,7 @@ export class HostManagerV2 {
                 });
             },
             onTextDelta: (delta) => {
+                if (!isCurrent()) return;
                 this.emitGuiUpdate({
                     topicId: input.sessionKey,
                     type: 'text_delta',
@@ -470,13 +471,19 @@ export class HostManagerV2 {
                 });
             },
             onReasoningDelta: (delta) => {
+                if (!isCurrent()) return;
                 this.emitGuiUpdate({
                     topicId: input.sessionKey,
                     type: 'reasoning_delta',
                     delta,
                 });
             },
+            onLLMUsage: (usage) => {
+                if (!isCurrent()) return;
+                this.events.emit('model-usage', { kind: 'im', sessionId: input.sessionKey, providerId, modelId, usage } satisfies ModelUsageEvent);
+            },
             onStateChange: (_oldState, newState) => {
+                if (!isCurrent()) return;
                 this.emitGuiUpdate({
                     topicId: input.sessionKey,
                     type: 'agent_state',
@@ -484,14 +491,23 @@ export class HostManagerV2 {
                 });
             },
             onRunError: (error) => {
-                this.handleIMAgentRunError(input.sessionKey, input.source, error);
+                if (isCurrent()) this.handleIMAgentRunError(input.sessionKey, input.source, error);
             },
         });
 
-        agentDriver.start();
+        this.imAppReceipts.set(input.source, { receipts, source: aotuiSource });
         return {
             agentDriver,
             sourceControls,
+            disposeSources: async () => {
+                try {
+                    const closed = await Promise.allSettled([agentDriver.closeToolTurn(), aotuiSource.dispose()]);
+                    checkCloseTasks(closed, 'IM_SESSION_COMPONENT_CLEANUP_FAILED');
+                } finally {
+                    this.imAppReceipts.delete(input.source);
+                    receipts.clear();
+                }
+            },
         };
     }
 
@@ -551,8 +567,9 @@ export class HostManagerV2 {
     private handleIMAgentRunError(sessionKey: string, source: IMDrivenSource, error: Error): void {
         const normalized = (error.message || 'Unknown error').toLowerCase();
         let userFacingMessage = `LLM 调用失败：${error.message || 'Unknown error'}\n请检查当前 Provider 配置或稍后重试。`;
+        const inputError = error instanceof ModelInputError || error instanceof ProviderToolSchemaError;
 
-        if (error instanceof ModelInputError) {
+        if (inputError) {
             userFacingMessage = error.message;
         } else if (
             normalized.includes('api key') ||
@@ -589,11 +606,11 @@ export class HostManagerV2 {
             metadata: {
                 isAgentError: true,
                 rawError: error.message,
-                ...(error instanceof ModelInputError ? { errorCategory: 'model_input', errorCode: error.code, errorDetails: error.details } : {}),
+                ...(inputError ? { errorCategory: 'model_input', errorCode: error.code, errorDetails: error.details } : {}),
             },
         } as unknown as ModelMessage;
 
-        if (!(error instanceof ModelInputError)) source.addMessage(assistantErrorMessage);
+        if (!inputError) source.addMessage(assistantErrorMessage);
         this.emitGuiUpdate({
             topicId: sessionKey,
             type: 'assistant',
@@ -623,13 +640,12 @@ Remember: You control the Desktop. The user communicates with you through applic
      * 清理资源
      */
     async dispose(): Promise<void> {
-        if (this.sessionManager) {
-            await this.sessionManager.cleanup();
-        }
-        if (this.imSessionManager) {
-            await this.imSessionManager.destroyAllSessions();
-        }
-        this.guiEventEmitter.removeAllListeners();
+        const results = await Promise.allSettled([
+            this.sessionManager?.cleanup(),
+            this.imSessionManager?.destroyAllSessions(),
+        ]);
+        this.events.removeAllListeners();
         this.logger.info('HostManagerV2 disposed');
+        checkCloseTasks(results, 'HOST_SESSION_CLEANUP_FAILED');
     }
 }

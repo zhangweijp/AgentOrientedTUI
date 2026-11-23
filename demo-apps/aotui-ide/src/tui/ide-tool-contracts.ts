@@ -41,6 +41,10 @@ async function hoverReceipt(owner: IDESession, file: IDEFile, args: Readonly<Typ
 }
 
 type FileDetailContext = { readonly owner: IDESession; readonly file: IDEFile; readonly diagnostics: boolean };
+
+export async function closeFileDetail(owner: IDESession, file: IDEFile): Promise<ToolResult> {
+    return receipt('close_file_detail', 'workspace', await owner.invoke('close_file_detail', {}, file.viewId));
+}
 const sessionReady = (owner: IDESession) => owner.live && owner.ready;
 const fileReady = ({ owner }: FileDetailContext) => sessionReady(owner);
 const workspaceReady = (owner: IDESession) => sessionReady(owner) && owner.roots.length > 0;
@@ -61,9 +65,9 @@ async function queryFile({ owner, file }: FileDetailContext, operation: string, 
     return fileReceipt(owner, operation, path, result, true);
 }
 
-export const RootType = defineViewType({ name: 'Root' });
+export const RootType = defineViewType({ name: 'Root', multiplicity: 'single', region: 'static' });
 
-export const WorkspaceType = defineViewType<IDESession>()({ name: 'Workspace', tools: {
+export const WorkspaceType = defineViewType<IDESession>()({ name: 'Workspace', multiplicity: 'single', region: 'dynamic', tools: {
         search_files_by_pattern: { description: 'Search authorized workspaces by glob pattern and show the current results in SearchResult.',
             inputSchema: Type.Object({ pattern: Type.String({ description: 'Glob pattern to search.' }), cwd: Type.Optional(Type.String({ description: 'Optional directory inside a workspace root.' })) }, closed),
             enabled: workspaceReady,
@@ -124,7 +128,7 @@ export const WorkspaceType = defineViewType<IDESession>()({ name: 'Workspace', t
 } });
 
 export const FileDetailType = defineViewType<FileDetailContext>()({
-    name: 'FileDetail',
+    name: 'FileDetail', multiplicity: 'multiple', region: 'dynamic', createId: ({ context }) => context.file.viewId,
     tools: {
         write_file: {
             description: 'Replace the contents of a currently loaded file after checking its disk identity and content.',
@@ -192,9 +196,7 @@ export const FileDetailType = defineViewType<FileDetailContext>()({
         close_file_detail: {
             description: 'Close this FileDetail View.',
             enabled: fileReady,
-            async execute({ context: { owner, file } }) {
-                return receipt('close_file_detail', 'workspace', await owner.invoke('close_file_detail', {}, file.viewId));
-            },
+            execute: ({ context: { owner, file } }) => closeFileDetail(owner, file),
         },
         read_loaded_diagnostics: {
             description: 'Read already loaded diagnostics for the selected opened file. This does not run or refresh the language server.',
@@ -205,7 +207,7 @@ export const FileDetailType = defineViewType<FileDetailContext>()({
 });
 
 export const SearchResultType = defineViewType<{ owner: IDESession; incarnation: number }>()({
-    name: 'SearchResult',
+    name: 'SearchResult', multiplicity: 'single', region: 'dynamic',
     tools: {
         close_search_view: {
             description: 'Close this SearchResult View.',
@@ -222,7 +224,7 @@ export const SearchResultType = defineViewType<{ owner: IDESession; incarnation:
 });
 
 export const WorkspaceCreateType = defineViewType<{ owner: IDESession; path: string }>()({
-    name: 'WorkspaceCreate',
+    name: 'WorkspaceCreate', multiplicity: 'multiple', region: 'dynamic',
     tools: {
         create_file_if_absent: {
             description: 'Create a file under the selected open workspace root. The relative path must stay inside it, its parent must exist, and existing files are never overwritten.',

@@ -1,7 +1,7 @@
-import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
-import type { ObservationGrant } from '../core/invocation/observation-types.js';
-import { DEFAULT_OBSERVATION_REGISTRY_LIMITS } from '../core/invocation/observation-registry.js';
-import { captureBoundedJson } from '../core/invocation/invocation-outcome.js';
+import type { AppInteractionPolicy } from '@aotui/core';
+import type { ObservationGrant } from '@aotui/core';
+import { DEFAULT_OBSERVATION_REGISTRY_LIMITS } from '@aotui/core/internal';
+import { captureBoundedJson } from '@aotui/core/internal';
 
 function fields(value: unknown, names: readonly string[]): boolean {
     if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;

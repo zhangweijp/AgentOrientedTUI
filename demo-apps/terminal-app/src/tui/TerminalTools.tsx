@@ -26,9 +26,9 @@ const loadMoreOutputInput = Type.Object({
 
 const closeTerminalInput = Type.Object({}, { additionalProperties: false });
 
-export const RootType = defineViewType({ name: 'Root' });
+export const RootType = defineViewType({ name: 'Root', multiplicity: 'single', region: 'static' });
 
-export const TerminalConsoleType = defineViewType<Pick<TerminalActions, 'onSendCommandNewTerminal'>>()({ name: 'TerminalConsole', tools: {
+export const TerminalConsoleType = defineViewType<Pick<TerminalActions, 'onSendCommandNewTerminal'>>()({ name: 'TerminalConsole', multiplicity: 'single', region: 'dynamic', tools: {
         new_terminal_and_send_command: { description: 'Create a terminal and start a shell command. Inspect the new Terminal View for output and completion.',
             inputSchema: newTerminalInput,
             async execute({ input: { command }, context: { onSendCommandNewTerminal } }) {
@@ -40,7 +40,7 @@ export const TerminalConsoleType = defineViewType<Pick<TerminalActions, 'onSendC
         },
 } });
 
-export const TerminalType = defineViewType<TerminalContext>()({ name: 'Terminal', tools: {
+export const TerminalType = defineViewType<TerminalContext>()({ name: 'Terminal', multiplicity: 'multiple', region: 'dynamic', createId: ({ context }) => context.terminal.id, tools: {
         send_command_to_exist_terminal: { description: 'Start a shell command in this Terminal. Read that Terminal View for output and completion.',
             inputSchema: sendCommandInput,
             enabled: ({ terminal }) => terminal.status !== 'running',

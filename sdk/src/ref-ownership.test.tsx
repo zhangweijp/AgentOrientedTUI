@@ -1,20 +1,20 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { preparedRefs } from './__tests__/projection-facts.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { describe, expect, it } from 'vitest';
-import { h, render } from 'preact';
+import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { useContext, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
-import { View } from './components/View.js';
+import { DynamicView } from './components/View.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
 import { useDataRef } from './hooks/useRef.js';
-import { createRefCapture } from '@aotui/runtime/spi';
 import { ViewRuntimeContext, type RefRegistry } from './contexts/view-runtime-context.js';
 
 import {defineViewType} from './tools/view-type-tool.js';
-const RecordType=defineViewType({name:'Record'});
-const WorkspaceType=defineViewType({name:'Workspace'});
+const RecordType=defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Record'});
+const WorkspaceType=defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Workspace'});
 function setup(component: () => any) {
   const factory = createTUIApp({ app_name: 'ref_ownership', viewTypes:[RecordType,WorkspaceType], component });
   const kernel = new AppKernel({ ...factory.kernelConfig, factory,
@@ -30,17 +30,17 @@ function setup(component: () => any) {
 }
 
 const refsOf = (kernel: AppKernel) => Object.fromEntries(
-  kernel.getViewRefs().map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]),
+  preparedRefs(kernel).map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]),
 );
 
 describe('Ref registration ownership', () => {
   it.each([
-    ['useDataRef', 'items', () => useDataRef('items', { private: 'RefPayload' })],
-    ['useArrayRef', 'unsafe\nlabel', () => useArrayRef('unsafe\nlabel', ['RefPayload'])],
+    ['useDataRef', 'items', () => useDataRef('items', { private: 'RefPayload' }, { scope: 'protected' })],
+    ['useArrayRef', 'unsafe\nlabel', () => useArrayRef('unsafe\nlabel', ['RefPayload'], { scope: 'protected' })],
   ] as const)('explains how to move %s into its View', async (hook, id, publish) => {
     const x = setup(function Page() {
       publish();
-      return h(View, { id: 'files', type: RecordType, kind: 'state' });
+      return h(DynamicView, { idPrefix: 'files', type: RecordType, });
     });
     try {
       let message;
@@ -66,24 +66,24 @@ describe('Ref registration ownership', () => {
       const [step, setStep] = useState(0);
       advance = setStep;
       const { captureRef, registerRef } = useContext(ViewRuntimeContext)!;
-      const capture = captureRef(values[step]);
+      const publication = { id: 'selected', scope: 'protected' as const, capture: captureRef(values[step]) };
       useLayoutEffect(() => {
         if (step === 0) {
-          first = registerRef('selected', capture);
-          expect(() => registerRef('selected', capture)).toThrow(expect.objectContaining({ code: 'REF_ALREADY_REGISTERED' }));
+          first = registerRef(publication);
+          expect(() => registerRef(publication)).toThrow(expect.objectContaining({ code: 'REF_ALREADY_REGISTERED' }));
         } else if (step === 1) {
-          first.update(capture);
+          first.update(publication);
         } else {
           first.release();
           first.release();
-          expect(() => first.update(capture)).toThrow('is no longer active');
-          successor = registerRef('selected', capture);
+          expect(() => first.update(publication)).toThrow('Invalid Ref binding');
+          successor = registerRef(publication);
           first.release();
         }
       });
       return null;
     }
-    const x = setup(() => h(View, { id: 'view', type: RecordType, kind: 'state' }, h(Content, {})));
+    const x = setup(() => h(DynamicView, { idPrefix: 'view', type: RecordType, }, h(Content, {})));
     try {
       await x.open();
       expect(refsOf(x.kernel)['view:selected']).toEqual(values[0]);
@@ -96,22 +96,22 @@ describe('Ref registration ownership', () => {
       await x.close();
     }
     expect(() => successor.release()).not.toThrow();
-    expect(x.kernel.getViewRefs()).toEqual([]);
+    expect(preparedRefs(x.kernel)).toEqual([]);
   });
 
   it('rejects duplicate declarations in real Preact when the later publisher keeps stable data', async () => {
     const firstValue = { id: 'first' };
     function FirstPublisher() {
-      useDataRef('selected', firstValue);
+      useDataRef('selected', firstValue, { scope: 'protected' });
       return null;
     }
     function SecondPublisher() {
       const stableValue = useMemo(() => ({ id: 'second' }), []);
-      useDataRef('selected', stableValue);
+      useDataRef('selected', stableValue, { scope: 'protected' });
       return null;
     }
     function App() {
-      return h(View, {kind: 'state', id: 'workspace', type: WorkspaceType }, [
+      return h(DynamicView, {idPrefix: 'workspace', type: WorkspaceType }, [
         h(FirstPublisher, { key: 'first' }),
         h(SecondPublisher, { key: 'second' }),
       ]);
@@ -119,7 +119,7 @@ describe('Ref registration ownership', () => {
 
     const x = setup(App);
     await expect(x.open()).rejects.toMatchObject({ code: 'REF_ALREADY_REGISTERED' });
-    expect(x.kernel.getViewRefs()).toEqual([]);
+    expect(preparedRefs(x.kernel)).toEqual([]);
     await x.close();
   });
 
@@ -129,10 +129,10 @@ describe('Ref registration ownership', () => {
       const [state, setState] = useState({ id: 'one', refId: 'selected' });
       update = value => setState(value);
       const value = useMemo(() => ({ id: state.id }), [state.id]);
-      useDataRef(state.refId, value);
+      useDataRef(state.refId, value, { scope: 'protected' });
       return null;
     }
-    const x = setup(() => h(View, {kind: 'state', id: 'workspace', type: WorkspaceType }, h(Content, {})));
+    const x = setup(() => h(DynamicView, {idPrefix: 'workspace', type: WorkspaceType }, h(Content, {})));
     await x.open();
     expect(refsOf(x.kernel)['workspace:selected']).toEqual({ id: 'one' });
 
@@ -148,33 +148,22 @@ describe('Ref registration ownership', () => {
     expect(refsOf(x.kernel)['workspace:renamed']).toBeUndefined();
 
     await x.close();
-    expect(x.kernel.getViewRefs()).toEqual([]);
+    expect(preparedRefs(x.kernel)).toEqual([]);
   });
 
-  it('releases all ArrayRef bindings if a later registration fails', () => {
-    const refs = new Map<string, object>();
-    const registry = {
-      captureRef: createRefCapture(),
-      registerRef(id: string, value: object) {
-        if (id === 'pending[1]') {
-          const error = new Error('controlled Ref registration failure');
-          Object.assign(error, { code: 'REF_ALREADY_REGISTERED' });
-          throw error;
-        }
-        const binding = { update(next: object) { refs.set(id, next); }, release() { refs.delete(id); } };
-        refs.set(id, value);
-        return binding;
-      },
-    };
+  it('registers a 100-item ArrayRef as one binding and releases it on unmount', async () => {
+    const items = Array.from({ length: 100 }, (_, index) => ({ id: 'item_' + index }));
     function Content() {
-      useArrayRef('pending', [{ id: 'A' }, { id: 'B' }], { itemType: 'Task' });
+      useArrayRef('pending', items, { scope: 'protected', itemType: 'Task' });
       return null;
     }
-    const container = document.createElement('div');
-    expect(() => render(h(ViewRuntimeContext.Provider, {
-      value: { viewId: 'example', ...registry },
-    }, h(Content, {})), container)).toThrow('controlled Ref registration failure');
-    expect([...refs.keys()]).toEqual([]);
-    render(null, container);
+    const x = setup(() => h(DynamicView, { idPrefix: 'workspace', type: WorkspaceType }, h(Content, {})));
+    try {
+      await x.open();
+      expect(preparedRefs(x.kernel)).toEqual([
+        { viewId: 'workspace', refId: 'pending', refType: 'Task', value: items },
+      ]);
+    } finally { await x.close(); }
+    expect(preparedRefs(x.kernel)).toEqual([]);
   });
 });

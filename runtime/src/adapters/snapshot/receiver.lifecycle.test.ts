@@ -1,23 +1,23 @@
 import { expect, it, vi } from 'vitest';
 import { performance } from 'node:perf_hooks';
 import { SemanticSnapshotReceiver } from './receiver.js';
-import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
-import type { SnapshotCore } from '../../core/snapshot/types.js';
-import type { ExecutionBinding, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import { createViewOwnedTools } from '@aotui/core';
+import type { SnapshotCore } from '@aotui/core';
+import type { ExecutionBinding, AppInteractionPolicy } from '@aotui/core';
 
 function defer<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
 function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => number) {
     const r = now ? new SemanticSnapshotReceiver('a', instance, now) : new SemanticSnapshotReceiver('a', instance), core: SnapshotCore = (r as any).core;
     const registry = createViewOwnedTools('a', instance);
     const inputSchema = { type: 'object', properties: {}, additionalProperties: false };
-    registry.defineTools([{ viewType: 'T', name: 'read', description: 'Read', inputSchema }]);
-    const frame = registry.prepareFrame([{ id: 'v', type: 'T', owner: {},
+    registry.defineViewTypes([{ name: "T", multiplicity: 'multiple', tools: [{ name: 'read', description: 'Read', inputSchema }] }]);
+    const frame = registry.prepareFrame([{ createId: () => 'v', type: 'T', owner: {},
         bindings: [{ name: 'read', enabled: true, execute: () => ({ success: true }) }] }]);
     frame.accept();
     const view = frame.instances[0]!, tool = frame.tools[0]!;
-    r.acceptPrepared({ schemaVersion: 6, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    r.acceptPrepared({ schemaVersion: 7, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View',
-            kind: 'state', content: { format: 'markdown-v1', value: 'value' } }],
+            region: 'dynamic', content: { format: 'markdown-v1', value: 'value' } }],
         refs: {}, tools: { [tool.id]: tool } });
     expect(r.report().health).toBe('ready');
     const entered = defer<void>(), gate = defer<void>(); let handlers = 0, completed = 0;

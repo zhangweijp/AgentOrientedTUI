@@ -7,10 +7,10 @@ import { pathToFileURL } from 'node:url';
 import { serialize } from 'node:v8';
 import { Worker } from 'node:worker_threads';
 
-const [runtime, sdk, mode = 'all', count = '40'] = process.argv.slice(2);
+const [corePackage, runtime, sdk, mode = 'all', count = '40'] = process.argv.slice(2);
 const samples = Number(count), warmup = 12;
-assert.ok(runtime && sdk && ['all', 'micro', 'worker', 'digest'].includes(mode) && Number.isSafeInteger(samples) && samples > 0,
-    'Usage: node runtime/scripts/snapshot-processing.mjs <Runtime package dir> <SDK package dir> [all|micro|worker|digest] [samples]');
+assert.ok(corePackage && runtime && sdk && ['all', 'micro', 'worker', 'digest'].includes(mode) && Number.isSafeInteger(samples) && samples > 0,
+    'Usage: node runtime/scripts/snapshot-processing.mjs <Core package dir> <Runtime package dir> <SDK package dir> [all|micro|worker|digest] [samples]');
 const emitted = (dir, file) => pathToFileURL(resolve(dir, 'dist', file)).href;
 const appId = 'snapshot_probe', type = 'File', toolName = 'advance';
 const profiles = [
@@ -71,15 +71,14 @@ function countDigestWork(run, verify) {
 }
 
 async function digestPaths(measure) {
-    const { createSnapshotCore, SemanticProjectionCoordinator } = await import(emitted(runtime, 'core/index.js'));
-    const { hostedObservationCapacityIssue } = await import(emitted(runtime, 'core/invocation/observation-registry.js'));
+    const { createSnapshotCore, SemanticProjectionCoordinator, hostedObservationCapacityIssue } = await import(emitted(corePackage, 'internal.js'));
     return [64, 512, 2048].map(kib => {
         const bodyBytes = kib * 1024;
         const identity = { appId: 'bench', instanceId: 'one' };
         const projection = new SemanticProjectionCoordinator({ identity: () => identity });
         const core = createSnapshotCore(identity);
         const views = Array.from({ length: Math.ceil(kib / 128) }, (_, index) => ({
-            id: 'v' + index, viewInstanceId: 'vi' + index, type: 'Detail', name: 'View', kind: 'state', toolBindings: [],
+            id: 'v' + index, viewInstanceId: 'vi' + index, type: 'Detail', name: 'View', region: 'dynamic', toolBindings: [],
             content: { format: 'markdown-v1', value: 'a'.repeat(Math.min(bodyBytes, 128 * 1024)) },
         }));
         const frame = { views, refs: [], tools: [] };
@@ -139,9 +138,8 @@ function validationWork(validate, draft) {
 }
 
 async function micro() {
-    const { validatePreparedSnapshot } = await import(emitted(runtime, 'core/snapshot/validate-snapshot.js'));
-    const { compileToolParameters } = await import(emitted(runtime, 'core/tool/tool-parameters.js'));
-    const { refKey } = await import(emitted(runtime, 'core/snapshot/snapshot-support.js'));
+    const { validatePreparedSnapshot } = await import(emitted(corePackage, 'snapshot/validate-snapshot.js'));
+    const { compileToolParameters, refKey, SNAPSHOT_SCHEMA_VERSION } = await import(emitted(corePackage, 'index.js'));
     const { contract } = compileToolParameters({ type: 'object', properties: {}, additionalProperties: false });
     const toolId = JSON.stringify([appId, type, toolName]);
     const results = [];
@@ -149,22 +147,19 @@ async function micro() {
         const fixture = data(profile), refs = {};
         const views = fixture.views.map(({ id, refs: small }, index) => {
             const viewInstanceId = 'mount_' + index;
-            const add = (refId, payload) => {
-                refs[refKey(id, viewInstanceId, refId)] = {
+            const add = (refId, payload, array = false) => {
+                refs[refKey(id, viewInstanceId, refId)] = { scope: 'protected',
                     id: refId, ownerViewId: id, ownerViewInstanceId: viewInstanceId, refType: 'Data',
-                    target: { kind: 'snapshot-value', payload },
+                    target: { kind: 'snapshot-value', payload }, ...(array ? { array: true } : {}),
                 };
             };
             for (const ref of small) add(ref.id, ref.value);
-            if (fixture.rows.length) {
-                add('rows', fixture.rows);
-                fixture.rows.forEach((row, i) => add('rows[' + i + ']', row));
-            }
-            return { id, viewInstanceId, type, name: id, kind: 'state', content: { format: 'markdown-v1', value: body(id, 0) },
+            if (fixture.rows.length) add('rows', fixture.rows, true);
+            return { id, viewInstanceId, type, name: id, region: 'dynamic', content: { format: 'markdown-v1', value: body(id, 0) },
                 toolBindings: [{ toolId, activationId: 'activation_' + index }] };
         });
-        const draft = { schemaVersion: 6, appId, instanceId: 'bench-instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
-            views, refs, tools: { [toolId]: { id: toolId, name: toolName, viewType: type, nameSharedAcrossViewTypes: false,
+        const draft = { schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId, instanceId: 'bench-instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
+            views, refs, tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: toolName, viewType: type, nameSharedAcrossViewTypes: false,
                 description: 'Change the fixture', inputSchema: contract.schema } } };
         const containers = value => value && typeof value === 'object'
             ? 1 + Object.values(value).reduce((sum, child) => sum + containers(child), 0) : 0;
@@ -191,16 +186,16 @@ async function workers() {
 import { createApp, createView, defineViewType, ref, arrayRef } from ${JSON.stringify(emitted(sdk, 'app.js'))};
 const data = ${data.toString()};
 const body = ${body.toString()};
-const File = defineViewType()({ name: 'File', tools: { advance: {
+const File = defineViewType()({ name: 'File', region: 'dynamic', multiplicity: 'multiple', createId: ({ prefix }) => prefix, tools: { advance: {
     description: 'Change the fixture', execute({ context }) { return context.advance(); },
 } } });
 export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initialize(context) {
     const fixture = data(context.launchConfig);
     let revision = 0;
-    const views = fixture.views.map(({ id, refs }) => createView(File, { id, kind: 'state', render: () => ({
+    const views = fixture.views.map(({ id, refs }) => createView(File, { idPrefix: id, render: () => ({
         body: body(id, revision),
-        refs: fixture.rows.length ? [arrayRef('rows', fixture.rows, { itemType: 'Data' })] :
-            refs.map(item => ref(item.id, item.value, { refType: 'Data' })),
+        refs: fixture.rows.length ? [arrayRef('rows', fixture.rows, { itemType: 'Data', scope: 'protected' })] :
+            refs.map(item => ref(item.id, item.value, { refType: 'Data', scope: 'protected' })),
         context: { advance() {
             revision++;
             const mutable = fixture.rows[0] ?? fixture.views[0].refs[0].value;
@@ -221,7 +216,7 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
             const worker = new Worker(new URL(emitted(runtime, 'worker-runtime/index.js')));
             const host = new AppWorkerHost({ appId, desktopId: 'bench', appModulePath: pathToFileURL(modulePath).href,
                 existingWorker: worker, timeout: 10000, config: { ...profile, AOTUI_DATA_DIR: directory } });
-            let lastMessage, updatedFrames, unchangedFrames, observationBytes, current;
+            let lastMessage, updatedFrames, unchangedFrames, observationBytes, current, closed;
             let frames = 0;
             worker.on('message', message => {
                 if (message.type === 'SNAPSHOT_PREPARED') { lastMessage = message; frames++; }
@@ -257,8 +252,8 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
                     observation = next.observation;
                     assert.match(observation.views[0].content.value, new RegExp('rev:' + (i + 1) + '\\b'));
                     const payload = Object.values(lastMessage.draft.refs)
-                        .find(ref => ref.ownerViewId === 'file_0' && ref.id === (profile.rows ? 'rows[0]' : 'ref_0')).target.payload;
-                    assert.equal(payload.n, i + 1);
+                        .find(ref => ref.ownerViewId === 'file_0' && ref.id === (profile.rows ? 'rows' : 'ref_0')).target.payload;
+                    assert.equal((profile.rows ? payload[0] : payload).n, i + 1);
                     if (i >= warmup) {
                         timings.prepareMs.push(receipt.receipt.outcome.value.data.prepareMs);
                         timings.invokeMs.push(invokeMs);
@@ -280,9 +275,12 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
                 assert.equal(current.snapshot.heldSnapshots, 0);
                 assert.equal(current.snapshot.heldSnapshotBytes, 0);
                 client.releaseObservation(observation.observationId);
-            } finally { await host.close(); }
-            const closed = await host.waitForResourceRelease();
+            } finally {
+                await host.close().catch(() => {});
+                closed = await host.waitForResourceRelease();
+            }
             assert.equal(closed.resourcesReleased, true);
+            assert.equal(closed.appCleanup?.report?.state, 'completed', JSON.stringify(closed));
             assert.equal(closed.interactions.retainedBytes, 0);
             const released = host.snapshotReceiver.core.store.inspect();
             assert.equal(released.currentBytes, 0);
@@ -300,7 +298,7 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
 const results = { node: process.version, platform: process.platform, arch: process.arch, samples, warmup };
 if (mode === 'digest') {
     // Both versions start timing with the same number of actual FNV calls.
-    const { diagnosticDigest } = await import(emitted(runtime, 'core/snapshot/json.js'));
+    const { diagnosticDigest } = await import(emitted(corePackage, 'snapshot/json.js'));
     const seed = new Uint8Array(4096).fill(97);
     results.digestWarmup = { calls: 384, bytesPerCall: seed.byteLength };
     for (let i = 0; i < results.digestWarmup.calls; i++) diagnosticDigest(seed);

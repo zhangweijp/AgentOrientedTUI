@@ -126,17 +126,6 @@ function isPlanOwned(desktopId: string, planId: string): boolean {
     return Boolean(row);
 }
 
-function isPhaseOwned(desktopId: string, planId: string, phaseId: string): boolean {
-    const row = queryOne<{ id: string }>(
-        `SELECT phases.id as id
-         FROM phases
-         JOIN plans ON plans.id = phases.plan_id
-         WHERE phases.id = ? AND phases.plan_id = ? AND plans.desktop_id = ?`,
-        [phaseId, planId, desktopId]
-    );
-    return Boolean(row);
-}
-
 function isPhaseOwnedByDesktop(desktopId: string, phaseId: string): boolean {
     const row = queryOne<{ id: string }>(
         `SELECT phases.id as id
@@ -144,18 +133,6 @@ function isPhaseOwnedByDesktop(desktopId: string, phaseId: string): boolean {
          JOIN plans ON plans.id = phases.plan_id
          WHERE phases.id = ? AND plans.desktop_id = ?`,
         [phaseId, desktopId]
-    );
-    return Boolean(row);
-}
-
-function isTodoOwned(desktopId: string, planId: string, phaseId: string, todoId: string): boolean {
-    const row = queryOne<{ id: string }>(
-        `SELECT todos.id as id
-         FROM todos
-         JOIN phases ON phases.id = todos.phase_id
-         JOIN plans ON plans.id = phases.plan_id
-         WHERE todos.id = ? AND phases.id = ? AND plans.id = ? AND plans.desktop_id = ?`,
-        [todoId, phaseId, planId, desktopId]
     );
     return Boolean(row);
 }

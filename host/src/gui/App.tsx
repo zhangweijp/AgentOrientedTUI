@@ -2,10 +2,11 @@
  * system-chat GUI - Main App Component
  * Immersive Dark Tech Style: Glassmorphism + FUI + Subdued Colors
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useChatBridge } from './ChatBridge.js';
 import { TuiDesktopViewer } from './components/TuiDesktopViewer.js';
-import type { Topic, Message, Project, ImageAttachment } from '../types.js';
+import type { DesktopPreview } from '../core/desktop-preview.js';
+import type { Topic, DisplayMessage, Project, ImageAttachment } from '../types.js';
 
 // Components
 import { ProjectSelector } from './components/ProjectSelector.js';
@@ -68,12 +69,10 @@ export function App() {
     const [currentProjectId, setCurrentProjectId] = useState<string | null>(null); // [RFC-025]
     const [topics, setTopics] = useState<Topic[]>([]);
     const [activeTopicId, setActiveTopicId] = useState<string | null>(null);
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [tuiSnapshot, setTuiSnapshot] = useState('');
+    const [messages, setMessages] = useState<DisplayMessage[]>([]);
+    const [desktopPreview, setDesktopPreview] = useState<DesktopPreview>();
     const [agentThinking, setAgentThinking] = useState('');
     const [agentReasoning, setAgentReasoning] = useState('');
-    const [agentState, setAgentState] = useState('IDLE');
-    const [agentPaused, setAgentPaused] = useState(false);
     const [displayAgentState, setDisplayAgentState] = useState<'sleeping' | 'idle' | 'working' | 'paused'>('sleeping');
     const syncedAgentTopicIdRef = useRef<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -276,31 +275,6 @@ export function App() {
         });
     }, []);
 
-    const refreshAgents = useCallback(async () => {
-        try {
-            const data = await bridge.getAgents();
-            setAgents(data.list || []);
-            setDraftAgentId(data.activeAgentId || null);
-        } catch (error) {
-            console.error('[App] Failed to load agents:', error);
-        }
-    }, [bridge]);
-
-    // Helper: Time Ago
-    const formatTimeAgo = (timestamp: number) => {
-        if (!timestamp) return '';
-        const diff = Date.now() - timestamp;
-        const seconds = Math.floor(diff / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const hours = Math.floor(minutes / 60);
-        const days = Math.floor(hours / 24);
-
-        if (days > 0) return `${days}d ago`;
-        if (hours > 0) return `${hours}h ago`;
-        if (minutes > 0) return `${minutes}m ago`;
-        return 'Just now';
-    };
-
     // Connect
     useEffect(() => {
         const connectToServer = async () => {
@@ -359,11 +333,9 @@ export function App() {
                         setActiveTopicId(null);
                         setSelectedAgentId(null);
                         setMessages([]);
-                        setTuiSnapshot('');
+                        setDesktopPreview(undefined);
                         setAgentThinking('');
                         setAgentReasoning('');
-                        setAgentState('IDLE');
-                        setAgentPaused(false);
                         setDisplayAgentState('sleeping');
                         setViewMode('chat');
                     }
@@ -373,11 +345,9 @@ export function App() {
                 setActiveTopicId(null);
                 setSelectedAgentId(null);
                 setMessages([]);
-                setTuiSnapshot('');
+                setDesktopPreview(undefined);
                 setAgentThinking('');
                 setAgentReasoning('');
-                setAgentState('IDLE');
-                setAgentPaused(false);
                 setDisplayAgentState('sleeping');
                 setViewMode('chat');
             }
@@ -397,11 +367,9 @@ export function App() {
                     syncedAgentTopicIdRef.current = active;
                 }
                 setMessages([...bridge.getMessages(active)]);
-                setTuiSnapshot(bridge.getSnapshot(active));
+                setDesktopPreview(bridge.getDesktopPreview(active));
                 setAgentThinking(bridge.getAgentThinking(active));
                 setAgentReasoning(bridge.getAgentReasoning(active));
-                setAgentState(bridge.getAgentState(active));
-                setAgentPaused(bridge.isAgentPaused(active));
                 setDisplayAgentState(bridge.getDisplayAgentState(active));
             } else {
                 syncedAgentTopicIdRef.current = null;
@@ -418,18 +386,11 @@ export function App() {
     useEffect(() => {
         if (viewMode !== 'tui' || !activeTopicId) return;
         let current = true;
-        void bridge.requestSnapshot(activeTopicId).catch(error => {
+        void bridge.requestDesktopPreview(activeTopicId).catch(error => {
             if (current) showToast(`TUI preview failed: ${error instanceof Error ? error.message : String(error)}`);
         });
         return () => { current = false; };
     }, [bridge, viewMode, activeTopicId, showToast]);
-
-    useEffect(() => {
-        if (viewMode !== 'tui') return;
-        const preview = tuiSnapshot.length > 800 ? `${tuiSnapshot.slice(0, 800)}...` : tuiSnapshot;
-        console.log('[TUI VIEW] snapshot length', tuiSnapshot.length);
-        console.log('[TUI VIEW] snapshot preview', preview);
-    }, [viewMode, tuiSnapshot]);
 
     // Actions
     const handleNewChat = useCallback(async () => {
@@ -440,7 +401,7 @@ export function App() {
         bridge.clearActiveTopic();
         setActiveTopicId(null);
         setMessages([]);
-        setTuiSnapshot('');
+        setDesktopPreview(undefined);
         setAgentThinking('');
         setAgentReasoning('');
         setDraftModelOverride(null);
@@ -463,7 +424,7 @@ export function App() {
         bridge.setActiveTopic(topicId);
         setActiveTopicId(topicId);
         setMessages([...bridge.getMessages(topicId)]);
-        setTuiSnapshot(bridge.getSnapshot(topicId));
+        setDesktopPreview(bridge.getDesktopPreview(topicId));
         setAgentThinking(bridge.getAgentThinking(topicId));
         setAgentReasoning(bridge.getAgentReasoning(topicId));
         setViewMode('chat');
@@ -554,7 +515,7 @@ export function App() {
             setActiveTopicId(null);
             setSelectedAgentId(null);
             setMessages([]);
-            setTuiSnapshot('');
+            setDesktopPreview(undefined);
             setAgentThinking('');
             setAgentReasoning('');
             setViewMode('chat');
@@ -830,11 +791,9 @@ export function App() {
                         setSettingsPanelOpen(false);
                         setActiveTopicId(null);
                         setMessages([]);
-                        setTuiSnapshot('');
+                        setDesktopPreview(undefined);
                         setAgentThinking('');
                         setAgentReasoning('');
-                        setAgentState('IDLE');
-                        setAgentPaused(false);
                         setDisplayAgentState('sleeping');
                         setViewMode('chat');
                         setCurrentProjectId(projectId);
@@ -879,11 +838,9 @@ export function App() {
                     setCurrentProjectId(null);
                     setActiveTopicId(null);
                     setMessages([]);
-                    setTuiSnapshot('');
+                    setDesktopPreview(undefined);
                     setAgentThinking('');
                     setAgentReasoning('');
-                    setAgentState('IDLE');
-                    setAgentPaused(false);
                     setDisplayAgentState('sleeping');
                     setViewMode('chat');
                 }}
@@ -942,7 +899,7 @@ export function App() {
                         ) : (
                             <div className="absolute inset-0 rounded-2xl overflow-hidden border border-transparent">
                                 <TuiDesktopViewer
-                                    snapshot={tuiSnapshot}
+                                    preview={desktopPreview}
                                     apps={topicCapabilities?.apps}
                                     agentThinking={agentThinking}
                                 />

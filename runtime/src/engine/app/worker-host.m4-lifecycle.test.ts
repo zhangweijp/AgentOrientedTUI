@@ -16,16 +16,6 @@ function inFlightHost() {
 }
 
 describe('Worker Host lifecycle and physical resource release', () => {
-    it('does not push new model usage during or after shutdown', async () => {
-        const { host, worker, request } = inFlightHost();
-        const closing = host.close();
-        host.pushLLMUsage({ timestamp: 0, providerId: 'p', modelId: 'm', promptTokens: 0, completionTokens: 0, totalTokens: 0 });
-        expect(worker.postMessage).not.toHaveBeenCalled();
-        await closing;
-        host.pushLLMUsage({ timestamp: 0, providerId: 'p', modelId: 'm', promptTokens: 0, completionTokens: 0, totalTokens: 0 });
-        expect(worker.postMessage).not.toHaveBeenCalled();
-    });
-
     it('drains a lifecycle request before shutdown and never revives the closing Host', async () => {
         const { host, request } = inFlightHost();
         let finishLifecycle!: () => void;

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, it, vi } from 'vitest';
 import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
 import { LLMConfigService } from '../src/core/llm-config-service.js';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
 import * as db from '../src/db/index.js';
 import { MCP } from '../src/mcp/index.js';
 import { createHostV2Core } from '../src/server/host-v2.js';
@@ -25,8 +25,8 @@ it('keeps the Topic directory and Driver within the saved MCP server selection',
         enabledApps: [], enabledSkills: {}, disabledMcpTools: [], skin: {} };
 
     vi.spyOn(LLMConfigService.prototype, 'resolveLLMConfig').mockResolvedValue({
-        model: 'synthetic', provider: { id: 'openai' },
-        inputBudget: async () => ({ contextWindow: 32_000, maxOutputTokens: 1_000 }),
+        model: 'synthetic', provider: { id: 'openai' }, apiKey: 'fixture-only',
+        inputBudget: async () => ({ contextWindow: 32_000, maxOutputTokens: 1_000, capabilities: { toolCall: true } }),
     });
     const requests = new Map<string, string[]>();
     vi.spyOn(LLMClient.prototype, 'call').mockImplementation(async (messages, tools) => {
@@ -47,7 +47,7 @@ it('keeps the Topic directory and Driver within the saved MCP server selection',
         host = await createHostV2Core(registry);
         const caller = appRouter.createCaller({
             hostManager: host.hostManager, llmConfigService: host.llmConfigService, modelRegistry: registry,
-            messageService: new MessageServiceV2(),
+            messageService: new MessageService(),
         });
         const topic = await caller.db.createTopic({ title: 'Agent-owned topic', agentId: agent.id });
         const enabledServers = async (id: string) => {

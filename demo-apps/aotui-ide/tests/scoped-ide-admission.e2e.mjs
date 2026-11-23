@@ -31,7 +31,7 @@ try {
         assert.equal(client.adoptObservation(initial.observationId).status, 'adopted');
         const tool = initial.tools.find(tool => tool.name === 'multi_open_file');
         const attempt = await client.invoke({ invocationId: 'too-many-files', observationId: initial.observationId,
-            toolId: tool.id, input: { view_id: 'workspace', filePaths: [c] } });
+            toolId: tool.id, input: { filePaths: [c] } });
         const preview = await client.preview(), next = await client.observe({ all: true });
         const known = fileViews(initial);
         assert.deepEqual({

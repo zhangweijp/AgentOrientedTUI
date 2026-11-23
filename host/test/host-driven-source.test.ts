@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import type { MessageService } from '../src/core/message-service.js';
 import { HostDrivenSourceV2 } from '../src/adapters/host-driven-source.js';
 
 describe('HostDrivenSourceV2', () => {
@@ -19,7 +19,6 @@ describe('HostDrivenSourceV2', () => {
                 syntheticMessages: [],
             }),
             estimateContextTokens: vi.fn().mockReturnValue(5_001),
-            markCompactionAnchor: vi.fn(),
         };
         source = new HostDrivenSourceV2(messageServiceMock, topicId);
     });
@@ -179,7 +178,7 @@ describe('Host topic scope proof', () => {
       getMessagesForLLM: vi.fn(async (topic: string) => [{ role: 'user' as const, content: topic, timestamp: 1 }]),
       compactContext: vi.fn((topic: string) => ({ compacted: true, trigger: 'agent', summary: topic, compactedMessageCount: 2, cleanedToolResultCount: 1, syntheticMessages: [] })),
     };
-    return { service, source: new HostDrivenSourceV2(service as unknown as MessageServiceV2, 'A') };
+    return { service, source: new HostDrivenSourceV2(service as unknown as MessageService, 'A') };
   }
   it('preserves same-topic messages, compaction and notification', async () => {
     const { source, service } = makeHost(), update = vi.fn();
@@ -213,17 +212,13 @@ describe('Host topic scope proof', () => {
   });
 });
 
- it('returns a complete empty context after message failure, diagnoses it and retries next capture', async () => {
+it('reports a failed history read and reads fresh history on the next capture', async () => {
     const failure = new Error('messages unavailable');
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
     const read = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue([{ role: 'user', content: 'healthy', timestamp: 1 }]);
-    const source = new HostDrivenSourceV2({ getMessagesForLLM: read } as unknown as MessageServiceV2, 'topic');
-    try {
-      await expect(source.getContext()).resolves.toEqual({ messages: [], tools: {} });
-      expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from Host:', failure);
-      const recovered = await source.getContext();
-      expect(recovered.messages).toEqual([{ role: 'user', content: 'healthy', timestamp: 1, region: 'session' }]);
-      expect(recovered.tools).toHaveProperty('context_compact');
-      expect(read).toHaveBeenCalledTimes(2);
-    } finally { diagnostic.mockRestore(); }
- });
+    const source = new HostDrivenSourceV2({ getMessagesForLLM: read } as unknown as MessageService, 'topic');
+    await expect(source.getContext()).rejects.toBe(failure);
+    const recovered = await source.getContext();
+    expect(recovered.messages).toEqual([{ role: 'user', content: 'healthy', timestamp: 1, region: 'session' }]);
+    expect(recovered.tools).toHaveProperty('context_compact');
+    expect(read).toHaveBeenCalledTimes(2);
+});

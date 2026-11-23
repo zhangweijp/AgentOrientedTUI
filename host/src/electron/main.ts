@@ -115,9 +115,9 @@ function createWindow() {
             createContext: async () => {
                 const { hostManager, llmConfigService } = await ensureHostCore();
                 const registry = await ensureModelRegistry();
-                // ✅ 添加 MessageServiceV2 到 context
-                const { MessageServiceV2 } = await import('../core/message-service-v2.js');
-                const messageService = new MessageServiceV2();
+                // ✅ 添加 MessageService 到 context
+                const { MessageService } = await import('../core/message-service.js');
+                const messageService = new MessageService();
                 
                 return { 
                     hostManager, 

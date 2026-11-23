@@ -1,16 +1,16 @@
 import Type from 'typebox';
 import {
-  ToolCatalog, View, createTUIApp, defineViewType,
+  StaticView, DynamicView, createTUIApp, defineViewType,
   refParam, type ToolResult, useArrayRef, useDataRef, useState,
 } from '@aotui/sdk';
 
 const NoteSchema = Type.Object({ id: Type.String(), title: Type.String(), text: Type.String() },
   { additionalProperties: false });
-const noteRefOptions = { refType: 'Note', schema: NoteSchema };
-const notesRefOptions = { itemType: 'Note', schema: Type.Array(NoteSchema) };
-export const RootType = defineViewType({ name: 'Root' });
+const noteRefOptions = { scope: 'private', refType: 'Note', schema: NoteSchema } as const;
+const notesRefOptions = { scope: 'private', itemType: 'Note', schema: Type.Array(NoteSchema) } as const;
+export const RootType = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root' });
 
-export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: boolean): void }>()({ name: 'Workspace', tools: {
+export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: boolean): void }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
         open_notes: { description: 'Open the Notes page.',
             inputSchema: Type.Object({}, { additionalProperties: false }),
             execute({ context }) {
@@ -28,7 +28,7 @@ export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: 
         },
 } });
 
-export const NoteDetailType = defineViewType<{ inspect(notes: readonly Readonly<Type.Static<typeof NoteSchema>>[]): ToolResult }>()({ name: 'NoteDetail', tools: {
+export const NoteDetailType = defineViewType<{ inspect(notes: readonly Readonly<Type.Static<typeof NoteSchema>>[]): ToolResult }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'NoteDetail', tools: {
         inspect_note: { description: 'Inspect a Note Ref; read the result in Note Detail.',
             inputSchema: Type.Object({ note: refParam('Note', NoteSchema) }, { additionalProperties: false }),
             execute: ({ input, context }) => context.inspect([input.note]),
@@ -78,19 +78,18 @@ function App() {
     return { success: true as const, data: { view_id: 'detail', inspected: true } };
   }
   return <>
-    <View kind="instruction" id="root" type={RootType} name="Notes instructions">
+    <StaticView  idPrefix="root" type={RootType} name="Notes instructions">
       <h1>Notes Example Application Instruction</h1>
-      <p>Open Notes from Workspace. Pass the receiving page’s XML id as view_id. Select objects using the containing View id plus its local Ref name:
-        detail.current, detail.notes or detail.notes[0]. The displayed Note: prefix is a type hint only.
-        Do not copy internal IDs. Read the Inspection section after a receipt. Close Notes when finished.</p>
-      <ToolCatalog viewTypes={noteViewTypes} />
-    </View>
-    <View kind="state" id="workspace" type={WorkspaceType} name="Notes workspace" context={{ opened, setOpened }}>
+      <p>Open Notes from Workspace. Pass the receiving page’s XML view_id to its tools. Select Notes from the detail page with
+        $app_id.detail.current, $app_id.detail.notes or $app_id.detail.notes[0], using the app_id from its XML.
+        Read the Inspection section after a receipt. Close Notes when finished.</p>
+    </StaticView>
+    <DynamicView  idPrefix="workspace" type={WorkspaceType} name="Notes workspace" context={{ opened, setOpened }}>
       <p>Notes are an in-memory example. Open the page to inspect them.</p>
-    </View>
-    {opened && <View kind="state" id="detail" type={NoteDetailType} name="Notes" context={{ inspect }}>
+    </DynamicView>
+    {opened && <DynamicView  idPrefix="detail" type={NoteDetailType} name="Notes" context={{ inspect }}>
       <Detail inspection={inspection} />
-    </View>}
+    </DynamicView>}
   </>;
 }
 export default createTUIApp({ app_name: 'notes_example', component: App, viewTypes: noteViewTypes });

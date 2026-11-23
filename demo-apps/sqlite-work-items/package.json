@@ -6,17 +6,17 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && generate-aoapp .",
     "test": "node --test test/integration.test.mjs"
   },
   "dependencies": {
-    "@aotui/runtime": "8.0.0",
     "@aotui/sdk": "0.9.0",
     "typebox": "1.4.3"
   },
   "devDependencies": {
     "@types/node": "24.11.0",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "@aotui/runtime": "8.0.0"
   },
   "pnpm": {
     "overrides": {

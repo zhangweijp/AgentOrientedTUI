@@ -13,12 +13,12 @@ let consumer: string, AppWorkerHost: any;
 beforeAll(async () => {
     consumer = await mkdtemp(join(tmpdir(), 'aotui-tool-consumer-'));
     const modules = join(consumer, 'node_modules'); await mkdir(join(modules, '@aotui'), { recursive: true });
-    for (const pkg of ['runtime', 'sdk']) {
+    for (const pkg of ['core', 'runtime', 'sdk']) {
         const target = join(modules, '@aotui', pkg); await mkdir(target);
         await cp(join(repo, pkg, 'package.json'), join(target, 'package.json'));
         await cp(join(repo, pkg, 'dist'), join(target, 'dist'), { recursive: true });
     }
-    for (const pkg of ['runtime', 'sdk']) for (const entry of await readdir(join(repo, pkg, 'node_modules'))) {
+    for (const pkg of ['core', 'runtime', 'sdk']) for (const entry of await readdir(join(repo, pkg, 'node_modules'))) {
         if (entry.startsWith('.') || entry === '@aotui') continue;
         try { await symlink(join(repo, pkg, 'node_modules', entry), join(modules, entry), 'dir'); }
         catch (error: any) { if (error.code !== 'EEXIST') throw error; }
@@ -44,7 +44,7 @@ async function control(x: any, action: string) {
 }
 async function start(id = 'app', options: { holdInitialization?: boolean; existingWorker?: Worker } = {}) {
     const root = await mkdtemp(join(tmpdir(), 'aotui-tool-'));
-    const host = new AppWorkerHost({ appId: id as any, desktopId: 'd' as any,
+    const host = new AppWorkerHost({ appId: id.replaceAll('-', '_') as any, desktopId: 'd' as any,
         appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
         workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), timeout: 5000,
         existingWorker: options.existingWorker,

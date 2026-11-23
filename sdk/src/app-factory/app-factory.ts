@@ -1,9 +1,9 @@
-import { AOTUIError, captureAppMetadata, APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL } from '@aotui/runtime/spi';
-import type { AppKernelConfig, AppMetadata, TUIAppFactory } from '@aotui/runtime/spi';
+import { AOTUIError, captureAppMetadata, APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL } from '@aotui/core';
+import type { AppKernelConfig, AppMetadata, TUIAppFactory as CoreAppFactory } from '@aotui/core';
+import { captureViewTypes, viewTypeDefinitions, type ViewType } from '../tools/view-type-tool.js';
 
-import { captureViewTypes, toolDefinitions, type ViewType } from '../tools/view-type-tool.js';
-
-export const VIEW_ID_PATTERN = /^[A-Za-z0-9_]+$/;
+/** Lets author declaration emit name the factory through an SDK entry. */
+export interface TUIAppFactory extends CoreAppFactory {}
 
 export type AppConfig = Omit<AppMetadata, 'description'> &
     Pick<AppKernelConfig, 'onDelete' | 'onReinitialize' | 'signalPolicy'> & {
@@ -23,7 +23,7 @@ export function createAppFactory(
     }
     const usesPersistence = persistence?.value === true;
     const types = captureViewTypes(config.viewTypes);
-    const tools = toolDefinitions(types);
+    const definitions = viewTypeDefinitions(types);
     return {
         kernelConfig: {
             appName: metadata.app_name,
@@ -42,12 +42,12 @@ export function createAppFactory(
             const { persistence, ...runtimeContext } = context;
             if (usesPersistence && (persistence?.protocol !== STATE_SESSION_PROTOCOL ||
                 typeof persistence.instanceId !== 'string' || !persistence.instanceId ||
-                typeof persistence.captureValue !== 'function' || typeof persistence.bind !== 'function' ||
+                typeof persistence.load !== 'function' || typeof persistence.save !== 'function' || typeof persistence.remove !== 'function' ||
                 typeof persistence.flush !== 'function')) {
-                throw Object.assign(new Error('persistence: true requires a Runtime that provides a state-session-v1 persistence port'),
+                throw Object.assign(new Error('persistence: true requires a Runtime that provides ' + STATE_SESSION_PROTOCOL),
                     { code: 'PERSISTENCE_UNAVAILABLE' });
             }
-            context.defineTools(tools);
+            context.defineViewTypes(definitions);
             return initialize(usesPersistence ? context : runtimeContext, types);
         },
     };

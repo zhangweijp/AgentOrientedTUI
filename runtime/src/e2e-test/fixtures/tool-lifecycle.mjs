@@ -3,8 +3,7 @@ import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 import { open } from 'node:fs/promises';
 import Type from 'typebox';
-import { createTUIApp, View, defineViewType,
-    useAppLifecycle, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
+import { createTUIApp, DynamicView, defineViewType, useAppLifecycle, useAppRuntimeContext } from '@aotui/sdk';
 
 const incrementInput = Type.Object({
     amount: Type.Number(),
@@ -21,7 +20,7 @@ function Counter({ owner, id, generation, enabled }) {
 }
 
 
-const CounterType = defineViewType()({ name:'Counter', tools: {
+const CounterType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Counter', tools: {
     increment: {
         description:'Increment the selected Counter.', inputSchema:incrementInput,
         enabled: ({ id, view }) => id === 'counter2' || view.enabled,
@@ -31,7 +30,7 @@ const CounterType = defineViewType()({ name:'Counter', tools: {
             // The application decides whether a suspended task may commit.
             if (!owner.live) return { success: false, error: { code: 'APP_STOPPED', message: 'App is stopping' } };
             if (args.failure === 'declined') return { success: false, error: { code: 'EXPECTED', message: 'Counter was not updated' } };
-            if (id === 'counter') { owner.value += args.amount; owner.save(owner.value); }
+            if (id === 'counter') { owner.value += args.amount; await owner.save(owner.value); }
             else owner.secondaryValue += args.amount;
             refresh(x => x + 1);
             if (args.failure === 'after-update') return { success: false, error: { code: 'EXPECTED', message: 'Counter was updated' }, data: { counterUpdated: true } };
@@ -43,9 +42,9 @@ const CounterType = defineViewType()({ name:'Counter', tools: {
 } });
 function Root() {
     const context = useAppRuntimeContext();
-    const [, save] = usePersistentState('counter', 0);
-    const owner = useMemo(() => ({ value: 0, secondaryValue: 0, live: true, entries: 0, save,
-        resource: undefined, handlerRelease: undefined, cleanupRelease: undefined, rejectClose: false }), [save]);
+    const persistence = context.persistence;
+    const owner = useMemo(() => ({ value: 0, secondaryValue: 0, live: true, entries: 0, save: value => persistence.save('counter', value),
+        resource: undefined, handlerRelease: undefined, cleanupRelease: undefined, rejectClose: false }), [persistence]);
     const [view, setView] = useState({ generation: 1, enabled: true, binding: 1 });
     const [, refresh] = useState(0);
 
@@ -76,9 +75,9 @@ function Root() {
     }, []);
     const pageContext = id => ({ id, owner, view, refresh });
     return h('main', {}, [
-        h(View, {kind: 'state', id: 'counter', type: CounterType, key: view.generation + ':' + view.binding, context:pageContext('counter') },
+        h(DynamicView, {idPrefix: 'counter', type: CounterType, key: view.generation + ':' + view.binding, context:pageContext('counter') },
             h(Counter, { owner, id: 'counter', generation: view.generation, enabled: view.enabled })),
-        h(View, {kind: 'state', id: 'counter2', type: CounterType, context:pageContext('counter2') },
+        h(DynamicView, {idPrefix: 'counter2', type: CounterType, context:pageContext('counter2') },
             h(Counter, { owner, id: 'counter2', generation: 1, enabled: view.enabled })),
     ]);
 }

@@ -28,8 +28,8 @@ async function fact(name: string, value: object) {
 it('C1-08 separate Runtimes use the bundled Worker and each Runtime shares one capacity bound', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-runtimes-')), app = join(dir, 'app.mjs');
     await linkSDKPeers(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, View, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
-const RootType = defineViewType()({ name: 'Root', tools: {
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, defineViewType, StaticView } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
+const RootType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root', tools: {
     inspect: {
         description: 'Inspect launch facts', inputSchema: Type.Object({}, { additionalProperties: false }),
         execute: async ({ context }) => ({ success: true, data: { launch: context.launch.C1_LAUNCH } }),
@@ -37,7 +37,7 @@ const RootType = defineViewType()({ name: 'Root', tools: {
 } });
 function Root() {
     const launch = useAppRuntimeContext().launchConfig;
-    return h('div', null, h(View, { kind: 'instruction', id: 'root', type: RootType, context: { launch } }, 'Worker capacity'));
+    return h('div', null, h(StaticView, { idPrefix: 'root', type: RootType, context: { launch } }, 'Worker capacity'));
 }
 export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root});`);
     const { createRuntime } = await import(url(join(repo, 'runtime/dist/index.js')));
@@ -46,8 +46,8 @@ export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root}
     const sandboxes: any[] = [], workers: any[] = [];
     try {
         for (const [index, runtime] of runtimes.entries()) {
-            const d = await runtime.createDesktop();const id = await runtime.installDynamicWorkerApp(d, url(app), { config: { C1_LAUNCH: index ? 'B' : 'A', AOTUI_DATA_DIR: dir } });
-            const manager = runtime.desktopManager.get(d).appManager, sandbox = manager.workers.get(id);sandboxes.push(sandbox);workers.push(sandbox.workerHost.worker);
+            const d = await runtime.createDesktop();const id = await runtime.installDynamicWorkerApp(d, url(app), { name: 'c1', config: { C1_LAUNCH: index ? 'B' : 'A', AOTUI_DATA_DIR: dir } });
+            const sandbox = runtime.getDesktop(d).appManager.getWorkerSandbox(id);sandboxes.push(sandbox);workers.push(sandbox.workerHost.worker);
             const inspect = async () => {
                 const result = await invokeObservedTool((sandbox as any).workerHost, 'inspect', {}, 'root');
                 expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
@@ -55,15 +55,16 @@ export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root}
             };
             expect(sandbox.workerHost.workerScriptPath).toBe(workerFile);
             expect((await inspect()).launch).toBe(index ? 'B' : 'A');
-            expect(sandbox.config.workerCapacity).toBe(runtime.desktopManager.workerCapacity);
             if (!index) {
                 expect(sandbox.workerHost.timeout).toBe(2345);
-                const other = await runtime.createDesktop();expect(runtime.desktopManager.get(other).appManager.workerCapacity).toBe(manager.workerCapacity);
-                await expect(runtime.installDynamicWorkerApp(other, url(app), { config: { AOTUI_DATA_DIR: dir } })).rejects.toHaveProperty('code', 'INSTALL_FAILED');
+                const other = await runtime.createDesktop();
+                await expect(runtime.installDynamicWorkerApp(other, url(app), { name: 'c1', config: { AOTUI_DATA_DIR: dir } })).rejects.toMatchObject({
+                    code: 'INSTALL_FAILED', cause: { code: 'INSTALL_FAILED', cause: { code: 'WORKER_CAPACITY_EXCEEDED' } },
+                });
             }
         }
         const firstRuntimeClose = await runtimes[0].beginShutdown().completion;
-        expect(firstRuntimeClose.ok).toBe(true);expect(firstRuntimeClose.workers).toMatchObject({ ownership: 'owned', report: { state: 'closed', total: 0 } });
+        expect(firstRuntimeClose.ok).toBe(true);expect(firstRuntimeClose.workers).toMatchObject({ ownership: 'owned', report: { state: 'closed', total: 0, limit: 1 } });
         expect(workers[0].threadId).toBe(-1);
         const result = await invokeObservedTool((sandboxes[1] as any).workerHost, 'inspect', {}, 'root');
         expect((result as any).receipt.outcome.value.data.launch).toBe('B');
@@ -79,7 +80,7 @@ export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root}
 
 it('C1-20 a standalone Sandbox close permits a fresh Node child to end naturally', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-natural-')), app = join(dir, 'app.mjs'), driver = join(dir, 'driver.mjs');
-    await capture(app, `import { createTUIApp, usePersistentState, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};function Root(){usePersistentState('value',3);return null;}export default createTUIApp({persistence:true,viewTypes:[], app_name:'natural',component:Root});`);
+    await capture(app, `import { createTUIApp, useAppRuntimeContext, useEffect } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};function Root(){const {persistence}=useAppRuntimeContext();useEffect(()=>{void persistence.load('value').catch(()=>{});},[persistence]);return null;}export default createTUIApp({persistence:true,viewTypes:[], app_name:'natural',component:Root});`);
     const output = join(dir, 'result.json');
     await capture(driver, `import {WorkerSandbox} from ${JSON.stringify(url(join(repo, 'runtime/dist/engine/app/worker-sandbox.js')))};
 import {defineRuntimeConfig} from ${JSON.stringify(url(join(repo, 'runtime/dist/spi/config/index.js')))};

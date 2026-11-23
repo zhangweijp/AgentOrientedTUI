@@ -9,7 +9,7 @@ import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ProviderRow } from './ProviderRow.js';
 import type { ProviderConfig } from './types.js';
-import { createMockProvider } from './test-helpers.js';
+import { createMockProvider } from './__tests__/mock-provider.js';
 
 describe('ProviderRow', () => {
     const mockProviders: ProviderConfig[] = [
@@ -248,7 +248,7 @@ describe('ProviderRow', () => {
         });
 
         it('should call onEditProvider with correct provider when edit button is clicked', () => {
-            const { container } = render(
+            render(
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
@@ -272,7 +272,7 @@ describe('ProviderRow', () => {
         });
 
         it('should call onDeleteProvider with correct provider when delete button is clicked', () => {
-            const { container } = render(
+            render(
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}

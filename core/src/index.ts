@@ -1,0 +1,36 @@
+export { createSnapshotCore } from './snapshot/store.js';
+export { SemanticProjectionCoordinator } from './projection/coordinator.js';
+export type { AppFrameRef, AppFrameView, AppProjectionFrame, PreparedProjection, ProjectionCommitResult, ProjectionOptions, ProjectionSource } from './projection/coordinator.js';
+export { refKey } from './snapshot/snapshot-support.js';
+export { createViewOwnedTools, ViewToolContractError } from './tool/view-owned-tools.js';
+export { createAppInteraction } from './invocation/app-interaction.js';
+export { createStateSession } from './persistence/state-session.js';
+export { compileToolParameters, compileValueSchema, modelToolSchema } from './tool/tool-parameters.js';
+export type { JsonValue, ViewContent, RefTarget, ViewSnapshot, RefDescriptor, ViewToolBinding, ViewToolReceiver, ToolDescriptor, PreparedAppSnapshotDraft, AppSnapshot, SnapshotIssueCode, SnapshotIssue, CommitResult, SnapshotRead, SnapshotLookup, SnapshotHold, HoldResult, RefLookup, ToolLookup, RefSelector, ToolSelector, SnapshotLimits, SnapshotStoreOptions, SnapshotStoreStats, SnapshotStore, PreparedSnapshotFailure, SnapshotCommitter, SnapshotLifecycle, SnapshotCore, AppIdentityRead, AppIdentityReader } from './snapshot/types.js';
+export type { AppFrameBinding, AppViewTypeDefinition, ViewInstance, ViewOwnedToolLimits, ViewOwnedToolsStats } from './tool/view-owned-tools.js';
+export type { RefScope } from './snapshot/types.js';
+export type { CancellationSignal, ExecutionPhase, BusinessDetails, InvocationOutcome, ExecutionFact, AppInvocation, InvocationSource, ReceiptMetadata, ReceiptQuery, InvocationReceipt, ReceiptAccess, InvokeResult, ObserveResult, InvocationContext, LiveCheck, ExecutionBinding, ExecutionResolver, AppInteractionPolicy, AppInteraction, AppPreviewResult, AppInteractionSource, InteractionLimits, InteractionLimitOverrides, InteractionStats, InstanceInteraction, RequestSources, RequestSourceSelection, ConsoleInputs, ConsoleInputPath, Issue as InteractionIssue } from './invocation/app-interaction-types.js';
+export type { ObservationJsonLimits, ObservationRegistryLimits, ObservationRegistryLimitOverrides, ProjectionLimits, ProjectionLimitOverrides, ViewIdentity, ViewWindowAccess, RefIdentity, ObservationSource, ObservationSelection, ObservationWindowSelection, ObservedView, ObservedTool, ProgramToolInput, ObservedRef, ObservedRefPath, ProgramRefPath, RefConsumer, RefGrant, RefPathGrant, Observation, ObservationGrant, ObservationIssueCode, ObservationIssue, ObservationRegistryStats } from './invocation/observation-types.js';
+export type { RefPath } from './tool/ref-parameters.js';
+export type { SnapshotValueRefSource } from './tool/snapshot-value-arguments.js';
+export type { StateValue, StateAddress, StateValueLimits, StateIssueCode, StateIssue, StateReadResult, StateMutationResult, StateReleaseResult, StateStorage, Rejected as StateRejected } from './persistence/state-storage.js';
+export type { StateSessionLimits, StateFlushEntry, StateFlushReport, StateDisposeReport } from './persistence/state-session.js';
+export type { ToolParameterContract, ToolParameterValidation, ParameterDiagnostic, ToolParameterCompileResult } from './tool/tool-parameters.js';
+export type { ViewToolInvocationTerminal } from './tool/invocation-terminal.js';
+export type { ToolResult, ToolError, ToolResultData } from './tool/tool-result.js';
+
+export { SNAPSHOT_SCHEMA_VERSION } from './snapshot/types.js';
+export { MARKDOWN_VIEW_FORMAT, ViewRegion, ViewMultiplicity, isInstanceName } from './snapshot/types.js';
+export { SnapshotDataError } from './snapshot/json.js';
+
+export { AOTUIError, type ErrorCode } from './errors.js';
+export { captureAppMetadata, type AppMetadata } from './app/app-metadata.js';
+export { isTUIAppFactory, hasViewTypeToolAuthoringProtocol, VIEW_TYPE_TOOL_PROTOCOL, type TUIAppFactory } from './app/app-factory.interface.js';
+export { APP_LIFECYCLE_PROTOCOL, type AppLifecycleCallbacks, type AppLifecyclePort } from './app/app-lifecycle.interface.js';
+export { STATE_SESSION_PROTOCOL, type AppStatePersistence, type StatePersistenceOptions } from './app/state-persistence.interface.js';
+export type { AppInstance, RuntimeContext } from './app/app-instance.interface.js';
+export type { AppContext, AppKernelConfig, AppReinitializeContext, SignalPolicy } from './app/app-kernel.interface.js';
+export type { AppLaunchConfig } from './app/app-config.interface.js';
+export type { AppID, DesktopID } from './app/identity.js';
+export { createRefCapture, type RefCapture, type RefValueCheck } from './snapshot/ref-capture.js';
+export { DEFAULT_SNAPSHOT_LIMITS } from './snapshot/snapshot-support.js';

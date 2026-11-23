@@ -1,7 +1,7 @@
-import { createRuntime, type AppInteraction, type AppInvocation, type Observation, type ObservationSelection,
+import { createRuntime, readAppManifest, type AppManifest, type RegisterPendingAppOptions, type AppInteraction, type AppInvocation, type Observation, type ObservationSelection,
   type ProjectionLimitOverrides, type ReceiptQuery } from '@aotui/runtime';
 
-export async function runManagedHost(appUrl: string, dataDirectory: string) {
+export async function runManagedHost(localPath: string, dataDirectory: string) {
   const runtime = createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 2 } });
   try {
     const desktopId = await runtime.createDesktop();
@@ -30,10 +30,14 @@ export async function runManagedHost(appUrl: string, dataDirectory: string) {
     }
     const projectionLimits: ProjectionLimitOverrides = { maxViews: 2,
       observation: { maxApproxBytes: 128 * 1024, maxCanonicalBytes: 128 * 1024 } };
-    const appId = await runtime.installDynamicWorkerApp(desktopId, appUrl, {
-      projectionLimits,
+    const manifest: AppManifest = await readAppManifest(localPath);
+    if (manifest.metadata.app_name !== 'interaction_example') throw Error('Unexpected manifest');
+    const registration: RegisterPendingAppOptions = {
+      installationId: 'interaction_install', localPath, projectionLimits,
       config: { AOTUI_DATA_DIR: dataDirectory },
-    });
+    };
+    const installationId = await desktop.registerPendingApp(registration);
+    const appId = await desktop.openApp(installationId);
     const instanceId = desktop.getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
     if (!instanceId) throw Error('App has no running instance');
     const access = runtime.getAppInteraction(desktopId, appId, instanceId);
@@ -46,7 +50,7 @@ export async function runManagedHost(appUrl: string, dataDirectory: string) {
       if (adopted.status !== 'adopted') throw Error(adopted.status);
       const requests: readonly { name: string; input: AppInvocation['input'] }[] = [
         { name: 'ordinary', input: { view_id: 'detail', text: 'change' } },
-        { name: 'ref', input: { view_id: 'detail', file: 'detail.file' } },
+        { name: 'ref', input: { view_id: 'detail', file: '$' + appId + '.detail.file' } },
       ];
       for (const [index, request] of requests.entries()) {
         const tool = observation.tools.find(tool => tool.name === request.name);

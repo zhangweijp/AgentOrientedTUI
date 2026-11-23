@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { AppWorkerHost } from './worker-host.js';
 
 class TestWorker extends EventEmitter {
-    sent: any[] = [];terminated = 0;shutdownFailed = false;closeFailed = false;openFailed = false;
+    sent: any[] = [];terminated = 0;shutdownFailed = false;openFailed = false;
     ack: 'valid' | 'missing' | 'invalid' | 'undefined' | 'accessor' = 'valid';
     ackReads = 0;
     contactStorage = true;
@@ -23,35 +23,34 @@ class TestWorker extends EventEmitter {
                 projectionLimits: message.projectionLimits,
                 appInstanceId: message.appInstanceId,
                 ...(this.ack === 'missing' ? {} : { persistence: this.ack === 'undefined' ? undefined :
-                    { protocol: 'state-session-v1', version: 1, instanceId: this.ack === 'invalid' ? 'other' : message.appInstanceId } }) };
+                    { protocol: 'state-session-v2', version: 2, instanceId: this.ack === 'invalid' ? 'other' : message.appInstanceId } }) };
                 if (this.ack === 'accessor') Object.defineProperty(reply, 'persistence', { get: () => { this.ackReads++; return undefined; } });
                 this.emit('message', reply);
             }
             else if (message.type === 'APP_OPEN' && this.openFailed) {
                 const instanceId = this.sent[0].appInstanceId;
                 this.emit('message', { type: 'LIFECYCLE_RESPONSE', requestId: message.requestId, success: false,
-                    error: { code: 'PERSISTENCE_CLOSE_FAILED', message: 'Managed persistence did not complete successfully' },
+                    error: { code: 'E_OPEN_FAILED', message: 'First App open failed' },
                     appCleanup: { protocol: 'app-lifecycle-v2', instanceId, state: 'completed', issues: [] },
-                    persistence: { protocol: 'state-session-v1', instanceId, ok: false, unmount: 'completed',
+                    persistence: { protocol: 'state-session-v2', instanceId, ok: true, unmount: 'completed',
+                        flush: { status: 'completed', ok: true, entries: [] },
                         dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } });
             } else {
                 const instanceId = this.sent[0].appInstanceId, closing = message.type === 'APP_CLOSE';
                 const lifecycleRequest = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
                 const cleanupFailed = this.shutdownFailed && lifecycleRequest;
-                const persistenceFailed = closing && (this.closeFailed || cleanupFailed);
                 const response = { type: 'LIFECYCLE_RESPONSE', requestId: message.requestId,
-                    success: closing ? !persistenceFailed : true,
+                    success: !closing || !cleanupFailed,
                     ...(lifecycleRequest ? { appCleanup: {
                         protocol: 'app-lifecycle-v2', instanceId, state: closing ? cleanupFailed ? 'failed' : 'completed' : 'stopped',
                         issues: cleanupFailed ? [closing ? 'APP_CLEANUP_FAILED' : 'APP_STOP_FAILED'] : [],
                     } } : {}),
-                    ...(this.ack !== 'missing' && ['APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type) ? { persistence: { protocol: 'state-session-v1', instanceId,
-                        ok: closing && !persistenceFailed,
-                        unmount: closing ? cleanupFailed ? 'failed' : 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
-                        ...(closing ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}) };
+                    ...(this.ack !== 'missing' && closing ? { persistence: { protocol: 'state-session-v2', instanceId,
+                        ok: true, unmount: cleanupFailed ? 'failed' : 'completed', flush: { status: 'completed', ok: true, entries: [] },
+                        dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } } : {}) };
                 if (message.type === 'APP_CLOSE' && this.contactStorage && this.ack !== 'missing') {
                     this.pendingCloseResponse = response;
-                    this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 2, action: 'release' });
+                    this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2, instanceId, sequence: 2, action: 'release' });
                 } else this.emit('message', response);
             }
         });
@@ -65,7 +64,7 @@ const setup = (worker = new TestWorker(), options: Partial<ConstructorParameters
 it.each(['missing', 'invalid', 'undefined', 'accessor', 'valid'] as const)('B02: separate persistence ACK %s; no backend opens merely from negotiation', async ack => {
     const { worker, host } = setup();worker.ack = ack;
     if (ack === 'valid' || ack === 'missing') await host.start();
-    else await expect(host.start()).rejects.toThrow('PERSISTENCE_NEGOTIATION_FAILED');
+    else await expect(host.start()).rejects.toThrow('PERSISTENCE_UNAVAILABLE');
     expect(worker.ackReads).toBe(0);
     expect(host.getPersistenceReport()).toMatchObject({ support: ack === 'valid' ? 'managed' : ack === 'missing' ? 'not-used' : 'rejected', actualIO: 0, ownerRetained: false });
     host.terminate();
@@ -77,7 +76,7 @@ it('ignores unsolicited storage and a bad directory for an unnegotiated App, the
     } });
     worker.ack = 'missing';
     await host.start();
-    worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: host.appInstanceId,
+    worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2, instanceId: host.appInstanceId,
         sequence: 1, action: 'read', address: { namespace: '["d","a"]', key: 'value' } });
     await host.open();
     await host.close();
@@ -116,7 +115,7 @@ it('captures a relative directory and backend before negotiation', async () => {
         const pending = host.start();
         config.AOTUI_DATA_DIR = 'changed';
         await pending;
-        worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: host.appInstanceId,
+        worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2, instanceId: host.appInstanceId,
             sequence: 1, action: 'read', address: { namespace: '["d","a"]', key: 'value' } });
         await host.close();
         expect(directory).toBe(resolve('captured/app-state'));
@@ -126,11 +125,11 @@ it('B04: one logical initialization; constructor timeout is bounded', async () =
     const { host } = setup();await host.start();await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');host.terminate();
     for (const timeout of [0, -1, NaN, Infinity, 1.5, 300001, 2147483648]) expect(() => new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused', timeout })).toThrow('INVALID_INPUT');
 });
-it('B05/B18: retains failed initial persistence cleanup evidence and released ownership', async () => {
+it('preserves an initial App error and the successful storage cleanup independently', async () => {
     const { worker, host } = setup();await host.start();worker.openFailed = true;
-    await expect(host.open()).rejects.toThrow('Managed persistence did not complete successfully');
-    expect(host.getPersistenceReport()).toMatchObject({ unsafe: true, lifecycle: {
-        ok: false, unmount: 'completed', dispose: { release: { status: 'released' } },
+    await expect(host.open()).rejects.toMatchObject({ code: 'E_OPEN_FAILED', message: 'E_OPEN_FAILED: First App open failed' });
+    expect(host.getPersistenceReport()).toMatchObject({ unsafe: false, lifecycle: {
+        ok: true, unmount: 'completed', dispose: { release: { status: 'released' } },
     } });
     expect(host.getResourceReport().appCleanup?.report).toMatchObject({ state: 'completed', issues: [] });
     host.terminate();
@@ -138,7 +137,8 @@ it('B05/B18: retains failed initial persistence cleanup evidence and released ow
 it('B18: shutdown lifecycle failure still reaches APP_CLOSE and cannot pool', async () => {
     const { worker, host } = setup();worker.shutdownFailed = true;await host.start();
     const close = host.close();expect(host.close()).toBe(close);await expect(close).rejects.toThrow('APP_CLEANUP_FAILED');
-    expect(worker.sent.filter(m => m.type === 'APP_CLOSE')).toHaveLength(1);expect(host.getPersistenceReport().unsafe).toBe(true);
+    expect(worker.sent.filter(m => m.type === 'APP_CLOSE')).toHaveLength(1);
+    expect(host.getPersistenceReport()).toMatchObject({ unsafe: false, lifecycle: { ok: true, unmount: 'failed' }, release: { status: 'released' } });
     expect((await host.waitForResourceRelease()).worker).toBe('exited');expect(worker.terminated).toBe(1);
 });
 it('B13: a storage type accessor never falls through into the legacy message router', async () => {

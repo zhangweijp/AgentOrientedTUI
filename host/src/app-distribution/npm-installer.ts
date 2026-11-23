@@ -4,14 +4,12 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import { execFile as nodeExecFile } from 'child_process';
 import { promisify } from 'util';
-import type { AppRegistry } from '@aotui/runtime';
 import { parseNpmSpecifier } from './sources.js';
 
 const execFile = promisify(nodeExecFile);
 
 export interface NpmInstallOptions {
     cacheRoot?: string;
-    forceReinstall?: boolean;
     npmBinary?: string;
     commandRunner?: (command: string, args: string[], cwd: string) => Promise<void>;
 }
@@ -31,80 +29,55 @@ export async function installNpmPackage(packageInput: string, options?: NpmInsta
     const cacheRoot = options?.cacheRoot ?? getDefaultAppCacheRoot();
     const npmBinary = options?.npmBinary ?? 'npm';
     const requestedVersion = parsed.version;
-    const versionSegment = sanitizeSegment(parsed.version ?? 'latest');
-    const packageSegment = sanitizePackageName(parsed.packageName);
-    const installRoot = path.join(cacheRoot, packageSegment, versionSegment);
-
-    await fsp.mkdir(installRoot, { recursive: true });
-    await ensureInstallWorkspace(installRoot);
-
-    const installedPath = path.join(installRoot, 'node_modules', parsed.packageName);
-    const alreadyInstalled = fs.existsSync(installedPath);
-
-    if (!alreadyInstalled || options?.forceReinstall) {
+    await fsp.mkdir(cacheRoot, { recursive: true });
+    // npm may replace packages in its working directory. Only this attempt owns this workspace.
+    const installRoot = await fsp.mkdtemp(path.join(cacheRoot, 'install-'));
+    try {
+        await fsp.writeFile(path.join(installRoot, 'package.json'), JSON.stringify({ name: 'agentina-app-cache', private: true }));
         await runInstallCommand(
             npmBinary,
             ['install', '--no-save', '--omit=dev', '--ignore-scripts', parsed.packageSpec],
             installRoot,
             options?.commandRunner
         );
+        const installedPath = path.join(installRoot, 'node_modules', parsed.packageName);
+        if (!fs.existsSync(installedPath)) {
+            throw new Error(`Package install succeeded but app path was not found: ${installedPath}`);
+        }
+        return {
+            packageName: parsed.packageName, packageSpec: parsed.packageSpec, requestedVersion,
+            resolvedVersion: await readPackageVersion(installedPath), installRoot, installedPath,
+            localSource: `local:${installedPath}`,
+        };
+    } catch (error) {
+        await removeNpmCache(installRoot, cacheRoot).catch(cause => console.warn(`Could not remove failed npm workspace ${installRoot}`, cause));
+        throw error;
     }
-
-    if (!fs.existsSync(installedPath)) {
-        throw new Error(`Package install succeeded but app path was not found: ${installedPath}`);
-    }
-
-    const resolvedVersion = await readPackageVersion(installedPath);
-
-    return {
-        packageName: parsed.packageName,
-        packageSpec: parsed.packageSpec,
-        requestedVersion,
-        resolvedVersion,
-        installRoot,
-        installedPath,
-        localSource: `local:${installedPath}`
-    };
 }
 
 function getDefaultAppCacheRoot(): string {
     return path.join(os.homedir(), '.agentina', 'apps', 'npm');
 }
 
-/** Remove the product-owned npm package before removing its registry entry. */
-export async function removeInstalledApp(registry: AppRegistry, name: string, cacheRoot = getDefaultAppCacheRoot()): Promise<void> {
-    const distribution = registry.getEntry(name)?.distribution;
-    if (distribution?.type === 'npm' && typeof distribution.installRoot === 'string' && distribution.installRoot.trim()) {
-        const managed = path.resolve(cacheRoot) + path.sep;
-        const installed = path.resolve(distribution.installRoot);
-        if (installed.startsWith(managed)) {
-            await fsp.rm(installed, { recursive: true, force: true });
-            for (let parent = path.dirname(installed); parent.startsWith(managed); parent = path.dirname(parent)) {
-                try { await fsp.rmdir(parent); }
-                catch { break; }
-            }
-        }
+/** Remove only a cache workspace owned by this product. */
+export async function removeNpmCache(installRoot: string, cacheRoot = getDefaultAppCacheRoot()): Promise<void> {
+    if (typeof installRoot !== 'string' || !installRoot.trim()) return;
+    const managed = await fsp.realpath(cacheRoot).catch(error => {
+        if (error.code !== 'ENOENT') throw error;
+        return undefined;
+    });
+    const relative = path.relative(path.resolve(cacheRoot), path.resolve(installRoot));
+    if (!managed || !relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) return;
+    const installed = await fsp.realpath(installRoot).catch(error => {
+        if (error.code !== 'ENOENT') throw error;
+        return undefined;
+    });
+    if (!installed || installed !== path.join(managed, relative)) return;
+    await fsp.rm(installed, { recursive: true, force: true });
+    for (let parent = path.dirname(installed); parent.startsWith(managed + path.sep); parent = path.dirname(parent)) {
+        try { await fsp.rmdir(parent); }
+        catch { break; }
     }
-    await registry.remove(name);
-}
-
-async function ensureInstallWorkspace(workspaceRoot: string): Promise<void> {
-    const packageJsonPath = path.join(workspaceRoot, 'package.json');
-    if (fs.existsSync(packageJsonPath)) {
-        return;
-    }
-    await fsp.writeFile(
-        packageJsonPath,
-        JSON.stringify(
-            {
-                name: 'agentina-app-cache',
-                private: true
-            },
-            null,
-            2
-        ),
-        'utf-8'
-    );
 }
 
 async function runInstallCommand(
@@ -139,15 +112,4 @@ async function readPackageVersion(installedPath: string): Promise<string | null>
     } catch {
         return null;
     }
-}
-
-function sanitizePackageName(value: string): string {
-    return value
-        .replace(/^@/, 'scope-')
-        .replace(/[\\/]/g, '__')
-        .replace(/[^a-zA-Z0-9._-]/g, '_');
-}
-
-function sanitizeSegment(value: string): string {
-    return value.replace(/[^a-zA-Z0-9._-]/g, '_');
 }

@@ -110,7 +110,7 @@ export function applySourceControlsToSources(
 
     const aotuiSource = options.aotuiSource;
     if (aotuiSource) {
-        aotuiSource.setEnabled(controls.apps.enabled);
+        aotuiSource.setAppsEnabled(controls.apps.enabled);
         controls.apps.disabledItems.forEach((item) => aotuiSource.setAppEnabled(item, false));
     }
 

@@ -1,10 +1,10 @@
-import { SnapshotDataError, type CancellationSignal, type JsonValue, type SnapshotIssue } from '@aotui/runtime/core';
+import { SnapshotDataError, type CancellationSignal, type SnapshotIssue } from '@aotui/core';
 import { options, type VNode } from 'preact';
 import { createRefCapture, DEFAULT_SNAPSHOT_LIMITS, type AppFrameRef, type AppProjectionFrame, type PreparedProjection,
-    type ProjectionCommitResult, type RuntimeContext } from '@aotui/runtime/spi';
+    type ProjectionCommitResult, type RuntimeContext } from '@aotui/core';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
 import type { RefRegistry } from '../contexts/view-runtime-context.js';
-import { capturedRefValue } from './refs.js';
+import { publishedValue, type CapturedPublication } from './refs.js';
 
 // Preact 10.29.1 distribution layout. VNode __ points to the parent and __c
 // points to the component. __P is cleared on unmount even for DOM-less components.
@@ -22,13 +22,13 @@ type CommitOptions = typeof options & {
 };
 
 type CommitMode = 'opening' | 'restore';
-type RenderRef = { id: string; refType: string | undefined; value?: JsonValue };
-type RefValues = ReadonlyMap<RenderRef, JsonValue>;
+type RenderRef = { id: string; value?: AppFrameRef };
+type RefValues = ReadonlyMap<RenderRef, AppFrameRef>;
 type RenderWork = {
     rendered: Set<object>;
     unmounting: Set<MountedComponent>;
     capture: ReturnType<typeof createRefCapture>;
-    refs: Map<RenderRef, JsonValue>;
+    refs: Map<RenderRef, AppFrameRef>;
     failure?: { error: unknown };
 };
 type ProjectionAttempt = {
@@ -38,6 +38,7 @@ type ProjectionAttempt = {
 };
 type RenderOwner = {
     runtime: Pick<RuntimeContext, 'publishFrame' | 'signal'>;
+    readPreparedProjection: () => PreparedProjection;
     readFrame: (refs: RefValues) => AppProjectionFrame;
     refs: Set<RenderRef>;
     failed: Set<object>;
@@ -61,6 +62,7 @@ let request: RenderRequest | undefined;
 let runningScheduled = false;
 let installed = false;
 const asyncFunction = Object.getPrototypeOf(async function () {});
+const closedError = () => Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' });
 
 function componentKey(component: object): object {
     let key = componentKeys.get(component);
@@ -98,7 +100,7 @@ function createWork(): RenderWork {
     return { rendered: new Set(), unmounting: new Set(), capture: createRefCapture(), refs: new Map() };
 }
 
-function refValue(entry: RenderRef, values: RefValues): JsonValue | undefined {
+function refValue(entry: RenderRef, values: RefValues): AppFrameRef | undefined {
     const next = values.get(entry);
     return next === undefined ? entry.value : next;
 }
@@ -128,23 +130,21 @@ export function createViewRefs(context: object, viewId: string) {
     };
     const registry: RefRegistry = {
         captureRef: (data, check) => work().capture(data, check),
-        registerRef(id, data, refType) {
+        registerRef(data) {
             work();
-            if (!viewId.trim() || viewId.includes('.') || !id.trim() || id.includes('.')) {
-                throw Object.assign(new Error('View and Ref IDs must be non-empty and cannot contain a dot'), { code: 'REF_ID_INVALID' });
-            }
+            const { id } = data;
             if (entries.has(id)) {
                 throw Object.assign(new Error(`Ref '${id}' is already registered in View '${viewId}'`),
                     { name: 'RefRegistrationError', code: 'REF_ALREADY_REGISTERED' });
             }
             if (owner.refs.size >= DEFAULT_SNAPSHOT_LIMITS.maxRefs) throw new Error('Ref capacity exceeded');
-            const entry = { id, refType };
+            const entry: RenderRef = { id };
             entries.set(id, entry);
             owner.refs.add(entry);
-            const update = (value: Parameters<RefRegistry['registerRef']>[1]) => {
-                if (entries.get(id) !== entry) throw new Error(`Ref binding '${id}' in View '${viewId}' is no longer active`);
+            const update = (value: CapturedPublication) => {
+                if (entries.get(id) !== entry || value.id !== id) throw new Error(`Invalid Ref binding '${id}' in View '${viewId}'`);
                 const current = work();
-                try { current.refs.set(entry, capturedRefValue(viewId, id, value)); }
+                try { current.refs.set(entry, publishedValue(viewId, value)); }
                 catch (error) { current.failure ??= { error }; }
             };
             update(data);
@@ -157,7 +157,7 @@ export function createViewRefs(context: object, viewId: string) {
             return [...entries.values()].map(entry => {
                 const value = refValue(entry, values);
                 if (value === undefined) throw new Error('Ref has no successful capture');
-                return { id: entry.id, refType: entry.refType, value };
+                return value;
             });
         },
         release() { for (const entry of entries.values()) release(entry); },
@@ -284,10 +284,16 @@ function installCommitHooks(): void {
     };
 }
 
-export function createRenderCommit(runtime: RenderOwner['runtime'], context: object,
+export function createRenderCommit(runtime: RenderOwner['runtime'] & Pick<RuntimeContext, 'readPreparedProjection'>, context: object,
     readFrame: RenderOwner['readFrame']): (render: () => void) => void {
+    const readPreparedProjection = runtime.readPreparedProjection;
+    if (typeof readPreparedProjection !== 'function') {
+        throw new SnapshotDataError('SNAPSHOT_INVALID', 'RuntimeContext.readPreparedProjection',
+            'The Preact SDK requires RuntimeContext.readPreparedProjection from the same delivery. Bind it to this App’s SemanticProjectionCoordinator.');
+    }
     installCommitHooks();
-    const owner: RenderOwner = { runtime, readFrame, refs: new Set(), failed: new Set() };
+    const owner: RenderOwner = { runtime, readPreparedProjection: readPreparedProjection.bind(runtime),
+        readFrame, refs: new Set(), failed: new Set() };
     owners.set(context, owner);
     return render => {
         const previous = request;
@@ -351,14 +357,13 @@ export function trackRenderCommits(): void {
 }
 
 export async function whenRenderCommitted(signal: CancellationSignal, context?: object): Promise<void> {
-    const closed = () => Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' });
     const owner = context && owners.get(context);
     for (;;) {
-        if (signal.aborted) throw closed();
+        if (signal.aborted) throw closedError();
         const pending = owner?.attempt?.settled ?? scheduled;
         if (!pending) return;
         await new Promise<void>((resolve, reject) => {
-            const abort = () => { signal.removeEventListener('abort', abort); reject(closed()); };
+            const abort = () => { signal.removeEventListener('abort', abort); reject(closedError()); };
             signal.addEventListener('abort', abort, { once: true });
             void pending.then(() => { signal.removeEventListener('abort', abort); resolve(); });
         });
@@ -367,6 +372,7 @@ export async function whenRenderCommitted(signal: CancellationSignal, context?: 
 
 async function commitUpdate(owner: RenderOwner, attempt: ProjectionAttempt, signal: CancellationSignal,
     update: () => unknown, mode?: CommitMode): Promise<ProjectionCommitResult | undefined> {
+    if (signal.aborted) throw closedError();
     let failure: { error: unknown } | undefined;
     attempt.collecting = true;
     try {
@@ -382,15 +388,14 @@ async function commitUpdate(owner: RenderOwner, attempt: ProjectionAttempt, sign
 
     const work = attempt.work;
     delete attempt.work;
+    if (signal.aborted) throw failure ? failure.error : closedError();
     let result: ProjectionCommitResult | undefined;
     if (work) {
         if (failure) work.failure ??= failure;
         result = finishProjection(owner, work, mode);
-    } else if (mode === undefined && !failure && !owner.failure && !signal.aborted) {
-        throw new SnapshotDataError('SNAPSHOT_INVALID', '$.views',
-            'prepareProjection did not observe a Preact commit for this App. Check that the callback changes state used by this App. ' +
-            'Setting state to its current value can skip the commit.');
-    } else if (mode === 'restore' && !signal.aborted) {
+    } else if (mode === undefined && !failure && !owner.failure) {
+        result = owner.readPreparedProjection();
+    } else if (mode === 'restore') {
         const missed = createWork();
         missed.failure = failure ?? {
             error: new SnapshotDataError('SNAPSHOT_INVALID', '$.views', 'The opening rollback did not commit a render'),
@@ -419,9 +424,19 @@ export async function prepareRenderProjection(context: object, signal: Cancellat
         await whenRenderCommitted(signal);
         const result = await commitUpdate(owner, attempt, signal, update, revert ? 'opening' : undefined);
         if (revert && result?.status === 'rejected') {
-            const restored = await commitUpdate(owner, attempt, signal, revert, 'restore');
-            if (restored?.status === 'restored') throw projectionError(result.issue);
-            throw owner.failure ? owner.failure.error : projectionError();
+            const refusal = projectionError(result.issue);
+            try {
+                const restored = await commitUpdate(owner, attempt, signal, revert, 'restore');
+                if (restored?.status !== 'restored') throw owner.failure ? owner.failure.error : projectionError();
+            } catch (error) {
+                const detail = error instanceof Error ? error : projectionError();
+                const code = Object.getOwnPropertyDescriptor(detail, 'code')?.value;
+                const path = Object.getOwnPropertyDescriptor(detail, 'path')?.value;
+                throw Object.assign(new AggregateError([refusal, error], detail.message, { cause: error }), {
+                    code: typeof code === 'string' ? code : 'SNAPSHOT_INVALID', path: typeof path === 'string' ? path : '$.views',
+                });
+            }
+            throw refusal;
         }
         if (result?.status !== 'prepared') throw owner.failure ? owner.failure.error : projectionError();
         return result;

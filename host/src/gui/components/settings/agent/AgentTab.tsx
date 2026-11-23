@@ -36,21 +36,6 @@ export interface AgentConfig {
     };
 }
 
-const createAgent = (): AgentConfig => {
-    const now = Date.now();
-    return {
-        id: `agent_${now}_${Math.random().toString(36).slice(2, 7)}`,
-        name: 'New Agent',
-        prompt: '',
-        modelId: '',
-        enabledApps: [],
-        enabledSkills: {},
-        enabledMCPs: [],
-        disabledMcpTools: [],
-        skin: {},
-    };
-};
-
 type EditorType = 'prompt' | 'model' | 'apps' | 'skills' | 'mcp' | 'skin' | null;
 
 export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (tab: string) => void }> = ({ projectPath, onSwitchTab }) => {

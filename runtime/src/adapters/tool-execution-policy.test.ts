@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { withToolAuthorization } from './tool-execution-policy.js';
-import type { ObservationGrant } from '../core/invocation/observation-types.js';
-import type { AppSnapshot } from '../core/snapshot/types.js';
-import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
+import type { ObservationGrant } from '@aotui/core';
+import type { AppSnapshot } from '@aotui/core';
+import type { AppInteractionPolicy } from '@aotui/core';
 
 function fixture() {
     const source: AppSnapshot = {
-        schemaVersion: 6, id: 'snapshot', appId: 'app', instanceId: 'run', revision: 1, createdAt: 1, contentDigest: 'digest',
+        schemaVersion: 7, id: 'snapshot', appId: 'app', instanceId: 'run', revision: 1, createdAt: 1, contentDigest: 'digest',
         views: [], refs: {}, tools: {
-            read: { id: 'read', name: 'read', viewType: 'Detail', nameSharedAcrossViewTypes: false, description: 'Read',
+            read: { multiplicity: 'multiple', id: 'read', name: 'read', viewType: 'Detail', nameSharedAcrossViewTypes: false, description: 'Read',
                 inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } },
         },
     };

@@ -3,24 +3,7 @@ import { useChatBridge } from '../../../ChatBridge.js';
 import { LoadingState } from '../LoadingState.js';
 import { AgentEditorModal } from '../agent/AgentEditorModal.js';
 
-interface AppDistributionEntry {
-    type?: 'local' | 'npm' | 'git' | 'catalog';
-    packageName?: string;
-    requested?: string;
-    resolvedVersion?: string;
-    installedPath?: string;
-    installedAt?: string;
-}
-
-interface AppEntry {
-    source: string;
-    enabled: boolean;
-    installedAt?: string;
-    autoStart?: boolean;
-    originalSource?: string;
-    distribution?: AppDistributionEntry;
-    [key: string]: unknown;
-}
+import type { AppConfigEntry } from '../../../../app-distribution/app-catalog.js';
 
 interface FeedbackState {
     tone: 'success' | 'error';
@@ -32,7 +15,7 @@ type InstallMode = 'local' | 'npm';
 export const AppsTab: React.FC = () => {
     const bridge = useChatBridge();
 
-    const [apps, setApps] = useState<Record<string, AppEntry>>({});
+    const [apps, setApps] = useState<Record<string, AppConfigEntry>>({});
     const [isLoading, setIsLoading] = useState(true);
     const [selectedName, setSelectedName] = useState<string | null>(null);
     const [pending, setPending] = useState<Set<string>>(new Set());
@@ -81,8 +64,7 @@ export const AppsTab: React.FC = () => {
 
     const loadApps = async (nextSelectedName?: string | null) => {
         try {
-            const data = await bridge.getTrpcClient().apps.getConfig.query();
-            const nextApps = (data ?? {}) as Record<string, AppEntry>;
+            const nextApps = await bridge.getTrpcClient().apps.getConfig.query();
             setApps(nextApps);
 
             if (nextSelectedName !== undefined) {

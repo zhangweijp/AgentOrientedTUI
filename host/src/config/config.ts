@@ -9,7 +9,9 @@
 import fs from "fs/promises"
 import path from "path"
 import os from "os"
-import type { ModelInputLimits } from "@aotui/agent-driver-v2"
+import { randomUUID } from "node:crypto"
+import { createRequire } from "node:module"
+import type { LLMConfig, ModelInputLimits } from "@aotui/agent-driver-v2"
 
 import { ImConfig } from "./im-schema.js"
 import { Mcp, McpConfig } from "./mcp-schema.js"
@@ -66,8 +68,9 @@ export interface Info {
 }
 
 export interface TuiInfo {
-  version?: number
+  apps?: Record<string, unknown>
   modelInputLimits?: Record<string, ModelInputLimits>
+  toolSchemaModes?: Record<string, NonNullable<LLMConfig['provider']['toolSchemaMode']>>
   [key: string]: unknown
 }
 
@@ -167,6 +170,8 @@ function preprocessJsonc(text: string): string {
       while (i < text.length && !(text[i] === "*" && i + 1 < text.length && text[i + 1] === "/")) {
         i++
       }
+      if (i === text.length) throw new SyntaxError("Unterminated block comment")
+      out.push(" ")
       i += 2 // 跳过 */
       continue
     }
@@ -191,12 +196,74 @@ async function readConfigFile(filepath: string): Promise<Info> {
 }
 
 async function readTuiConfigFile(filepath: string): Promise<TuiInfo> {
+  let text: string
   try {
-    const text = await fs.readFile(filepath, "utf8")
-    return JSON.parse(preprocessJsonc(text)) as TuiInfo
+    text = await fs.readFile(filepath, "utf8")
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return {}
-    throw err
+    throw tuiConfigError("CONFIG_READ_FAILED", filepath, err)
+  }
+  try {
+    const config: unknown = JSON.parse(preprocessJsonc(text))
+    if (!isConfigObject(config)) throw new TypeError("Expected a configuration object")
+    if (config.apps !== undefined && !isConfigObject(config.apps)) {
+      throw new TypeError("Expected apps to be an object")
+    }
+    return config as TuiInfo
+  } catch (err) {
+    throw tuiConfigError("CONFIG_INVALID", filepath, err)
+  }
+}
+
+function isConfigObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function tuiConfigError(code: string, filepath: string, cause?: unknown) {
+  const reason = cause instanceof Error ? `: ${cause.message}` : ""
+  return Object.assign(new Error(`${code} ${filepath}${reason}`, { cause }), { code, path: filepath })
+}
+
+const require = createRequire(import.meta.url)
+
+async function lockTuiConfig(filepath: string) {
+  const absolute = path.resolve(filepath)
+  let target = absolute
+  try {
+    await fs.mkdir(path.dirname(absolute), { recursive: true })
+    try {
+      target = await fs.realpath(absolute)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
+      const entry = await fs.lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error
+        return undefined
+      })
+      if (entry?.isSymbolicLink()) throw new Error("The configuration link has no target")
+      target = path.join(await fs.realpath(path.dirname(absolute)), path.basename(absolute))
+    }
+    const lockPath = `${target}.lock`
+    // The sidecar only supplies SQLite's local file lock. It contains no tables or config data.
+    // Keep the inode in place so all writers coordinate on it. Process exit releases the lock.
+    const Database = require("better-sqlite3") as new (file: string, options: { timeout: number }) => {
+      exec(statement: string): unknown
+      close(): void
+    }
+    const lock = new Database(lockPath, { timeout: 0 })
+    try {
+      lock.exec("BEGIN IMMEDIATE")
+    } catch (err) {
+      lock.close()
+      const code = (err as { code?: string }).code
+      if (code?.startsWith("SQLITE_BUSY") || code?.startsWith("SQLITE_LOCKED")) {
+        throw tuiConfigError("CONFIG_CONFLICT", target, new Error("Another writer is updating this file. Retry when it finishes."))
+      }
+      throw err
+    }
+    return { target, lockPath, lock }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "CONFIG_CONFLICT") throw err
+    throw tuiConfigError("CONFIG_WRITE_FAILED", target, err)
   }
 }
 
@@ -284,7 +351,6 @@ export namespace Config {
     const written = globalWrites.then(async () => {
       const existing = await readConfigFile(filepath)
       const next = edit(existing)
-      next.$schema ??= "https://opencode.ai/config.json"
       await fs.mkdir(path.dirname(filepath), { recursive: true })
       await fs.writeFile(filepath, JSON.stringify(next, null, 2), "utf8")
       return next
@@ -310,7 +376,37 @@ export namespace Config {
     return writeGlobal(existing => ({ ...existing, mcp: McpConfig.parse(mcp) }))
   }
 
-  export async function getTuiConfig(): Promise<TuiInfo> {
-    return readTuiConfigFile(getTuiConfigPath())
+  export function getTuiConfig(filepath = getTuiConfigPath()): Promise<TuiInfo> {
+    return readTuiConfigFile(filepath)
+  }
+
+  export async function updateTuiConfig<T>(edit: (config: TuiInfo, filename: string) => T, filepath = getTuiConfigPath(),
+    afterWrite?: (result: T) => Promise<void>): Promise<T> {
+    const { target, lockPath, lock } = await lockTuiConfig(filepath)
+    try {
+      const config = await readTuiConfigFile(target)
+      const result = edit(config, target)
+      const temporary = `${target}.${randomUUID()}.tmp`
+      try {
+        const original = await fs.stat(target).catch(err => {
+          if (err.code !== "ENOENT") throw err
+          return undefined
+        })
+        await fs.writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, {
+          flag: "wx", mode: original ? original.mode & 0o777 : 0o600,
+        })
+        await fs.rename(temporary, target)
+      } catch (err) {
+        await fs.rm(temporary, { force: true }).catch(() => {})
+        throw tuiConfigError("CONFIG_WRITE_FAILED", target, err)
+      }
+      // Cache cleanup may only follow a confirmed removal and must finish before another installer can reuse it.
+      await afterWrite?.(result)
+      return result
+    } finally {
+      try { lock.close() } catch (error) {
+        console.warn(tuiConfigError("CONFIG_LOCK_RELEASE_FAILED", lockPath, error))
+      }
+    }
   }
 }

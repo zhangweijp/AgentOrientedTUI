@@ -3,7 +3,7 @@ import { createRuntime } from '@aotui/runtime';
 import { Config } from '../src/config/config.js';
 import { DesktopManager } from '../src/core/desktop-manager.js';
 import { LLMConfigService } from '../src/core/llm-config-service.js';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
 import { MCP } from '../src/mcp/index.js';
 import { ModelRegistry } from '../src/services/model-registry.js';
 import { SessionManagerV3 } from '../src/core/session-manager-v3.js';
@@ -50,7 +50,7 @@ describe('SessionManagerV3 persisted source controls', () => {
     const kernel = createRuntime();
     const llm = new LLMConfigService(new ModelRegistry());
     vi.spyOn(llm, 'resolveLLMConfig').mockResolvedValue({ model: 'synthetic', provider: { id: 'openai' } });
-    manager = new SessionManagerV3(kernel, new DesktopManager({ kernel }), llm, new MessageServiceV2());
+    manager = new SessionManagerV3(kernel, new DesktopManager({ kernel }), llm, new MessageService());
 
     expect((await manager.getSourceControlState(topicId)).mcp).toEqual({ enabled: false, allowedServers: ['tools'], disabledItems: ['tools::search'] });
     await manager.ensureSession(topicId);

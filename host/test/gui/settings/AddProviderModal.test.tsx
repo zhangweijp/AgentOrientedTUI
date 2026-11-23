@@ -36,7 +36,7 @@ describe('AddProviderModal', () => {
             { id: 'anthropic', name: 'Anthropic', baseURL: 'https://api.anthropic.com', modelCount: 5 },
             { id: 'google', name: 'Google', baseURL: 'https://generativelanguage.googleapis.com/v1beta', modelCount: 8 },
         ]);
-        catalog.models.mockReset().mockResolvedValue([{ id: rawModel, catalogId: 'openai/' + rawModel }]);
+        catalog.models.mockReset().mockResolvedValue([{ id: rawModel }]);
     });
 
     afterEach(() => {

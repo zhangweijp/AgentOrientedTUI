@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && node scripts/build-native-lsp.mjs && node ./node_modules/@typescript/native/bin/tsc && node ../../scripts/generate-aoapp.mjs .",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && node scripts/build-native-lsp.mjs && node ./node_modules/@typescript/native/bin/tsc && generate-aoapp .",
     "watch": "node ./node_modules/@typescript/native/bin/tsc --watch",
     "test": "jest --passWithNoTests",
     "test:jest": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --passWithNoTests",
@@ -37,7 +37,8 @@
     "tsx": "^4.21.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@jest/globals": "29.7.0"
+    "@jest/globals": "29.7.0",
+    "@aotui/runtime": "8.0.0"
   },
   "overrides": {
     "handlebars": "^4.7.10",
@@ -60,7 +61,8 @@
       "picomatch@2.3.1": "2.3.2",
       "preact": "10.29.1",
       "brace-expansion@1": "^1.1.20",
-      "brace-expansion@2": "^2.1.2"
+      "brace-expansion@2": "^2.1.2",
+      "@aotui/runtime": "link:../../runtime"
     }
   },
   "keywords": [

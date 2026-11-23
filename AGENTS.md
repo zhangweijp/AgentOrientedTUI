@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是项目的开发准则，按核心概念和模块职责组织，维护当前有效的项目目标、跨模块约束和工作方式。SDK 的当前应用开发合同归 SDK README，Runtime 的当前宿主集成合同归 Runtime README。SDK / Runtime 的 12 项设计讨论与决策统一维护于 [设计 SSOT](docs/sdk-runtime-design/README.md)；其中明确区分已确认要求、待讨论方案、暂缓及撤回意见，不把候选设计写成现行能力。其他批次进度和验收证据留在任务报告及 Git 历史中。
+本文件是项目的开发准则，按核心概念和模块职责组织，维护当前有效的项目目标、跨模块约束和工作方式。SDK 的当前应用开发合同归 SDK README，Runtime 的当前宿主集成合同归 Runtime README。SDK / Runtime 的本轮设计讨论与后续决策统一维护于 [设计 SSOT v2](docs/sdk-runtime-design-v2/00-index.md)；其中明确区分已确认要求、待讨论方案、暂缓及撤回意见，不把候选设计写成现行能力。其他批次进度和验收证据留在任务报告及 Git 历史中。
 
 阅读与修改代码时，区分产品要求、当前实现和待讨论方案。发现冲突应明确指出，不能用现状反向改写目标，也不能把建议写成已实现的能力。沟通要有条理、讲清因果，用具体例子深入浅出地解释。
 
@@ -23,10 +23,10 @@
 
 ### View 与 Projection
 
-- 一个 View 实例对应 GUI 网站或桌面应用中的一个页面，可展示多个业务对象，也可在自身生命周期内切换内容或当前对象；不强制一个 View 永久对应一个业务对象。View 使用 XML + Markdown 呈现，包装为 Messages 中的 User Message；页面概念详见 [议题 02](docs/sdk-runtime-design/02-view-page-semantics.md)。
+- 一个 View 实例对应 GUI 网站或桌面应用中的一个页面，可展示多个业务对象，也可在自身生命周期内切换内容或当前对象；不强制一个 View 永久对应一个业务对象。View 使用 XML + Markdown 呈现，包装为 Messages 中的 User Message；页面概念详见 [设计讨论基线](docs/sdk-runtime-design-v2/00-index.md#baseline)。
 - 页面显式声明 `id`、`type`、`kind`；`kind` 区分 `instruction` 与 `state`。不从实例 ID、正文或 DOM 后代推断类型和类别。
 - 页面只有打开与未打开。成功观察必须包含同一来源中的全部已打开页面；容量不足时不接受新页打开，不能保持页面打开却在成功观察中省略它。
-- Projection 是应用当前状态的投影。由 AOTUI 产出的 Messages 既表达外部事实，也是 Agent 对这些事实的记忆；Agent 只能通过应用提供的有限操作改变这部分记忆。App 更新业务状态，框架再投影已提交的 View、Ref 和工具能力；不提供对任意对话或其他来源记忆的 CRUD。事实与记忆的定义详见 [议题 01](docs/sdk-runtime-design/01-messages-facts-and-memory.md)。
+- Projection 是应用当前状态的投影。由 AOTUI 产出的 Messages 既表达外部事实，也是 Agent 对这些事实的记忆；Agent 只能通过应用提供的有限操作改变这部分记忆。App 更新业务状态，框架再投影已提交的 View、Ref 和工具能力；不提供对任意对话或其他来源记忆的 CRUD。事实与记忆的定义详见 [设计讨论基线](docs/sdk-runtime-design-v2/00-index.md#baseline)。
 - 同一逻辑 View 在当前投影中只保留最新有效快照。用户对话、操作收据和审计历史有各自用途，不因此删除。
 - View 元数据与正文分开，由唯一呈现边界包装并正确转义。正文不自行携带框架外壳，不用正则猜测或拆除 `<view>`。
 - 应用只管理自己的投影；不能改写用户指令或其他来源的上下文。
@@ -45,12 +45,11 @@
 
 - Ref 表达当前观察中可选择的只读 JSON 值；ArrayRef 支持整数组及其元素。它们是数据引用，不是独立工具类别，也不是永久业务身份。
 - 对已通过 Ref 呈现的业务对象，模型无需再抄写 `plan_id`、`phase_id`、`task_id` 等内部 ID。ID 可以留在 App 状态或 Ref payload 中，由 handler 使用。
-- 页面正文保留类型提示和局部名称，例如 `[设计](Phase:completed_phases[0])`。若所在 View 的 id 为 `plan_detail`，调用输入为 `plan_detail.completed_phases[0]`，不带 `Phase:` 前缀。
-- `view_id` 与 Ref 本地名称不允许点号 `.`；此限制不扩展到普通业务文本和文件路径。不同 View 可以分别发布同名 Ref，地址前缀负责区分来源页。
-- 顶层 `view_id` 选择执行页面，Ref 参数的前缀选择数据来源页。允许在同一 App 运行实例、同一原 Observation 内跨 View 传 Ref，两者独立校验。
-- 显式 Ref 参数按声明解析和验证，支持单值、整数组、多选与可选参数。标题、内容、文件路径等有独立业务意义的普通参数，仍按各自 Schema 使用，不强制包装成 Ref。
+- 页面正文可保留类型提示和局部标记，例如 `[设计](completed_phases[0])`。调用使用完整地址，例如 `$planning_app.plan_detail.completed_phases[0]`。带点号的 Ref 名和对象键使用 JSON 引号，例如 `["display.name"]`。
+- 顶层 `view_id` 选择执行页面，Ref 地址选择数据来源页及其 JSON 路径。Host 在同一轮已采用观察中绑定实际出现的 App，按 `private`、`protected`、`public` 的发布范围及路径许可核对真实接收挂载。
+- 普通参数接受字面值或获准路径上的兼容 JSON 值。显式 `refParam` 要求真实的已发布整项或有标签的 ArrayRef 元素。Host 在 `ObservationGrant.refs` 的条目中限制路径和接收挂载。框架提示只展示获准的路径和可确定的类型。
 - Runtime 从调用绑定的原 Observation 解析值，不静默换成最新数据。App 判断对象是否仍存在、父子归属、业务状态和权限是否满足。
-- 只读表示 Agent 不能通过 Ref 通用赋值或删除，不妨碍 App 合法更新业务并发布新值。字段读取和 Agent 自建变量是后续演进方向；具体协议、表达式与数据作用域仍待设计，不预建占位 API。
+- Ref 供 Agent 选择只读值。业务更新与重新发布由 App 负责。Agent 自建变量的能力和协议另行设计。
 
 ### Observation、调用与操作收据
 
@@ -90,7 +89,7 @@
 
 - 默认作者模型保持 Preact；普通 TypeScript 入口共享相同 Core 语义，不另造内核。改变默认作者模型或用 CLI 替换原生 Tools，须单独讨论。
 - App 与 SDK 的 Preact 适配保持同一受支持版本、同一模块实例。升级时核对实际提交顺序、hook 链、异常隔离与关闭；不以 DOM 变化或固定延迟冒充渲染提交完成。
-- 当前使用 `prepareProjection` 准备一般更新，`prepareOpeningProjection` 处理可撤回开页。它们不承诺业务事务回滚，也不代替 Host 的观察采用。开页准入与恢复的具体重设计暂缓，事实与候选记录归 [议题 10](docs/sdk-runtime-design/10-opening-deferred.md)，不从其他改造顺带固定新方案。
+- 当前使用 `prepareProjection` 准备一般更新，`prepareOpeningProjection` 处理可撤回开页。它们不承诺业务事务回滚，也不代替 Host 的观察采用。开页准入与恢复的具体重设计暂缓，事实与候选记录归 [MEC-01](docs/sdk-runtime-design-v2/04-mechanism-design.md#mec-01)，不从其他改造顺带固定新方案。
 - 参数值域使用 JSON，作者 Schema 复用 TypeBox 和已有编译器，不另造 Schema DSL。维护声明、模型 Schema、运行时校验和类型推导的一致性。
 - 当前公共 Schema 不支持 `pattern` 关键字；声明期给出明确诊断。App 普通业务参数可以名为 `pattern`，业务格式验证仍归 App，不因同名而禁用。
 - 公共文档、类型、示例和错误提示构成同一作者合同。评价 SDK 要看 Agent 能否只靠公开入口生成正确 App、修复成本与私有 API 依赖，而非仅看代码行数。
@@ -159,10 +158,10 @@
 | 项目目标、核心概念、模块关系与研发约束 | 本文件 |
 | App 作者 | [SDK README](sdk/README.md)、[App Builder 技能](.agents/skills/aotui-app-builder/SKILL.md) |
 | Host 集成者与底层适配者 | [Runtime README](runtime/README.md) |
-| SDK / Runtime 长期设计讨论、用户决策与待定方案 | [设计 SSOT 索引](docs/sdk-runtime-design/README.md)；12 个议题各归一份文档 |
+| SDK / Runtime 长期设计讨论、用户决策与待定方案 | [设计 SSOT v2 索引](docs/sdk-runtime-design-v2/00-index.md)；按概念、系统、模块、机制四类维护，逐项回应原评审 16 个议题及复核补充问题 |
 
 - SDK、Runtime 各只保留一个简短 README，讲关键入口和无法仅由类型表达的合同；其余让代码、类型和可执行例子表达，不恢复模块内 docs 或把旧指南拼成巨大 README。
-- 项目总纲和跨模块约束以 AGENTS.md 为准；SDK README 维护当前应用开发合同，Runtime README 维护当前宿主集成合同。用户明确要求的 SDK / Runtime 设计议题唯一维护于 `docs/sdk-runtime-design/`，按索引状态区分已确认与待讨论内容；其他入口引用，不建立竞争性的平行规范。主目录 README 保持项目介绍的职责，不承载研发规则和设计讨论记录。
+- 项目总纲和跨模块约束以 AGENTS.md 为准；SDK README 维护当前应用开发合同，Runtime README 维护当前宿主集成合同。用户明确要求的 SDK / Runtime 设计议题唯一维护于 `docs/sdk-runtime-design-v2/`，按索引状态区分已确认与待讨论内容；其他入口引用，不建立竞争性的平行规范。主目录 README 保持项目介绍的职责，不承载研发规则和设计讨论记录。
 - 本文件与模块 README 按核心概念与模块组织，区分当前合同和待讨论方向。不要把候选方案或本地验证扩写成已实现能力或通用保证。
 - 文档使用相对链接指向现有源码、类型和可执行例子，包消费者所需的入口必须随包可用；不依赖本机设计目录、临时证据路径或失效的历史文件。
 - 更新本文件时直接修改所属概念或模块的规则。讨论用具体例子比较收益、代价和边界；SDK / Runtime 关键讨论与决定更新对应 SSOT 正文及简短决策记录，只有已确认且适用的结论进入本文件，已生效的使用合同进入对应模块 README。时间线、验收流水和 Commit 清单不追加到开发准则或模块 README。

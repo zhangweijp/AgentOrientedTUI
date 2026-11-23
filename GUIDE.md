@@ -9,36 +9,39 @@
 
 Build with the SDK and run the App through a managed Worker. [SDK README](sdk/README.md) · [Runtime README](runtime/README.md)
 
-For the current Runtime Host, Core, and Semantic Source entry points, start with the [Runtime package guide](./runtime/README.md).
+For Host integration and Semantic Source, see the [Runtime package guide](runtime/README.md). For the portable interaction rules, see the [Core package guide](core/README.md).
 
 ## Repository At A Glance
 
 The main stack is:
 
 ```txt
-Host -> Runtime -> SDK -> Apps
-        ^
-        |
-   Agent Driver
+App -> SDK -> Core <- Runtime <- Host
+Host -> Agent Driver
+Host -> Driver Adapter -> Core
 ```
 
 - `host/` is the desktop product shell. It owns the GUI, App distribution, and the `agentina` CLI.
-- `runtime/` is the execution core that manages resolved Apps, Views, and Workers.
+- `core/` defines shared projection, observation, Ref, and Tool invocation contracts.
+- `runtime/` resolves and manages App instances, Workers, and Host-facing observations.
 - `sdk/` is the app authoring layer used to build AOTUI apps.
-- `agent-driver-v2/` is the model execution and tool orchestration layer used by the runtime and host.
+- `agent-driver-v2/` is the model execution and tool orchestration layer used by the Host.
 - `demo-apps/` contains apps that exercise the SDK/runtime stack inside the host.
 
 Dependency direction in the codebase is:
 
 - `runtime` can be consumed independently of `agent-driver-v2`
-- `sdk` depends on `runtime`
-- `host` depends on `agent-driver-v2`, `runtime`, and `sdk`
-- most `demo-apps/*` depend on `sdk`; some also rely on `runtime` at local-dev link time
+- `sdk`, `runtime`, and `agent-driver-adapter` depend on `core`
+- `host` depends on `agent-driver-v2`, `agent-driver-adapter`, `runtime`, and `sdk`
+- App authoring uses `sdk` and the peers required by the chosen authoring entry
 
 Manual build order:
 
 ```txt
-agent-driver-v2 -> runtime -> sdk -> host -> demo-apps
+core -> sdk / runtime
+agent-driver-v2 + runtime + core -> agent-driver-adapter
+sdk -> demo-apps
+agent-driver-adapter + runtime -> host
 ```
 
 ## Top-Level Folders
@@ -46,38 +49,37 @@ agent-driver-v2 -> runtime -> sdk -> host -> demo-apps
 | Folder | What it is for |
 | --- | --- |
 | `agent-driver-v2/` | LLM execution layer: provider setup, streaming, message aggregation, and tool-call orchestration. |
-| `runtime/` | App registry, app lifecycle, Worker runtime, kernel, and View exposure. |
-| `sdk/` | Developer-facing app API: `createTUIApp`, `View`, hooks, refs, and Tool definitions and result types used by app authors. |
+| `core/` | Portable projection, snapshot, Ref, observation, and Tool invocation semantics. |
+| `runtime/` | Installed App instances, Workers, Desktop lifecycle, and View exposure. |
+| `sdk/` | Author API for TypeScript and Preact, including View types, Refs, and Tools. |
 | `host/` | Electron desktop shell, web UI, local services, App catalog, npm installs, and the `agentina` CLI. |
 | `demo-apps/` | Reference apps that run on the stack. The setup scripts auto-install `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` by default. |
-| `scripts/` | Repo-level helper scripts such as `generate-aoapp.mjs`, which writes app manifests during app builds. |
+| `scripts/` | Repo-level helper scripts for builds, verification, and local release. |
 | `resource/` | Static assets used by the project. |
 
-Notes:
-
-- the root `package.json` does not define shared `scripts`, so you usually run commands with `pnpm -C <folder> ...` or use the root shell scripts
-- `pnpm-workspace.yaml` currently covers `packages/*`; the main app/runtime folders are managed as sibling packages rather than through root workspace scripts
+Use `pnpm -C <folder> …` for individual sibling packages. The root provides `pnpm release:local` and `pnpm test:adapter-integration`.
 
 ## Architecture
 
 ### Layered View
 
-Think in five layers:
-
 1. **Host**
    The Electron application and GUI that users interact with locally. The Host and CLI share App catalog resolution, npm installation, and managed package cleanup.
 2. **Runtime**
-   The execution layer owns the App registry, Worker lifecycle, View projection, and interaction.
-3. **SDK**
+   The execution layer owns the installed App instances and Worker lifecycle.
+3. **Core**
+   Defines the projection, observation, Ref and invocation rules shared across authoring and execution.
+4. **SDK**
    The app authoring model. It provides `createTUIApp()`, component primitives, hooks, refs, and typed Tools for building agent-facing apps.
-4. **Apps**
+5. **Apps**
    Concrete system or demo apps built with the SDK and executed through the runtime/host stack.
-5. **Agent Driver**
+6. **Agent Driver**
    A shared execution subsystem that handles provider selection, prompt/message preparation, streaming, and tool orchestration for model-driven behavior.
 
 ### Responsibility Boundaries
 
 - `agent-driver-v2/`: model loop, provider wiring, streaming, tool dispatch
+- `core/`: application and host implementation contracts for projection and calls
 - `runtime/` handles app lifecycle, Workers, View exposure, and adapters
 - `sdk/`: app-authoring APIs and ergonomics
 - `host/` handles the Electron shell, GUI, IPC, CLI, App distribution, and local services
@@ -90,7 +92,7 @@ Think in five layers:
 - SDK: `sdk/src/app-factory/createTUIApp.ts`, `sdk/src/components/View.tsx`
 - Host: `host/src/`
 - Agentina CLI and App distribution: `host/src/app-distribution/`
-- App manifests: `scripts/generate-aoapp.mjs`
+- App manifests: `sdk/bin/generate-aoapp.mjs`, shipped as the SDK's `generate-aoapp` command
 
 ## Tech Stack
 
@@ -114,9 +116,10 @@ Core stack:
 | Layer | Main technologies |
 | --- | --- |
 | `host/` | Electron, React 19, Vite, Tailwind CSS 4, TRPC, Express, SQLite-related tooling |
-| `runtime/` | Node.js, Worker Threads, `linkedom`, JSON Schema validation |
+| `core/` | TypeScript, JSON Schema validation, platform-standard encoding and timers |
+| `runtime/` | Node.js, Worker Threads, application and storage backends |
 | `sdk/` | TypeScript, Preact, `@preact/signals`, `linkedom`, TypeBox |
-| `agent-driver-v2/` | Vercel AI SDK (`ai`), OpenAI / Anthropic / Google / xAI / OpenRouter provider packages |
+| `agent-driver-v2/` | Vercel AI SDK (`ai`), native and compatible Provider routes, including xAI through the Responses adapter |
 | `demo-apps/` | TypeScript + SDK-based app packages; mostly Preact-powered app definitions |
 
 ### Why This Stack Looks Like This
@@ -170,19 +173,7 @@ chmod +x setup.sh run.sh
 ./run.sh
 ```
 
-What they do:
-
-- `setup.sh`
-  - installs dependencies package by package
-  - links local core packages into dependent folders for local development
-  - builds the core packages in dependency order
-  - globally links the `agentina` CLI from `host/`
-  - builds and registers `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` with `agentina install . --force`
-- `run.sh`
-  - refreshes local links
-  - rebuilds the core packages and the default apps
-  - starts the host in Electron development mode via `pnpm -C host electron:dev`
-
+Setup installs the sibling packages using their lockfiles, builds them in dependency order, links the Host CLI, and registers the four default apps. The launcher runs setup on a fresh tree. Later launches rebuild source and start Electron. The linked JSX Apps use the SDK’s Preact instance.
 
 ## Useful Commands
 
@@ -231,17 +222,17 @@ Use this layer for GUI work, desktop UX, settings, installation flow, IPC wiring
 
 ### Desktop Host chat and configuration
 
-Electron registers tRPC over IPC. The GUI reads Topic history through `db.getMessages` and receives live messages through `session.events`. Both carry AI SDK `ModelMessage` content. SQLite stores the current history in `messages_v2`. Startup leaves existing `messages` and `message_parts` tables and rows intact. The current GUI displays the `messages_v2` history.
+Electron registers tRPC over IPC. The GUI reads Topic history through `db.getMessages` and receives live messages through `session.events`. Both carry AI SDK `ModelMessage` content. SQLite stores the current history in `messages_v2`. The Host initializes the current schema. If an earlier schema is incompatible, startup reports the database filename and leaves the file intact. Use `DB_PATH` to select a current or new database. If an individual conversation contains an unsupported tool message, the history read reports its ID. A new conversation can use the same database.
 
 The standalone `createHostV2(port)` entry in `host/src/server/host-v2.ts` starts the HTTP server for `GET /api/health`, `POST /api/im/feishu/webhook` and `POST /api/im/feishu/webhook/:accountId`. Use the first webhook URL for the channel default Bot and append the URL-encoded account ID for a specific Bot. Electron initializes the same Host core for IPC and its configured IM channels.
 
-**Model routing** is resolved when the Host creates a session. Desktop checks the Topic model, the Agent model, then the active configuration. IM checks the Agent model, then the active configuration. Reopen the session after changing its model. The model catalog supplies the raw Provider model ID, which the Driver sends verbatim. Custom Provider settings supply that Provider's protocol, endpoint and key. Choose a Provider and model again in **Settings → Model** if the Host reports an ambiguous stored selection. [Driver configuration and migration](./agent-driver-v2/README.md#llm-配置)
+**Model routing** is resolved when the Host creates a session. Desktop checks the Topic model, the Agent model, then the active configuration. IM checks the Agent model, then the active configuration. Reopen the session after changing its model. The model catalog supplies the raw Provider model ID, which the Driver sends verbatim. Custom Provider settings supply that Provider's protocol, endpoint and key. Topic and Agent selections use `provider:model` and an active configuration stores the two fields separately. [Driver configuration](./agent-driver-v2/README.md#llm-配置)
 
-**IM settings** live under the `im` key in `~/.agentina/im.json`. Use **Settings → IM** to read or save them. The global, channel and account switches are named `enabled`. The Feishu group policy `groupPolicy: "disabled"` still controls group messages. Settings stored under `im` in `mcp.json` and configurations containing retired `disabled` switches require re-entry. The affected IM configuration stays off until you reconfigure and save it. Reload the Host to apply the IM settings.
+**IM settings** live under the `im` key in `~/.agentina/im.json`. Use **Settings → IM** to read or save them. The global, channel and account switches are named `enabled`. Use `groupPolicy: "disabled"` to turn off Feishu group messages. Reload the Host to apply the IM settings.
 
 **MCP settings** live under the `mcp` key in `~/.agentina/mcp.json`. Local entries use `type: "local"`, a `command` array containing the executable and arguments, and optional `environment`. Remote entries use `type: "remote"`, an HTTP(S) `url`, and optional `headers` and `oauth`. Each server supports `enabled`, `timeout` and `disabledTools`. Use tool names exactly as the server publishes them in its own `disabledTools` list.
 
-Use **Settings → MCP → Add Server** to move an external `mcpServers` configuration into the current format. Setup issues appear in MCP settings. Agent and Topic tool permissions use keys such as `mcp-work-search` for the `search` tool from the `work` server. Topic server switches use keys such as `server:work`. An Agent-derived Topic saves its selected servers along with its other source controls. The selection survives shutdown and reopening. Use the Topic MCP controls to change its selection. For retired tool keys, reopen the Agent MCP settings or use the Topic MCP reset, then review and save the switches.
+Use **Settings → MCP → Add Server** to configure a server or import its settings. Setup issues appear in MCP settings. Agent and Topic tool permissions use keys such as `mcp-work-search` for the `search` tool from the `work` server. Topic server switches use keys such as `server:work`. An Agent-derived Topic saves its selected servers along with its other source controls. The selection survives shutdown and reopening. Use the Topic MCP controls to change its selection.
 
 ### I want to add a new app
 
@@ -249,7 +240,7 @@ Use an existing `demo-apps/*` package as the template. Apps outside the default 
 
 - export a `createTUIApp(...)` app factory from the app entry
 - compile with `tsc`
-- generate `aoapp.json` with `node ../../scripts/generate-aoapp.mjs .`
+- generate `aoapp.json` with `pnpm exec generate-aoapp .` after compiling the installed App
 - register the app locally with `agentina install local:<path>`
 
 ## Troubleshooting
@@ -274,8 +265,10 @@ Rebuild from the bottom of the dependency graph upward:
 
 ```bash
 pnpm -C agent-driver-v2 build
+pnpm -C core build
 pnpm -C runtime build
 pnpm -C sdk build
+pnpm -C agent-driver-adapter build
 pnpm -C host build
 ```
 
@@ -297,6 +290,4 @@ agentina install ./demo-apps/<app-folder> --force
 
 - [README.md](./README.md): project idea and interface model
 - [README.zh-CN.md](./README.zh-CN.md): Chinese version of the main README
-
-
-当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 标识页面实例。App 提交原始正文，XML 文本在最终呈现时转义一次。 [SDK README](sdk/README.md)
+- [SDK README](sdk/README.md): define a ViewType, mount its Views, and publish raw Markdown and Refs

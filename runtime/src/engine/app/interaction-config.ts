@@ -1,10 +1,10 @@
-import { AOTUIError } from '../../spi/core/errors.js';
-import { normalizeProjectionLimits } from '../../core/invocation/observation-registry.js';
-import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
+import { AOTUIError } from '@aotui/core';
+import { normalizeProjectionLimits } from '@aotui/core/internal';
+import type { ProjectionLimits } from '@aotui/core';
 
 export const appInteractionFields = { toolsEnabled: 'boolean', projectionLimits: 'object' } as const;
 export const appInstallFields = {
-    appId: 'string', name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string',
+    installationId: 'string', name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string',
     config: 'object', ...appInteractionFields,
 } as const;
 

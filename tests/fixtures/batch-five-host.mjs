@@ -1,0 +1,304 @@
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { DOMParser, parseHTML } from 'linkedom';
+import { Marked } from 'marked';
+import { createRuntime } from '@aotui/runtime';
+import { buildPublicToolName, buildViewMessageMarkup, DEFAULT_AOTUI_SYSTEM_INSTRUCTION, escapeXmlText } from '@aotui/runtime/adapters';
+import { fixtureAppPath, appClient, fixtureProvider, journal, modelCall, watchUntil } from './batch-two-support.mjs';
+import { BACKSLASH_CODE, DIAGRAM, FILES, PLAIN_APP, PIPE_CODE, PREACT_APP, RAW_VIEWS, STOCK } from './dist/batch-five-content.js';
+
+const [mode, folder, phase] = process.argv.slice(2);
+assert.ok(['product', 'independent'].includes(mode));
+await mkdir(folder, { recursive: true });
+const dataDirectory = await mkdtemp(join(folder, 'worker-data-'));
+const provider = await fixtureProvider();
+const runtime = createRuntime({ worker: { maxWorkers: 2 } });
+const desktop = runtime.getDesktop(await runtime.createDesktop());
+const marked = new Marked({ gfm: true });
+const facts = { mode, dataDirectory, requests: provider.requests, calls: [], passed: false };
+
+const change = (id, operation) => modelCall(id, PREACT_APP + '-change', { operation });
+const apply = (id, view, value = '$stock_preact.left.value') => modelCall(id, PREACT_APP + '-apply', { view_id: view, value });
+const ping = id => modelCall(id, PLAIN_APP + '-ping', {});
+const toolNames = request => request.tools.map(tool => tool.function.name);
+
+function page(request, app, id) {
+    const entry = request.messages.find(message => message.role === 'user' && typeof message.content === 'string' &&
+        message.content.startsWith(`<view view_id="${id}" `) && message.content.split('\n', 1)[0].includes(` app_id="${app}"`));
+    if (!entry) return;
+    const xml = entry.content;
+    const node = new DOMParser().parseFromString(xml, 'text/xml').documentElement;
+    assert.equal(node.localName, 'view');
+    assert.deepEqual([...node.getAttributeNames()].sort(), ['app_id', 'app_name', 'view_id', 'view_type']);
+    assert.equal(node.getAttribute('app_id'), app);
+    assert.equal(node.getAttribute('app_name'), app);
+    assert.equal(node.getAttribute('view_id'), id);
+    assert.equal(node.children.length, 0, 'View XML encloses text only');
+    assert.ok(node.textContent.startsWith('\n') && node.textContent.endsWith('\n'));
+    return { xml, body: node.textContent.slice(1, -1), type: node.getAttribute('view_type') };
+}
+
+function tableCells(body) {
+    const tokens = marked.lexer(body).map(token => token.type);
+    const { document } = parseHTML(marked.parse(body));
+    const table = document.querySelector('table');
+    if (!table) return { tokens, rows: [] };
+    const rows = [...table.querySelectorAll('tr')].map(row => [...row.children]);
+    const describe = node => [node.localName, node.textContent, node.getAttribute('href')];
+    return { tokens, rows: rows.map(row => row.map(cell => cell.textContent)),
+        marks: rows.map(row => row.map(cell => [...cell.querySelectorAll('*')].map(describe))),
+        code: [...table.querySelectorAll('code')].map(cell => cell.textContent),
+        inline: [...table.querySelectorAll('strong, em, a')].map(describe) };
+}
+
+function diagram(body) {
+    const token = marked.lexer(body).find(token => token.type === 'code');
+    return { lang: token?.lang, text: token?.text };
+}
+
+async function boot(name, filename, path) {
+    await mkdir(path, { recursive: true });
+    await desktop.registerPendingApp({ installationId: name, localPath: await fixtureAppPath(new URL('./dist/' + filename, import.meta.url).href, name, folder),
+        config: { folder: path } });
+    const id = await desktop.openApp(name);
+    return appClient(runtime, desktop, id);
+}
+
+async function productHost() {
+    const { AgentDriverV2 } = await import('@aotui/agent-driver-v2');
+    const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
+    const source = new SemanticAOTUIDrivenSource(desktop, runtime);
+    const history = [], errors = [], receipts = [];
+    facts.toolMessages = receipts;
+    const driver = new AgentDriverV2({
+        llm: { model: 'stock-fixture', apiKey: 'test-only', provider: { id: 'stock-fixture', baseURL: provider.url },
+            inputBudget: () => ({ contextWindow: 100_000, maxOutputTokens: 750 }) },
+        sources: [{ name: source.name, getContext: () => source.getContext(), onUpdate: () => () => {} },
+            { name: 'history', onUpdate: () => () => {}, async getContext() { return { messages: history.slice(), tools: {} }; } }],
+        onAssistantMessage: message => history.push({ ...message, timestamp: Date.now() }),
+        onToolResult: (message, raw) => { receipts.push({ message, raw }); history.push({ ...message, timestamp: Date.now() }); },
+        onRunError: error => errors.push(error),
+    });
+    return {
+        async step(label, calls = [], beforeReply) {
+            history.push({ role: 'user', content: label, timestamp: Date.now() });
+            provider.replyNext({ label, calls, beforeReply });
+            await driver.trigger();
+            await driver.runInFlight;
+            assert.deepEqual(errors, []);
+            assert.deepEqual(provider.failures, []);
+            const request = provider.requests.find(request => request.label === label);
+            assert.ok(request, label);
+            return { wire: request.body, results: calls.length ? receipts.at(-1).raw : [] };
+        },
+        async close() { driver.stop(); driver.dispose(); await source.dispose(); },
+    };
+}
+
+function independentHost(apps) {
+    const history = [], receipts = [];
+    facts.toolMessages = receipts;
+    return {
+        async step(label, calls = [], beforeReply) {
+            history.push({ role: 'user', content: label });
+            const observed = [], issues = [], routes = new Map();
+            try {
+                for (const { app, client } of apps) {
+                    const result = await client.observe({ all: true });
+                    if (result.status === 'observed') observed.push({ app, client, observation: result.observation });
+                    else issues.push(`${app.appId}: ${result.issue.code}: ${result.issue.message} (at ${result.issue.path})`);
+                }
+                const index = new Map(observed.map(({ observation }) => [observation.source.appId, observation]));
+                const catalog = desktop.getInstalledApps().filter(item => item.appInstanceId);
+                const directory = [...catalog.map(item => `app_id ${item.appId}`), ...issues].map(escapeXmlText).join('\n');
+                const pages = observed.flatMap(({ app, observation }) => observation.views.map(view => ({ region: view.region,
+                    content: buildViewMessageMarkup({ appId: app.appId, appName: app.name, viewId: view.id, viewType: view.type,
+                        markup: view.content.value, refs: observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId) }, index),
+                })));
+                const tools = observed.flatMap(({ client, observation }) => observation.tools.map(tool => {
+                    const name = tool.nameSharedAcrossViewTypes ? buildPublicToolName(observation.source.appId, tool.viewType, tool.name)
+                        : buildPublicToolName(observation.source.appId, tool.name);
+                    routes.set(name, { client, observationId: observation.observationId, toolId: tool.id });
+                    return { type: 'function', function: { name, description: tool.description, parameters: tool.inputSchema } };
+                }));
+                tools.push({ type: 'function', function: { name: 'system-close_app', description: 'Close the selected application.',
+                    parameters: { type: 'object', properties: { app_id: { type: 'string' } }, required: ['app_id'], additionalProperties: false } } });
+                const user = content => ({ role: 'user', content });
+                const wire = { model: 'stock-fixture', max_tokens: 750, messages: [user(DEFAULT_AOTUI_SYSTEM_INSTRUCTION),
+                    ...pages.filter(page => page.region === 'static').map(page => user(page.content)),
+                    user(`<desktop>\n${directory}\n</desktop>`), ...pages.filter(page => page.region === 'dynamic').map(page => user(page.content)), ...history], tools };
+                for (const { client, observation } of observed)
+                    assert.equal(client.adoptObservation(observation.observationId).status, 'adopted');
+                const bound = desktop.bindRequestSources({ apps: observed.map(({ client, observation }) => ({ client, observationId: observation.observationId })) });
+                provider.replyNext({ label, calls, beforeReply });
+                const response = await fetch(provider.url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(wire), signal: AbortSignal.timeout(8_000) });
+                assert.ok(response.ok, await response.clone().text());
+                const message = (await response.json()).choices[0].message;
+                history.push(message);
+                const results = [];
+                for (const call of message.tool_calls ?? []) {
+                    const name = call.function.name, input = JSON.parse(call.function.arguments);
+                    const route = routes.get(name);
+                    let result;
+                    if (route) {
+                        const { client, observationId, toolId } = route;
+                        const receipt = await client.invoke({ invocationId: call.id, observationId, toolId, input }, undefined, bound);
+                        const outcome = receipt.receipt?.outcome;
+                        result = outcome?.status === 'succeeded' ? { outcomeStatus: 'succeeded', result: outcome.value?.data ?? outcome.value }
+                            : { outcomeStatus: outcome?.status ?? 'rejected', error: { code: outcome?.code ?? receipt.code, message: outcome?.message ?? receipt.message } };
+                        receipts.push({ id: call.id, receipt });
+                    } else {
+                        assert.equal(name, 'system-close_app');
+                        const app = catalog.find(app => app.appId === input.app_id);
+                        assert.ok(app);
+                        await desktop.closeApp(app.appId, app.appInstanceId);
+                        result = { outcomeStatus: 'succeeded' };
+                    }
+                    results.push({ toolCallId: call.id, ...result });
+                    history.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+                }
+                assert.deepEqual(provider.failures, []);
+                return { wire: provider.requests.find(request => request.label === label).body, results };
+            } finally {
+                for (const { client, observation } of observed) client.releaseObservation(observation.observationId);
+            }
+        },
+    };
+}
+
+async function update(path, client, operation) {
+    const filename = join(path, 'update.txt');
+    await writeFile(filename + '.next', operation);
+    await rename(filename + '.next', filename);
+    return watchUntil(async () => {
+        assert.deepEqual(await journal(path, 'update-errors'), []);
+        if (!(await journal(path, 'updates')).some(entry => entry.next === operation)) return;
+        const preview = await client.preview();
+        return preview.status === 'previewed' ? preview : undefined;
+    });
+}
+
+async function inspect(client) {
+    const result = await client.observe({ all: true });
+    assert.equal(result.status, 'observed');
+    client.releaseObservation(result.observation.observationId);
+    return result.observation;
+}
+
+async function scenario(host, preact, preactPath, plainPath) {
+    const initial = (await host.step('initial Markdown')).wire;
+    const raw = Object.fromEntries([PREACT_APP, PLAIN_APP].map(app => [app, Object.fromEntries(Object.keys(RAW_VIEWS)
+        .map(id => [id, page(initial, app, id)]))]));
+    const filePage = page(initial, PREACT_APP, 'files');
+    const files = tableCells(filePage.body);
+    facts.initial = { raw, expected: { raw: RAW_VIEWS, stock: STOCK, diagram: DIAGRAM },
+        stock: tableCells(page(initial, PREACT_APP, 'stock').body), files: { ...filePage, ...files },
+        diagram: [PREACT_APP, PLAIN_APP].map(app => diagram(page(initial, app, 'diagram').body)) };
+    if (phase === 'baseline') return;
+
+    for (const app of [PREACT_APP, PLAIN_APP]) for (const [id, value] of Object.entries(RAW_VIEWS)) {
+        assert.equal(raw[app][id].type, 'raw_markdown');
+        assert.equal(raw[app][id].body, value, `${app} ${id}`);
+        assert.doesNotMatch(raw[app][id].xml, /Available references/);
+    }
+    assert.match(raw[PREACT_APP].split_raw.xml, /&amp;amp; &lt;literal&gt; 🧪/);
+    assert.match(raw[PLAIN_APP].raw.xml, /&#13;\n&#13;\n/);
+    assert.deepEqual(facts.initial.stock.rows, STOCK);
+    assert.deepEqual(facts.initial.stock.code, [PIPE_CODE, BACKSLASH_CODE]);
+    assert.deepEqual(facts.initial.stock.inline, [['strong', 'Ready', null], ['em', 'today', null], ['a', 'box', 'https://example.test/box']]);
+    const fileCases = [
+        ['literal_plain', FILES.literalName, []],
+        ['literal_link', FILES.linkShapedName, []],
+        ['explicit_link', 'reportold.txt', [['a', 'old', 'draft']]],
+        ['literal_entity', FILES.entityName, []],
+        ['explicit_code', FILES.literalName, [['code', FILES.literalName, null]]],
+        ['explicit_emphasis', `${FILES.literalName} ${FILES.entityName}`, [['strong', FILES.literalName, null], ['em', FILES.entityName, null]]],
+        ['link_with_space', 'stock list', [['a', 'stock list', FILES.spacedTarget]]],
+        ['link_with_punctuation', `!${FILES.mixedLabel}`, [['a', FILES.mixedLabel, FILES.mixedTarget]]],
+        ['literal_urls', FILES.literalUrls, []],
+        ['pipe_and_backslashes', `${FILES.pipeAndBackslashes} and ${FILES.codeWithPipe}`, [['code', FILES.codeWithPipe, null]]],
+    ];
+    assert.deepEqual(files.rows, [FILES.headers, ...fileCases.map(([name, text]) => [name, text])]);
+    const marks = files.marks.map(row => row.map(cell => cell.map(([type, text, href]) => [type, text, href === null ? null : decodeURI(href)])));
+    assert.deepEqual(marks, [[[], []], ...fileCases.map(([, , expected]) => [[], expected])]);
+    assert.deepEqual(facts.initial.diagram, [{ lang: 'mermaid', text: DIAGRAM }, { lang: 'mermaid', text: DIAGRAM }]);
+    assert.match(page(initial, PREACT_APP, 'diagram').xml, /A --&gt; B/);
+    assert.match(page(initial, PREACT_APP, 'inline_flow').body, /Hello \*\*world\*\*!\nDone\.[\s\S]+First \*second\*\./);
+
+    const first = await inspect(preact);
+    assert.equal((await host.step('make left read-only', [change('readonly', 'read_only')])).results[0].outcomeStatus, 'succeeded');
+    const readOnly = await inspect(preact);
+    const itemViews = view => view.views.filter(view => view.type === 'item').map(({ id, viewInstanceId, content }) => ({ id, viewInstanceId, content }));
+    assert.deepEqual(itemViews(readOnly), itemViews(first));
+    assert.equal(new Set(itemViews(first).map(view => view.viewInstanceId)).size, 2);
+    assert.equal(readOnly.refs.filter(ref => ref.refId === 'value').length, 2);
+    assert.ok(readOnly.source.revision > first.source.revision);
+    let newer;
+    const selected = await host.step('use the shared tool after read-only', [apply('blocked-left', 'left'), apply('captured-ref', 'right')],
+        async () => { newer = await update(preactPath, preact, 'new_ref'); });
+    assert.ok(newer.source.revision > readOnly.source.revision);
+    assert.deepEqual(itemViews(newer), itemViews(first));
+    assert.deepEqual(readOnly.tools.find(tool => tool.name === 'apply').eligibleViewIds, ['right']);
+    for (const id of ['left', 'right']) assert.equal(page(selected.wire, PREACT_APP, id).xml, page(initial, PREACT_APP, id).xml);
+    assert.equal(toolNames(selected.wire).filter(name => name === PREACT_APP + '-apply').length, 1);
+    const schema = selected.wire.tools.find(tool => tool.function.name === PREACT_APP + '-apply').function.parameters;
+    assert.equal(schema.properties.view_id.type, 'string');
+    assert.equal(Object.hasOwn(schema.properties.view_id, 'enum'), false);
+    assert.ok(schema.required.includes('view_id'));
+    assert.equal(selected.results[0].outcomeStatus, 'rejected');
+    assert.deepEqual({ ...selected.results[1].result }, { id: 'right', value: 'left in original observation' });
+    facts.eligibility = { original: itemViews(first), readOnly: readOnly.tools.find(tool => tool.name === 'apply').eligibleViewIds,
+        newerRevision: newer.source.revision, originalRevision: readOnly.source.revision, schema, results: selected.results };
+
+    const faulty = await host.step('save then produce an invalid table', [change('write-once', 'save_bad_table'), apply('fault-stale-call', 'right')]);
+    assert.equal(faulty.results[0].outcomeStatus, 'succeeded');
+    assert.equal(faulty.results[0].result.saved, true);
+    const issue = { ...faulty.results[0].result.projection };
+    assert.equal(issue.code, 'SNAPSHOT_INVALID');
+    assert.equal(issue.path, '$.views[4].content');
+    assert.match(issue.message, /stock.*table 1.*row 2.*column 1.*[Mm]erged.*simple table or list/);
+    assert.equal(faulty.results[1].outcomeStatus, 'rejected');
+    const diagnosis = await preact.preview();
+    assert.deepEqual({ ...diagnosis.issue }, issue);
+    const degraded = await host.step('use the healthy App while inventory is degraded', [ping('healthy-during-fault')]);
+    assert.equal(degraded.wire.messages.some(message => typeof message.content === 'string' && message.content.startsWith('<view ') &&
+        message.content.split('\n', 1)[0].includes(` app_id="${PREACT_APP}"`)), false);
+    assert.ok(toolNames(degraded.wire).every(name => !name.startsWith(PREACT_APP + '-')));
+    assert.ok(toolNames(degraded.wire).includes('system-close_app'));
+    assert.ok(toolNames(degraded.wire).includes(PLAIN_APP + '-ping'));
+    assert.deepEqual({ ...degraded.results[0].result }, { peer: 'healthy' });
+    const notice = degraded.wire.messages.find(message => typeof message.content === 'string' && message.content.startsWith('<desktop>')).content;
+    assert.match(notice, /SNAPSHOT_INVALID.*stock.*table 1.*row 2.*column 1.*\$\.views\[4\]\.content/);
+    const repaired = await update(preactPath, preact, 'repair');
+    assert.deepEqual(itemViews(repaired), itemViews(first));
+    const restored = await host.step('show the repaired table');
+    const cells = tableCells(page(restored.wire, PREACT_APP, 'stock').body);
+    assert.deepEqual(cells.rows, STOCK.map((row, index) => index === 2 ? [row[0], '4'] : row));
+    assert.equal(page(restored.wire, PREACT_APP, 'files').xml, filePage.xml);
+    assert.ok(toolNames(restored.wire).includes(PREACT_APP + '-apply'));
+
+    facts.calls = [selected, faulty, degraded].flatMap(turn => turn.results);
+    facts.fault = { issue, diagnosis, notice, repaired: cells };
+    facts.effects = { writes: await journal(preactPath, 'writes'), stored: await readFile(join(preactPath, 'saved.txt'), 'utf8'),
+        diagnostics: await journal(preactPath, 'diagnostics'), handlers: await journal(preactPath, 'handler'), pings: await journal(plainPath, 'pings') };
+    assert.deepEqual(facts.effects, { writes: [{ operation: 'save_bad_table' }], stored: 'stored once', diagnostics: [issue],
+        handlers: [{ id: 'right', value: 'left in original observation' }], pings: [{ peer: 'healthy' }] });
+    facts.passed = true;
+}
+
+let host;
+try {
+    const preactPath = join(dataDirectory, 'preact'), plainPath = join(dataDirectory, 'plain');
+    const preact = await boot(PREACT_APP, 'batch-five-preact.js', preactPath);
+    const plain = await boot(PLAIN_APP, 'batch-five-plain.js', plainPath);
+    host = mode === 'product' ? await productHost() : independentHost([preact, plain]);
+    await scenario(host, preact.client, preactPath, plainPath);
+} finally {
+    await host?.close?.();
+    facts.shutdown = await runtime.beginShutdown().completion;
+    await provider.close();
+    await writeFile(join(folder, mode + '.json'), JSON.stringify(facts, null, 2));
+}
+assert.equal(facts.shutdown.resourcesReleased, true);

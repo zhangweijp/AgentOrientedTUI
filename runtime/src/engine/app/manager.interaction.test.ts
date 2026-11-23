@@ -8,6 +8,9 @@ vi.mock('./worker-sandbox.js', () => ({ WorkerSandbox: class {
     async disposeAsync() { this.closed = true;this.status = 'closed';return this.getCloseReport(); }
     getAppInteraction() { control.create(this);return { status: 'ready', interaction: { close: () => { this.closedClients++; } } }; }
     async reinitialize() { control.reinitialize(this); }
+    collapseNote: string | undefined;
+    readonly windowActions = this;
+    setAppWindow(note: string | undefined) { this.collapseNote = note; }
 } }));
 import { AppManager } from './manager.js';
 import { WorkerSandbox } from './worker-sandbox.js';
@@ -15,25 +18,25 @@ const desktop = { id: 'd', logSystem() {}, emitSignal() {} } as any;
 beforeEach(() => { control.boxes = [];control.create = () => {};control.reinitialize = () => {}; });
 
 it('binds Semantic lifecycle controls to the observed Worker instance before accepting side effects', async () => {
-    const manager = new AppManager(desktop), id = await manager.install('/app'), first = control.boxes[0];
+    const manager = new AppManager(desktop), id = await manager.install('/app', { name: 'app', installationId: 'installation' }), first = control.boxes[0];
     const firstInstance = manager.getInstalledApps()[0].appInstanceId;
     expect(firstInstance).toBe(first.appInstanceId);
-    expect((manager as any).installedApps.get(id)).not.toHaveProperty('appInstanceId');
+    expect((manager as any).installedApps.get('installation')).not.toHaveProperty('appInstanceId');
     await manager.closeApp(id, firstInstance);
-    await manager.openApp(id);
+    await manager.openApp('installation');
     const successor = control.boxes[1], successorInstance = manager.getInstalledApps()[0].appInstanceId;
     expect(successorInstance).toBe(successor.appInstanceId);
     expect(successorInstance).not.toBe(firstInstance);
 
     await expect(manager.closeApp(id, firstInstance)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
     await expect(manager.collapseApp(id, firstInstance)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
-    await expect(manager.showApp(id, firstInstance)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
+    await expect(manager.expandApp(id, firstInstance)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
     expect(successor.closed).toBe(false);
     expect(successor.status).toBe('running');
 
     await manager.collapseApp(id, successorInstance);
     expect(manager.getInstalledApps()[0].status).toBe('collapsed');
-    await manager.showApp(id, successorInstance);
+    await manager.expandApp(id, successorInstance);
     expect(manager.getInstalledApps()[0].status).toBe('running');
     await manager.closeApp(id, successorInstance);
     expect(successor.closed).toBe(true);
@@ -41,14 +44,14 @@ it('binds Semantic lifecycle controls to the observed Worker instance before acc
 });
 
 it.each(['missing-worker', 'missing-identity'] as const)('rejects an expected instance when its %s is absent', async missing => {
-    const manager = new AppManager(desktop), id = await manager.install('/app'), worker = control.boxes[0];
+    const manager = new AppManager(desktop), id = await manager.install('/app', { name: 'app', installationId: 'installation' }), worker = control.boxes[0];
     const expected = worker.appInstanceId as string;
     if (missing === 'missing-worker') (manager as any).workers.delete(id);
     else worker.appInstanceId = undefined;
 
     await expect(manager.closeApp(id, expected)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
     await expect(manager.collapseApp(id, expected)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
-    await expect(manager.showApp(id, expected)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
+    await expect(manager.expandApp(id, expected)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
     expect(worker.closed).toBe(false);
     expect(manager.getInstalledApps()[0].status).toBe('running');
     expect(worker.status).toBe('running');
@@ -56,7 +59,7 @@ it.each(['missing-worker', 'missing-identity'] as const)('rejects an expected in
 });
 
 it('keeps an accepted close attached to its captured Worker while cleanup is pending', async () => {
-    const manager = new AppManager(desktop), id = await manager.install('/app'), first = control.boxes[0];
+    const manager = new AppManager(desktop), id = await manager.install('/app', { name: 'app', installationId: 'installation' }), first = control.boxes[0];
     const expected = first.appInstanceId as string;
     let release!: () => void;const gate = new Promise<void>(resolve => { release = resolve; });
     const dispose = first.disposeAsync.bind(first);
@@ -73,33 +76,33 @@ it('keeps an accepted close attached to its captured Worker while cleanup is pen
 });
 
 it('preserves trusted Tool disablement across pending, open, reopen and reinitialize', async () => {
-    const manager = new AppManager(desktop), options = { modulePath: '/app', toolsEnabled: false };
-    const id = manager.registerPendingApp(options);options.toolsEnabled = true;
-    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });expect(control.boxes).toHaveLength(0);
+    const manager = new AppManager(desktop), options = { modulePath: '/app', name: 'app', toolsEnabled: false };
+    const installationId = manager.registerPendingApp(options);options.toolsEnabled = true;
+    expect(manager.getAppInteraction('app', manager.getInstalledApps()[0]?.appInstanceId ?? 'missing')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });expect(control.boxes).toHaveLength(0);
     expect(manager.getInstalledApps()[0]).not.toHaveProperty('toolsEnabled');
-    await manager.openApp(id);expect(control.boxes[0].config.toolsEnabled).toBe(false);
-    const original = control.boxes[0];await manager.closeApp(id);await manager.openApp(id);await manager.reinitializeApp(id);
+    const id = await manager.openApp(installationId);expect(control.boxes[0].config.toolsEnabled).toBe(false);
+    const original = control.boxes[0];await manager.closeApp(id);await manager.openApp(installationId);await manager.reinitializeApp(id);
     expect(control.boxes).toHaveLength(3);expect(control.boxes.every(box => box.config.toolsEnabled === false)).toBe(true);
     expect(control.boxes[2]).not.toBe(original);expect(manager.getInstalledApps()[0]).not.toHaveProperty('toolsEnabled');
     await manager.cleanupAsync();
 });
 
 it('B2 C11 collapsed is presentation while pending/closed/current closing stop scope creation', async () => {
-    const manager = new AppManager(desktop), id = await manager.install('/app');
+    const manager = new AppManager(desktop), id = await manager.install('/app', { name: 'app', installationId: 'installation' });
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.collapseApp(id);
-    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.showApp(id);
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.expandApp(id);
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');const closing = manager.closeApp(id);
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await closing;
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await manager.cleanupAsync();
 });
 
 it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory rejects a returned handle after trusted DI reentry: %s', async change => {
-    const manager = new AppManager(desktop), id = await manager.install('/app'), captured = control.boxes[0];
+    const manager = new AppManager(desktop), id = await manager.install('/app', { name: 'app', installationId: 'installation' }), captured = control.boxes[0];
     let close: Promise<unknown> | undefined;
     control.create = () => {
         if (change === 'meta') {
             const stored = (manager as any).installedApps;
-            stored.set(id, { ...stored.get(id) });
+            stored.set("installation", { ...stored.get("installation") });
         }
         if (change === 'worker') (manager as any).workers.set(id, { status: 'running' });
         if (change === 'close') close = manager.closeApp(id);
@@ -109,10 +112,10 @@ it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory rejects a retu
 });
 
 it('C05 immediate install capture precedes async startup, ID allocation and mutation', async () => {
-    const manager = new AppManager(desktop), input: any = { toolsEnabled: false };
+    const manager = new AppManager(desktop), input: any = { name: 'app', toolsEnabled: false };
     const installing = manager.install('/app', input);input.toolsEnabled = true;
     await installing;expect(control.boxes[0].config.toolsEnabled).toBe(false);
     await expect(manager.install('/bad', { toolsEnabled: 'bad' as any })).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
-    expect(control.boxes).toHaveLength(1);expect(manager.registerPendingApp({ modulePath: '/next' })).toBe('app_1');
+    expect(control.boxes).toHaveLength(1);expect(manager.registerPendingApp({ modulePath: '/next', name: 'next' })).toBe('app_1');
     await manager.cleanupAsync();
 });

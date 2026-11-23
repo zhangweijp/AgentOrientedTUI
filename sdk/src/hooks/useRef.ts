@@ -5,7 +5,7 @@
  */
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import type Type from 'typebox';
-import { captureRefEntries, formatRef, ref, type RefOptions, type RefSourceValue } from '../app-factory/refs.js';
+import { capturePublication, formatRef, ref, type PublishedRef, type RefOptions, type RefSourceValue } from '../app-factory/refs.js';
 import { useRefRegistry } from '../contexts/view-runtime-context.js';
 
 /** Formats content as a Ref marker for the registered ID. */
@@ -16,19 +16,22 @@ export type RefHandle = (content: string) => string;
  *
  * @param refId - A Ref ID unique within the current View.
  * @param data - The value bound to the Ref.
- * @param options - Explicit business type and optional schema for a JSON Ref. The marker
- * becomes `refType:refId`; registration stays local to its View.
- * Tool input uses `view_id.refId`, without the display type prefix.
+ * @param options - Explicit publication scope and optional business type and schema.
  */
 export function useDataRef<Schema extends Type.TSchema>(
-  refId: string, data: RefSourceValue<Schema>, options?: RefOptions<Schema>,
+  refId: string, data: RefSourceValue<Schema>, options: RefOptions<Schema>,
 ): RefHandle {
   const descriptor = ref(refId, data, options);
-  const { refType } = descriptor;
-  const { captureRef, registerRef } = useRefRegistry('useDataRef', refId);
-  const captured = captureRefEntries(captureRef, descriptor).get(refId)!;
+  usePublishedRef('useDataRef', descriptor);
+  return content => formatRef(content, descriptor);
+}
+
+export function usePublishedRef(hook: 'useDataRef' | 'useArrayRef', descriptor: PublishedRef): void {
+  const { id } = descriptor;
+  const { captureRef, registerRef } = useRefRegistry(hook, id);
+  const captured = capturePublication(captureRef, descriptor);
   const bindingRef = useRef<{
-    binding: ReturnType<typeof registerRef>; refId: string; refType: string | undefined; registerRef: typeof registerRef;
+    binding: ReturnType<typeof registerRef>; id: string; registerRef: typeof registerRef;
   }>();
 
   useLayoutEffect(() => () => {
@@ -38,15 +41,12 @@ export function useDataRef<Schema extends Type.TSchema>(
 
   useLayoutEffect(() => {
     const current = bindingRef.current;
-    if (current && current.refId === refId && current.refType === refType && current.registerRef === registerRef) {
+    if (current && current.id === id && current.registerRef === registerRef) {
       current.binding.update(captured);
     } else {
       current?.binding.release();
       bindingRef.current = undefined;
-      const binding = refType === undefined ? registerRef(refId, captured) : registerRef(refId, captured, refType);
-      bindingRef.current = { binding, refId, refType, registerRef };
+      bindingRef.current = { binding: registerRef(captured), id, registerRef };
     }
   });
-
-  return content => formatRef(content, descriptor);
 }

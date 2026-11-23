@@ -43,9 +43,9 @@ const createMockModelRegistry = (): ModelRegistry => ({
         supportedModels: ['gpt-4', 'gpt-4o'],
     }),
     getModels: vi.fn().mockResolvedValue([
-        { id: 'gpt-4', catalogId: 'openai/gpt-4', name: 'GPT-4', tool_call: true, reasoning: false },
-        { id: 'gpt-4o', catalogId: 'openai/gpt-4o', name: 'GPT-4o', tool_call: true, reasoning: false },
-        { id: 'claude-3-5-sonnet-20241022', catalogId: 'anthropic/claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', tool_call: true, reasoning: false },
+        { id: 'gpt-4', name: 'GPT-4', tool_call: true, reasoning: false },
+        { id: 'gpt-4o', name: 'GPT-4o', tool_call: true, reasoning: false },
+        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', tool_call: true, reasoning: false },
     ]),
 } as any);
 
@@ -68,7 +68,7 @@ describe('LLMConfigService', () => {
                 baseUrl: input.baseUrl,
                 apiKey: input.apiKey,
                 temperature: input.temperature ?? 0.7,
-                maxSteps: input.maxSteps ?? 10,
+
                 isActive: mockConfigs.length === 0,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
@@ -123,7 +123,7 @@ describe('LLMConfigService', () => {
                 providerId: 'openai',
                 apiKey: 'sk-test',
                 temperature: 0.7,
-                maxSteps: 10
+
             };
 
             const result = await service.createConfig(input);
@@ -219,7 +219,7 @@ describe('LLMConfigService', () => {
                 baseUrl: 'https://api.openai.com/v1',
                 apiKey: 'sk-test',
                 temperature: 0.8,
-                maxSteps: 15
+
             });
 
             const config = await service.resolveLLMConfig();
@@ -228,7 +228,7 @@ describe('LLMConfigService', () => {
                 model: 'gpt-4',
                 apiKey: 'sk-test',
                 temperature: 0.8,
-                maxSteps: 15,
+
                 provider: {
                     id: 'openai',
                     baseURL: 'https://api.openai.com/v1'

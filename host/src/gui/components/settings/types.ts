@@ -124,7 +124,6 @@ export interface ProviderConfig {
     /** Temperature setting */
     temperature: number;
     /** Max steps setting */
-    maxSteps: number;
     /** Creation timestamp */
     createdAt: number;
     /** Last update timestamp */
@@ -147,8 +146,6 @@ export interface NewProviderConfig {
     model?: string;
     /** Optional temperature */
     temperature?: number;
-    /** Optional max steps */
-    maxSteps?: number;
 }
 
 /**
@@ -165,8 +162,6 @@ export interface ProviderUpdates {
     model?: string;
     /** Updated temperature */
     temperature?: number;
-    /** Updated max steps */
-    maxSteps?: number;
 }
 
 /**
@@ -198,17 +193,6 @@ export interface ProviderRowProps {
     onEditCustomProvider?: (provider: CustomProviderRecord) => void;
     /** Set of custom provider IDs that have at least one active model config */
     activeCustomProviderIds?: Set<string>;
-}
-
-/**
- * CustomProviderCard Component Props
- * Used inline inside ProviderRow for custom provider cards.
- */
-export interface CustomProviderCardProps {
-    provider: CustomProviderRecord;
-    isSelected: boolean;
-    onSelect: () => void;
-    onDelete: () => void;
 }
 
 /**
@@ -355,41 +339,6 @@ export interface CustomProviderUpdates {
     baseUrl?: string;
     protocol?: CustomProviderProtocol;
     apiKey?: string;
-}
-
-/**
- * Unified view-model that represents either a Template or Custom provider
- * in the mixed provider list of ModelTab.
- */
-export type UnifiedProviderKind = 'template' | 'custom';
-
-export interface UnifiedProvider {
-    kind: UnifiedProviderKind;
-    /** Sort key — use updatedAt from the underlying record */
-    updatedAt: number;
-    /** Template provider data (present when kind === 'template') */
-    templateConfig?: ProviderConfig;
-    /** Custom provider data (present when kind === 'custom') */
-    customConfig?: CustomProviderRecord;
-}
-
-/**
- * CustomProviderDetail Component Props
- */
-export interface CustomProviderDetailProps {
-    provider: CustomProviderRecord;
-    /** LLMConfigRecords linked to this custom provider (providerId === provider.id) */
-    linkedConfigs: ProviderConfig[];
-    /** Whether this custom provider has an active linked config */
-    isActive: boolean;
-    onUpdate: (id: string, updates: CustomProviderUpdates) => Promise<void>;
-    onDelete: (id: string) => void;
-    /** Called when a model config is created for this custom provider */
-    onAddModel: (config: { name: string; model: string; apiKey: string }) => Promise<void>;
-    /** Called when a model config is deleted */
-    onDeleteModel: (configId: number) => Promise<void>;
-    /** Called to activate a model config */
-    onActivateModel: (configId: number) => Promise<void>;
 }
 
 /**

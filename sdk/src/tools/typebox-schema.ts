@@ -1,4 +1,5 @@
-import type { JsonValue, ToolParameterCompileResult } from '@aotui/runtime/core';
+import type { JsonValue, ToolParameterCompileResult } from '@aotui/core';
+import { IsOptional, IsReadonly, IsTuple, IsUnsafe } from 'typebox';
 
 /**
  * Export the JSON Schema portion of a TypeBox schema without invoking any
@@ -123,7 +124,6 @@ function childPosition(position: Position, key: string): Position {
     if (position === 'schema' && SCHEMA_MAP_KEYS.has(key)) return 'schema-map';
     if (position === 'schema' && SCHEMA_ARRAY_KEYS.has(key)) return 'schema-array';
     if (position === 'schema' && SCHEMA_KEYS.has(key)) return 'schema';
-    if (position === 'schema' && key === 'items') return 'schema';
     return 'data';
 }
 
@@ -220,10 +220,11 @@ function copyObject(input: object, position: Position, path: string, depth: numb
                 continue;
             }
             if (key === '~optional' || key === '~readonly') {
-                if (descriptor.value !== true) fail('TOOL_SCHEMA_INVALID', fieldPath, 'Malformed TypeBox metadata');
+                if (descriptor.value !== true || !(key === '~optional' ? IsOptional(input) : IsReadonly(input)))
+                    fail('TOOL_SCHEMA_INVALID', fieldPath, 'Malformed TypeBox metadata');
                 continue;
             }
-            if (key === '~unsafe' && descriptor.value === null && refWitness) continue;
+            if (key === '~unsafe' && descriptor.value === null && refWitness && IsUnsafe(input)) continue;
             if (key.startsWith('~')) fail('TOOL_SCHEMA_UNSUPPORTED', fieldPath, 'TypeBox metadata has runtime semantics and cannot be exported');
             fail('TOOL_SCHEMA_INVALID', fieldPath, 'Hidden properties are not supported');
         }
@@ -249,6 +250,21 @@ function copyObject(input: object, position: Position, path: string, depth: numb
             configurable: true,
             writable: true,
         });
+    }
+
+    const tupleKind = position === 'schema' && Object.hasOwn(descriptors, '~kind') && IsTuple(input);
+    if (position === 'schema' && (tupleKind || Array.isArray(output.items))) {
+        const tuple = output.items;
+        if (!tupleKind) fail('TOOL_SCHEMA_UNSUPPORTED', propertyPath(path, 'items'), 'Use Type.Tuple or JSON Schema 2020-12 prefixItems.');
+        if (Object.hasOwn(output, 'prefixItems')) fail('TOOL_SCHEMA_INVALID', propertyPath(path, 'prefixItems'), 'Type.Tuple already defines the positions.');
+        if (output.type !== 'array' || !Array.isArray(tuple) || output.additionalItems !== false)
+            fail('TOOL_SCHEMA_INVALID', propertyPath(path, 'items'), 'Type.Tuple requires fixed positions and no additional items.');
+        if (output.minItems !== tuple.length) fail('TOOL_SCHEMA_INVALID', propertyPath(path, 'minItems'), 'Match the tuple length.');
+        if (output.maxItems !== undefined && output.maxItems !== tuple.length)
+            fail('TOOL_SCHEMA_INVALID', propertyPath(path, 'maxItems'), 'Match the tuple length.');
+        delete output.additionalItems;
+        if (tuple.length > 0) output.prefixItems = tuple;
+        output.items = false;
     }
 
     if (position === 'schema' && Object.hasOwn(output, 'enum') && !Object.hasOwn(output, 'type')) {

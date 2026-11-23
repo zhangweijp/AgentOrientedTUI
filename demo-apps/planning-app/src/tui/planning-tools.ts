@@ -65,7 +65,7 @@ type PlanListActions = {
     updatePlan: (planId: string, updates: { title?: string; description?: string }) => Promise<boolean>;
     deletePlan: (planId: string) => Promise<boolean>;
     openPlan: (planId: string) => Promise<boolean>;
-    closePlan: () => void;
+    closePlan: () => Promise<void>;
 };
 
 type PlanDetailActions = {
@@ -105,9 +105,9 @@ function taskFor(plan: Plan | null, taskId: string) {
 
 const inactivePlan = () => ({ success: false as const, error: { code: 'PLAN_NOT_ACTIVE', message: 'Open the intended Plan and select a Ref from its current PlanDetail.' } });
 
-export const RootType = defineViewType({ name: 'Root' });
+export const RootType = defineViewType({ name: 'Root', multiplicity: 'single', region: 'static' });
 
-export const PlanListType = defineViewType<PlanListActions>()({ name: 'PlanList', tools: {
+export const PlanListType = defineViewType<PlanListActions>()({ name: 'PlanList', multiplicity: 'single', region: 'dynamic', tools: {
         create_plan: { description: 'Create a new plan, optionally with phases and tasks.',
             inputSchema: planInput,
             async execute({ input: args, context: actions }) {
@@ -152,13 +152,13 @@ export const PlanListType = defineViewType<PlanListActions>()({ name: 'PlanList'
             enabled: ({ activePlan }) => Boolean(activePlan),
             async execute({ context: actions }) {
                 if (!actions.activePlan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'There is no active plan to close.' } };
-                actions.closePlan();
+                await actions.closePlan();
                 return { success: true, data: { message: 'Active plan closed.' } };
             },
         },
 } });
 
-export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanDetail', tools: {
+export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanDetail', multiplicity: 'single', region: 'dynamic', tools: {
         add_phase: { description: 'Add a phase to the active Plan selected by its View-qualified Plan Ref, optionally with initial tasks.',
             inputSchema: addPhaseInput,
             async execute({ input: args, context: actions }) {

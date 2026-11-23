@@ -1,7 +1,8 @@
 import Type from 'typebox';
 import {
   createTUIApp,
-  View,
+  StaticView,
+  DynamicView,
   useAppLifecycle,
   useAppRuntimeContext,
   useArrayRef,
@@ -18,60 +19,58 @@ import {
   type DesktopID,
   type ArgsOf,
   type ItemRefFormatter,
-  type LLMUsageEvent,
   type ListRefFormatter,
   type ProjectionLimits,
   type ToolError,
   type ToolResult,
-  type PersistMeta,
-  type PersistOptions,
-  type PersistStatus,
   type RefHandle,
-  type StateBindingStatus,
+  type StatePersistenceOptions,
   type StateFlushReport,
   type StateIssue,
   type StateValue,
   type TUIAppConfig,
   type ViewType,
   type ViewProps,
-} from '../src/index.js';
-import { arrayRef, formatRef, ref, type ArrayRefOptions, type RefOptions } from '../src/app.js';
+} from '@aotui/sdk';
+import { arrayRef, formatRef, ref, type ArrayRefOptions, type RefOptions } from '@aotui/sdk/app';
 
 // @ts-expect-error The retired handwritten parameter DSL no longer owns inference.
-import type { InferArgs } from '../src/index.js';
+import type { InferArgs } from '@aotui/sdk';
 // @ts-expect-error Parameter types are declared with the shared TypeBox schema.
-import type { ParamBaseType } from '../src/index.js';
+import type { ParamBaseType } from '@aotui/sdk';
 // @ts-expect-error The retired parameter-constraint DSL is not a public export.
-import type { ParamConstraints } from '../src/index.js';
+import type { ParamConstraints } from '@aotui/sdk';
 // @ts-expect-error The retired parameter-definition DSL is not a public export.
-import type { ParamDef } from '../src/index.js';
+import type { ParamDef } from '@aotui/sdk';
 // @ts-expect-error The retired parameter-schema DSL is not a public export.
-import type { ParamSchema } from '../src/index.js';
+import type { ParamSchema } from '@aotui/sdk';
 // @ts-expect-error The retired parameter-type DSL is not a public export.
-import type { ParamType } from '../src/index.js';
+import type { ParamType } from '@aotui/sdk';
 
-// The live channel takes only a listener.
 // @ts-expect-error The retired options type is not part of the SDK root API.
-import type { LLMOutputChannelOptions } from '../src/index.js';
-import { useLLMUsage, usePersistentState } from '../src/index.js';
+import type { LLMOutputChannelOptions } from '@aotui/sdk';
+// @ts-expect-error Model usage belongs to the host.
+import type { LLMUsageEvent } from '@aotui/sdk';
+// @ts-expect-error App-owned storage uses the context's explicit port.
+import { usePersistentState } from '@aotui/sdk';
 import './view-type-tool.js';
 
 // @ts-expect-error Launch config is read from useAppRuntimeContext().
-import { useAppEnv } from '../src/index.js';
+import { useAppEnv } from '@aotui/sdk';
 // @ts-expect-error The SDK has no history source for this Hook.
-import { useLLMOutputHistory } from '../src/index.js';
+import { useLLMOutputHistory } from '@aotui/sdk';
 import type {
   ToolError as RuntimeToolError,
   ToolResult as RuntimeToolResult,
-} from '@aotui/runtime/spi';
+} from '@aotui/core';
 
 // These former exports describe retired/internal Runtime assembly surfaces.
 // @ts-expect-error Legacy object-app interface is not part of the SDK root API.
-import type { IAOTUIApp } from '../src/index.js';
+import type { IAOTUIApp } from '@aotui/sdk';
 // @ts-expect-error The Context object is private SDK plumbing.
-import { ViewRuntimeContext } from '../src/index.js';
+import { ViewRuntimeContext } from '@aotui/sdk';
 // @ts-expect-error The full SDK Context accessor is private.
-import { useInternalAppRuntimeContext } from '../src/index.js';
+import { useInternalAppRuntimeContext } from '@aotui/sdk';
 
 void (null as unknown as IAOTUIApp);
 void ViewRuntimeContext;
@@ -99,8 +98,15 @@ function checkPublicContextShape() {
   const launchConfig: Record<string, unknown> | undefined = context.launchConfig;
   const persistence: AppStatePersistence | undefined = context.persistence;
   const flushReport: Promise<StateFlushReport> | undefined = context.persistence?.flush();
-  const captured = context.persistence?.captureValue({ tabs: ['a'] });
-  const bound = context.persistence?.bind('tabs', [], { hydrate: true });
+  const loaded: Promise<StateValue | undefined> | undefined = persistence?.load('tabs');
+  const saved: Promise<void> | undefined = persistence?.save('tabs', ['a'], { storageKey: 'workspace' });
+  const removed: Promise<void> | undefined = persistence?.remove('tabs');
+  // @ts-expect-error Recovery and initialization belong to the App.
+  persistence?.bind('tabs', [], { hydrate: true });
+  // @ts-expect-error Only JSON may be saved.
+  persistence?.save('tabs', new Date());
+  // @ts-expect-error Storage options only allow the existing explicit key.
+  persistence?.load('tabs', { hydrate: true });
   const limits: ProjectionLimits = context.projectionLimits;
   // @ts-expect-error The configured limits are read-only.
   limits.maxViews = 7;
@@ -130,43 +136,32 @@ function checkPublicContextShape() {
   context.refExporter;
   // @ts-expect-error Lifecycle registration is exposed through useAppLifecycle.
   context.appLifecycle;
-  void appId; void desktopId; void launchConfig; void persistence; void flushReport; void captured; void bound;
+  void [appId, desktopId, launchConfig, persistence, flushReport, loaded, saved, removed];
 }
 void checkPublicContextShape;
 
 type PublicTypes = [
   AppContext, AppID, AppReinitializeContext, ArrayRefHandle,
   DeepReadonly<unknown>, DesktopID, ArgsOf<typeof readRecord>,
-  ItemRefFormatter, LLMUsageEvent,
+  ItemRefFormatter,
   ListRefFormatter, ToolError, ToolResult,
-  PersistMeta, PersistOptions<string>, PersistStatus, RefHandle,
-  StateBindingStatus, StateFlushReport, StateIssue,
+  RefHandle, StatePersistenceOptions, StateFlushReport, StateIssue,
   StateValue,
-  typeof defineViewType, typeof refParam, typeof View,
+  typeof defineViewType, typeof refParam, typeof StaticView, typeof DynamicView,
   ViewType,
-  ViewProps,
+  ViewProps<ViewType>,
 ];
 declare const publicTypes: PublicTypes;
 void publicTypes;
 
 type NoRefHandleProperties = AssertNever<Extract<keyof RefHandle, 'data' | 'id'>>;
-type NoViewCloseHandler = AssertNever<Extract<keyof ViewProps, 'onClose'>>;
-type PublicShapeChecks = [NoRefHandleProperties, NoViewCloseHandler];
+type ViewCloseHandler = AssertTrue<Equal<ViewProps<ViewType>['onClose'], (() => ToolResult | Promise<ToolResult>) | undefined>>;
+type PublicShapeChecks = [NoRefHandleProperties, ViewCloseHandler];
 void (null as unknown as PublicShapeChecks);
 
-useLLMUsage(() => {});
 void useAppEnv;
 void useLLMOutputHistory;
-// @ts-expect-error The live channel accepts no configuration object.
-useLLMUsage(() => {}, { includeHistory: false });
-usePersistentState('public-api-type-check', 0, {
-  storageKey: 'explicit-key',
-  serialize: value => value,
-  deserialize: value => Number(value),
-  rehydrateOnReinitialize: true,
-});
-// @ts-expect-error Persistence does not support automatic debounce scheduling.
-usePersistentState('public-api-type-check', 0, { debounceMs: 100 });
+void usePersistentState;
 
 const config: TUIAppConfig = {
   app_name: 'public_api_types',
@@ -178,21 +173,21 @@ const oldDescriptionConfig: TUIAppConfig = { app_name: 'old_description', descri
 void oldDescriptionConfig;
 const factory = createTUIApp(config);
 const lifecycleProtocol: 'app-lifecycle-v2' = factory.appLifecycleSupport;
-const authoringProtocol: 'view-type-tools-v6' = factory.toolAuthoringProtocol;
+const authoringProtocol: 'view-type-tools-v7' = factory.toolAuthoringProtocol;
 void lifecycleProtocol; void authoringProtocol;
 
 const cleanup: AppLifecycleCallbacks = { stop() {}, close() {} };
 useAppLifecycle(cleanup);
 useAppLifecycle({});
 
-const Reader = defineViewType<object>()({name:'RecordDetail',tools:{
+const Reader = defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'RecordDetail',tools:{
   read_record:{description:'Read a record.',execute:()=>({success:true}),inputSchema:Type.Object({status:Type.Enum(['ready','pending']),limit:Type.Optional(Type.Number())})},
 }});
 const readRecord = Reader.tools.read_record;
 
 const RecordSource = Type.Object({ id: Type.String(), labels: Type.Array(Type.String()) });
-const recordOptions = { refType: 'Record', schema: RecordSource } satisfies RefOptions;
-const recordsOptions = { itemType: 'Record', schema: Type.Array(RecordSource) } satisfies ArrayRefOptions;
+const recordOptions = { scope: 'protected', refType: 'Record', schema: RecordSource } satisfies RefOptions;
+const recordsOptions = { scope: 'protected', itemType: 'Record', schema: Type.Array(RecordSource) } satisfies ArrayRefOptions;
 const record = { id: 'file (draft).txt', labels: ['Ready'] } as const;
 const records = [record] as const;
 
@@ -206,10 +201,10 @@ function checkRefSourceTypes(unknownValue: unknown): void {
   const [all, first] = useArrayRef('records', records, recordsOptions);
   void [label('Current'), all('All'), first(0, 'First')];
 
-  ref('untyped', unknownValue);
-  useDataRef('untyped', unknownValue, { refType: 'Data', schema: undefined });
-  arrayRef('untyped_list', [unknownValue], { itemType: 'Data' });
-  useArrayRef('untyped_list', [unknownValue]);
+  ref('untyped', unknownValue, { scope: 'protected' });
+  useDataRef('untyped', unknownValue, { scope: 'protected', refType: 'Data', schema: undefined });
+  arrayRef('untyped_list', [unknownValue], { scope: 'protected', itemType: 'Data' });
+  useArrayRef('untyped_list', [unknownValue], { scope: 'protected' });
 
   // @ts-expect-error The value cannot widen a concrete TypeBox source schema.
   ref('wrong', { id: 3, labels: [] }, recordOptions);
@@ -222,7 +217,7 @@ function checkRefSourceTypes(unknownValue: unknown): void {
   // @ts-expect-error An array of raw strings does not match the shared options.
   useArrayRef('wrong', ['one'], recordsOptions);
   // @ts-expect-error ArrayRef source schemas describe the whole array.
-  arrayRef('wrong', records, { schema: RecordSource });
+  arrayRef('wrong', records, { scope: 'protected', schema: RecordSource });
   // @ts-expect-error A scalar Ref has no array item formatter.
   formatRef('Wrong', single, 0);
   // @ts-expect-error Formatter input is the same descriptor provided for publication.

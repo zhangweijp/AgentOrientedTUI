@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { render } from '@testing-library/preact';
 import { act } from 'preact/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppLifecycleCallbacks } from '@aotui/runtime/spi';
+import type { AppLifecycleCallbacks } from '@aotui/core';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { useAppLifecycle } from './hooks/useAppLifecycle.js';

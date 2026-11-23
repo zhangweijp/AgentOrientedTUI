@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import type { IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
-import type { AppInteractionPolicy } from '@aotui/runtime/core';
+import type { AppInteractionPolicy } from '@aotui/core';
 import { AppWorkerHost } from '../../runtime/src/engine/app/worker-host.js';
 
 function appSource(): string {
@@ -15,8 +15,8 @@ function appSource(): string {
         import { h } from 'preact';
         import { useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, View, defineViewType } from '@aotui/sdk';
-        const EmptyType = defineViewType()({ name: 'EmptyType', tools: {
+        import { createTUIApp, defineViewType, DynamicView } from '@aotui/sdk';
+        const EmptyType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'EmptyType', tools: {
             ping: {
                 description: 'Ping the empty View type.', inputSchema: Type.Object({}, { additionalProperties: false }),
                 execute: async () => ({ success: true, data: { pong: true } }),
@@ -30,7 +30,7 @@ function appSource(): string {
                 },
             },
         } });
-        const HealthyType = defineViewType({ name: 'HealthyType' });
+        const HealthyType = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'HealthyType' });
 
         function Root() {
             const [bodies, setBodies] = useState({
@@ -39,9 +39,9 @@ function appSource(): string {
                 conditional: null,
             });
 
-            const page = (id, child) => h(View, { kind: 'state', id, type: EmptyType, context: { id, setBodies } }, child);
+            const page = (id, child) => h(DynamicView, { idPrefix: id, type: EmptyType, context: { id, setBodies } }, child);
             return h('div', null, h('main', {}, [
-                h(View, { kind: 'state', id: 'healthy_view', type: HealthyType }, h('p', {}, 'HEALTHY_SIBLING_BODY')),
+                h(DynamicView, { idPrefix: 'healthy_view', type: HealthyType }, h('p', {}, 'HEALTHY_SIBLING_BODY')),
                 page('no_children', bodies.no_children === null ? null : h('p', {}, bodies.no_children)),
                 page('whitespace', bodies.whitespace === null ? null : h('span', {}, bodies.whitespace)),
                 page('conditional', bodies.conditional === null ? null : h('p', {}, bodies.conditional)),
@@ -57,7 +57,10 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
     const modules = join(directory, 'node_modules');
     await mkdir(modules, { recursive: true });
     await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
+    await mkdir(join(modules, '@aotui'), { recursive: true });
+    await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
     await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
     const sourcePath = join(directory, 'app.mjs');
     const app = join(directory, 'app.bundle.mjs');
@@ -68,9 +71,6 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
         format: 'esm', target: 'node20', packages: 'external',
         alias: {
             '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts'),
-            '@aotui/runtime/spi': resolve(runtime, 'src/spi/index.ts'),
-            '@aotui/runtime/core': resolve(runtime, 'src/core/index.ts'),
-            '@aotui/runtime/adapters/dom': resolve(runtime, 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });
@@ -89,7 +89,7 @@ function latestSnapshot(host: AppWorkerHost): any {
 }
 
 function viewMessage(context: Awaited<ReturnType<SemanticAOTUIDrivenSource['getContext']>>, id: string): string {
-    const message = context.messages.find(item => String(item.content).startsWith(`<view id="${id}"`));
+    const message = context.messages.find(item => String(item.content).startsWith(`<view view_id="${id}"`));
     if (!message) throw new Error(`Missing View message ${id}`);
     return String(message.content);
 }
@@ -102,7 +102,7 @@ function viewBodyFromMessage(markup: string): string {
 }
 
 describe('empty View projection in a real Worker and Semantic Source', () => {
-    it('keeps empty Views, matching Tools, healthy siblings and subsequent body updates', async () => {
+    it('keeps empty and whitespace-only Views, their Tools and subsequent body updates', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'aotui-empty-view-'));
         let host: AppWorkerHost | undefined;
         let worker: Worker | undefined;
@@ -125,9 +125,11 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
 
             const desktop = {
                 id: host.desktopId,
-                getInstalledApps: () => [{ appId: host!.appId, appInstanceId: host!.appInstanceId, name: 'empty_app', status: 'running' as const }],
+                bindRequestSources: () => undefined,
+                getInstalledApps: () => [{ installationId: 'empty_app', appId: host!.appId, appInstanceId: host!.appInstanceId, name: 'empty_app', status: 'running' as const }],
+                getAppWindows: () => undefined,
                 getSystemLogs: () => [],
-                openApp: async () => {}, closeApp: async () => {}, collapseApp: async () => {}, showApp: async () => {},
+                openApp: async () => {}, closeApp: async () => {}, collapseApp: async () => {}, expandApp: async () => {},
                 output: { subscribe: vi.fn(), unsubscribe: vi.fn() },
             } as unknown as IDesktop;
             const kernel = {
@@ -154,12 +156,12 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
             ]));
             expect(current.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(4);
             expect(viewMessage(current, 'healthy_view')).toContain('HEALTHY_SIBLING_BODY');
-            for (const id of ['no_children', 'whitespace', 'conditional']) {
-                expect(viewBodyFromMessage(viewMessage(current, id))).toBe('');
-            }
             const initialViews = latestSnapshot(host).views;
             expect(initialViews.find((view: any) => view.id === 'healthy_view')?.content.value).toContain('HEALTHY_SIBLING_BODY');
-            expect(initialViews.filter((view: any) => view.id !== 'healthy_view').map((view: any) => view.content.value)).toEqual(['', '', '']);
+            for (const [id, value] of Object.entries({ no_children: '', whitespace: '  \n  ', conditional: '' })) {
+                expect(viewBodyFromMessage(viewMessage(current, id))).toBe(value);
+                expect(initialViews.find((view: any) => view.id === id)?.content.value).toBe(value);
+            }
 
             await result('empty_app-ping', { view_id: 'no_children' }, 'empty-ping');
             const initialRevision = latestSnapshot(host).revision;

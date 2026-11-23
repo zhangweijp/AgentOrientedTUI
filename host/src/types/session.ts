@@ -9,15 +9,24 @@
  * - **资源管理**: 自动清理空闲 Session
  */
 
-import type { IDesktop } from '@aotui/runtime';
-import type { AgentDriverV2 } from '@aotui/agent-driver-v2';
+import type { DesktopCloseHandle, IDesktop } from '@aotui/runtime';
+import type { AgentDriverV2, LanguageModelUsage } from '@aotui/agent-driver-v2';
 import type { SystemPromptDrivenSource } from '../adapters/system-prompt-source.js';
 import type { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import type { HostDrivenSourceV2 } from '../adapters/host-driven-source.js';
 import type { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import type { McpDrivenSource } from '../mcp/source.js';
 import type { ModelMessage } from 'ai';
-import type { Message } from '../types.js';
+import type { DisplayMessage } from '../types.js';
+import type { PendingAppReceipts } from '../core/pending-app-receipts.js';
+
+export interface ModelUsageEvent {
+    readonly kind: 'topic' | 'im';
+    readonly sessionId: string;
+    readonly providerId: string;
+    readonly modelId: string;
+    readonly usage: LanguageModelUsage;
+}
 
 /**
  * Session 状态
@@ -51,6 +60,8 @@ export interface Session {
         skill: SkillDrivenSource;
         mcp: McpDrivenSource;
     };
+    appReceipts: PendingAppReceipts;
+    closing?: { started: Promise<DesktopCloseHandle>; completion: Promise<void> };
 
     /** Session 状态 */
     state: SessionState;
@@ -90,7 +101,7 @@ export interface GuiUpdateEvent {
     error?: string;
 
     /** 消息内容 (AI SDK v6 ModelMessage) */
-    message?: ModelMessage & Partial<Pick<Message, 'id' | 'timestamp' | 'metadata'>>;
+    message?: ModelMessage & Partial<Pick<DisplayMessage, 'id' | 'timestamp' | 'metadata'>>;
 
     /** Agent 状态 (thinking/executing/idle) */
     state?: string;

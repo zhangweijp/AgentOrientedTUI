@@ -9,7 +9,7 @@ import { readBoundedText } from './ide-history.js';
 import { loadedDiagnostic } from '../tui/loaded-diagnostics.js';
 
 export type LSPQuery = 'hover' | 'definition' | 'references' | 'diagnostics' | 'symbols' | 'incoming' | 'outgoing';
-/** Per-App ownership; the old module singleton is never used by this route. */
+/** Each App owns its language-server clients. */
 export class ScopedLSP {
     private live = true;
     private roots: string[] = [];

@@ -41,14 +41,6 @@ export const DEFAULT_APP_CATALOG: CatalogData = {
             description: 'Lightweight browser with page extraction for agents.',
             latestVersion: '0.1.0',
             keywords: ['browser', 'web', 'search', 'crawl']
-        },
-        {
-            id: 'system-token-monitor',
-            name: 'Token Monitor',
-            packageName: '@aotui/system-token-monitor',
-            description: 'Observe token usage and budget in AOTUI sessions.',
-            latestVersion: '0.1.0',
-            keywords: ['token', 'monitor', 'budget', 'usage']
         }
     ]
 };

@@ -51,7 +51,6 @@ interface Source extends ContextDrivenSource {
   onUpdate(callback: () => void): () => void;
 }
 
-// DrivenSource 是 ContextDrivenSource 的同形别名。
 // DrivenSourceContext 返回：
 // messages: MessageWithTimestamp[]
 // tools: Record<string, Tool>
@@ -59,7 +58,7 @@ interface Source extends ContextDrivenSource {
 // release?: () => void | Promise<void>
 ```
 
-Driver 每轮按 Source 顺序调用一次 getContext，用返回的消息、工具和执行器组装本轮输入与路由。同名工具由后一个 Source 覆盖；getToolSource 保留该轮来源查询。执行器以 Context 作为 this 调用，不会回读 Source 的执行方法。Source 如需使用自身状态，应在捕获时建立相应闭包。
+Driver 每轮按 Source 顺序调用一次 getContext，用返回的消息、工具和执行器组装本轮输入与路由。同名工具由后一个 Source 覆盖。执行器以 Context 作为 this 调用，不会回读 Source 的执行方法。Source 如需使用自身状态，应在捕获时建立相应闭包。
 
 模型返回后，Driver 串行派发工具，并在每次调用前检查 stop / Source 禁用状态。无执行器与执行器返回 undefined 仍有不同错误。LLMClient 向模型 SDK 传递的浅层工具定义会移除 execute；Schema、模型元数据和其他 SDK 回调保留，原工具不被修改。流式与非流式均采用这一边界。
 
@@ -98,14 +97,16 @@ const driver = new AgentDriverV2({
   onToolResult: message => console.log(message),
 });
 await driver.trigger();
-// 宿主结束会话时停止调度、等待其实际工作并 dispose 订阅。
+// 宿主结束会话时先等工具结果保存，再释放订阅。
+await driver.closeToolTurn();
+driver.dispose();
 ```
 
-### 从 split API 迁移
+`closeToolTurn()` 停止调度，并等待 `onToolResult` 保存已公布的整组调用结果。已返回的结果按原样交付，未派发的调用报告未执行。仍等待外部执行器时报告未知结果。若来源能在取消后及时交回原结果或收据，可在本轮 Context 的 `toolsSettlingOnAbort` 声明对应工具。异步保存应从 `onToolResult` 返回保存 Promise。
 
-IDrivenSource 及其导出已经退出。把原 getMessages/getTools 读取合并为 getContext，在这一捕获中确定执行目标，并返回该轮 executeTool；删除 Source 的旧公共 getMessages/getTools/executeTool，不保留兼容包装。不要把返回的执行器重新指向下一轮可变缓存。只返回消息或工具的旧对象不再满足 Source 类型。
+### 消息格式
 
-保留现有消息格式、timestamp/region、tool-call/result 读取及 compaction 行为；本次不迁移历史消息格式。需要降级的来源在自身捕获边界一次处理全部消息和工具，失败时不能返回半份状态；下一次显式捕获可重试。更新用已有 onUpdate 通知，不能为迁移新增自动业务重试。
+`MessageWithTimestamp` 在 AI SDK 的 `ModelMessage` 上增加毫秒 `timestamp` 和可选 `region`。工具调用参数放在 `input`，工具消息使用 `ToolResultPart.output`，例如 `{ type: 'json', value: { saved: true } }`。普通 assistant 字符串按原文发送。
 
 ### LLM 配置
 
@@ -127,22 +128,24 @@ OpenAI 的官方地址走 Responses API，明确配置的兼容地址走 Chat Co
 
 `apiKey` 可以直接提供，或使用对应 Provider 的环境变量。OpenAI、Anthropic、Google、DeepSeek、xAI 和 OpenRouter 分别读取 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`（也支持 `GOOGLE_GENERATIVE_AI_API_KEY`）、`DEEPSEEK_API_KEY`、`XAI_API_KEY` 和 `OPENROUTER_API_KEY`。通用 Provider 使用其大写 ID 对应的 `<ID>_API_KEY`。
 
-### 模型路由迁移
+OpenAI 与 DeepSeek 可设 `provider.toolSchemaMode: 'strict'`。默认 `'non-strict'`，Driver 在两种模式都显式发送实际的 `strict` 值。DeepSeek strict 需要 `baseURL` 以 `/beta` 结尾。Agentina 可在 `config.json` 的 `toolSchemaModes` 按实际路由设置，例如 `{ "deepseek:deepseek-chat@https://api.deepseek.com/beta": "strict" }`，默认地址也可用 `provider:model` 作键。自定义地址只识别带地址的键。Provider 端的兼容性随所用服务和模型而定。 [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode) · [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/#strict-mode-beta)
 
-旧的 `model: 'openai:gpt-4'` 应迁移为 `provider: { id: 'openai' }, model: 'gpt-4'`。仅填写 `model: 'gpt-4'` 的调用需要补上实际 Provider。JavaScript 和 TypeScript 使用同一合同。直接构建模型的调用使用 `createLanguageModel(config)`。
+Driver 将当前 `ProviderToolSchemaPolicy` 交给 `getContext(policy?)`，Source 可在预算、采用和发送之前用它检查实际原生 Schema。独立宿主也可调用 `createProviderToolSchemaPolicy(config)`。不兼容的可选 Source 工具会带原因退出请求，无法发送必需工具时报 `MODEL_TOOL_SCHEMA_UNSUPPORTED`。整次请求被服务拒绝时，原错误交给 `onRunError`。部分 Google SDK 版本会把 Schema 转换成 OpenAPI `parameters`，Driver 会根据本地编码判断，该编码丢失的约束会在采用前报告。
 
-Desktop Host 的 Topic、Agent 和外部模型目录值由 `LLMConfigService` 解析成上述配置。自定义 Provider 的 Host ID 由设置解析为所选协议、地址和 Key。
+OpenAI strict 按每个工具单独检查整份 Schema。各处 `enum` 合计最多 1000 项，嵌套最多 10 层。超过 250 项的字符串枚举还检查 15000 字符的总长度。诊断包含对应路径、使用量和上限。 [OpenAI Schema 上限](https://developers.openai.com/api/docs/guides/structured-outputs#limitations-on-enum-size)
 
-## 下一步
+Agentina 的 Topic 和 Agent 用 `provider:model` 选择模型。激活配置分别保存 Provider 和原始模型 ID。自定义 Provider ID 由 Host 解析为当前设置中的协议、地址和凭据。
 
-- [x] 实现完整的 LLM ReAct 循环 (streamText)
-- [ ] ToolCall 超时配置尚无实际执行机制，本轮未实现
-- [x] 添加单元测试
-- [x] 实现 SemanticAOTUIDrivenSource (在 runtime 中)
-- [x] 实现 HostDrivenSource (在 host 中)
-- [x] 移除 ModelRegistry 依赖（迁移到 Host 主进程）
+### 模型用量
 
+Driver 的 `onLLMUsage(usage)` 接收 AI SDK 的 `LanguageModelUsage`。输入和输出分别从 `inputTokens` 和 `outputTokens` 读取。总量使用 `totalTokens`，缓存与推理明细分别从 `inputTokenDetails` 和 `outputTokenDetails` 读取。同一次响应最多通知一次。提供方明确报告的零会透传。响应既无归一用量也无原始对象时跳过通知，只有归一用量时省略 `raw`。发送前的上下文预算仍由独立的 `inputBudget` 处理。
+
+- 通用 Chat Completions（含 OpenAI 兼容地址）从同一次流的用量块保留完整 JSON，包括嵌套扩展。DeepSeek 使用其适配器提供的原始用量对象。
+- OpenAI 官方与 xAI Responses 从 `response.completed` 或 `response.incomplete` 终止事件读取原始 `response.usage`，保留服务报告的总量、缓存明细及扩展。Google GenerateContent 从同一条流取最近一次报告的 `usageMetadata`，保留按模态列出的输入与候选输出明细。后续块缺报时仍使用前一份对象。归一计数继续由 AI SDK 提供。
+- Anthropic 合并 `message_start` 和 `message_delta` 的用量。OpenRouter Chat 和 Completion 返回其适配器保留的 `usage`，包括已交付的成本和明细。
+
+产品 Host 通过 `HostManagerV2.onModelUsage(listener)` 向宿主进程交付 `{ kind, sessionId, providerId, modelId, usage }`。对话题，`kind` 为 `topic`，`sessionId` 为话题 ID。对 IM，`kind` 为 `im`，`sessionId` 为 IM 会话键。调用订阅返回的函数即可取消。用量订阅独立于消息保存、IM 发送和 App 投影。
 
 ## AOTUI Runtime integration
 
-Hosts connecting this Driver to AOTUI Runtime use the separate `@aotui/agent-driver-adapter` package. It provides `SemanticAOTUIDrivenSource` and requires matching Runtime and Driver peers. The Driver itself does not depend on Runtime. The SRT-06 candidate package versions are unpublished; see the adapter README for the exact pairing.
+Hosts connecting this Driver to AOTUI Runtime use the separate `@aotui/agent-driver-adapter` package. It provides `SemanticAOTUIDrivenSource` and requires matching Runtime and Driver peers. The Driver itself does not depend on Runtime. See the adapter README for the package versions.

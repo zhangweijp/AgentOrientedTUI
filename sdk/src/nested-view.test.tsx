@@ -1,4 +1,5 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { mountedViews, preparedRefs } from './__tests__/projection-facts.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { Component, h, type ComponentChildren } from 'preact';
 import { act } from 'preact/test-utils';
@@ -6,12 +7,12 @@ import { useState } from 'preact/hooks';
 import { describe, expect, it } from 'vitest';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
-import { View } from './components/View.js';
+import { DynamicView } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { defineViewType, type ViewType } from './tools/view-type-tool.js';
 import Type from 'typebox';
 
-const descriptors=Object.fromEntries(['child','parent','ready','recovered'].map(name=>[name,defineViewType({name})]));
+const descriptors=Object.fromEntries(['child','parent','ready','recovered'].map(name=>[name,defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name})]));
 function toolsOf(kernel:AppKernel) {
     const projection=kernel.getProjectionCoordinator();
     if (!projection.token().ready) return [];
@@ -56,8 +57,8 @@ class ErrorBoundary extends Component<{
     }
 }
 
-const instances = (kernel: AppKernel) => kernel.getViewOwnedViewInstances().map(view => view.viewId).sort();
-const refs = (kernel: AppKernel) => kernel.getViewRefs().map(ref => `${ref.viewId}:${ref.refId}`).sort();
+const instances = (kernel: AppKernel) => mountedViews(kernel).map(view => view.viewId).sort();
+const refs = (kernel: AppKernel) => preparedRefs(kernel).map(ref => `${ref.viewId}:${ref.refId}`).sort();
 
 describe('View nesting boundary', () => {
     it.each(['direct', 'wrapped'] as const)('rejects %s nested Views before mounting child bindings and can recover', async kind => {
@@ -66,31 +67,31 @@ describe('View nesting boundary', () => {
         let nestedPayloadRendered = false;
         function NestedPayload() {
             nestedPayloadRendered = true;
-            const value = useDataRef('nested_record', { value: 'nested' });
+            const value = useDataRef('nested_record', { value: 'nested' }, { scope: 'protected' });
             return h('p', {}, value('Nested'));
         }
         function NestedWrapper() {
-            return h(View, {kind: 'state', type: descriptors.child, id: 'child' }, h(NestedPayload, {}));
+            return h(DynamicView, {type: descriptors.child, idPrefix: 'child' }, h(NestedPayload, {}));
         }
         function RecoveryPayload() {
-            const value = useDataRef('recovered_record', { value: 'recovered' });
+            const value = useDataRef('recovered_record', { value: 'recovered' }, { scope: 'protected' });
             return h('p', {}, value('Recovered'));
         }
         function Root() {
             const [nested, update] = useState(true);
             setNested = update;
             const nestedAttempt = kind === 'direct'
-                ? h(View, {kind: 'state', type: descriptors.child, id: 'child' }, h(NestedPayload, {}))
+                ? h(DynamicView, {type: descriptors.child, idPrefix: 'child' }, h(NestedPayload, {}))
                 : h(NestedWrapper, {});
             return h('main', {}, [
-                h(View, {kind: 'state', type: descriptors.parent, id: 'parent' }, h('section', {}, [
+                h(DynamicView, {type: descriptors.parent, idPrefix: 'parent' }, h('section', {}, [
                     h('p', {}, 'Ordinary component content'),
                     h(ErrorBoundary, {
                         key: nested ? 'attempt' : 'recovered',
                         onError(error) { captured = error; },
                     }, nested ? nestedAttempt : h('p', {}, 'Removed nested declaration')),
                 ])),
-                !nested ? h(View, {kind: 'state', type: descriptors.recovered, id: 'recovered' }, h(RecoveryPayload, {})) : null,
+                !nested ? h(DynamicView, {type: descriptors.recovered, idPrefix: 'recovered' }, h(RecoveryPayload, {})) : null,
             ]);
         }
 
@@ -105,13 +106,13 @@ describe('View nesting boundary', () => {
             });
             expect((captured as Error).message).toContain('Declare independent sibling Views');
             expect(nestedPayloadRendered).toBe(false);
-            expect(x.container.querySelector('[data-view-id="child"]')).toBeNull();
+            expect(x.container.querySelector('[data-aotui-view="Child"]')).toBeNull();
             expect(instances(x.kernel)).toEqual([]);
             expect(x.kernel.getProjectionCoordinator().failed).toBe(true);
             expect(refs(x.kernel)).toEqual([]);
 
             await act(async () => setNested(false));
-            expect(x.container.querySelector('[data-view-id="recovered"]')).not.toBeNull();
+            expect(x.container.querySelector('[data-aotui-view="Recovered"]')).not.toBeNull();
             expect(instances(x.kernel)).toEqual(['parent', 'recovered']);
             expect(refs(x.kernel)).toEqual(['recovered:recovered_record']);
             expect(x.container.textContent).toContain('Recovered');
@@ -126,18 +127,18 @@ describe('View nesting boundary', () => {
     it('rethrows an uncaught Preact render error without leaving View bindings behind', async () => {
         let nestedPayloadRendered = false;
         function ExistingPayload() {
-            const value = useDataRef('existing_record', { value: 'existing' });
+            const value = useDataRef('existing_record', { value: 'existing' }, { scope: 'protected' });
             return h('p', {}, value('Existing'));
         }
         function NestedPayload() {
             nestedPayloadRendered = true;
-            const value = useDataRef('nested_record', { value: 'nested' });
+            const value = useDataRef('nested_record', { value: 'nested' }, { scope: 'protected' });
             return h('p', {}, value('Nested'));
         }
         function Root() {
             return h('main', {}, [
-                h(View, {kind: 'state', type: descriptors.ready, id: 'ready' }, h(ExistingPayload, {})),
-                h(View, {kind: 'state', type: descriptors.parent, id: 'parent' }, h(View, {kind: 'state', type: descriptors.child, id: 'child' }, h(NestedPayload, {}))),
+                h(DynamicView, {type: descriptors.ready, idPrefix: 'ready' }, h(ExistingPayload, {})),
+                h(DynamicView, {type: descriptors.parent, idPrefix: 'parent' }, h(DynamicView, {type: descriptors.child, idPrefix: 'child' }, h(NestedPayload, {}))),
             ]);
         }
 
@@ -163,9 +164,9 @@ describe('View nesting boundary', () => {
 
     it('allows ordinary component nesting and independently declared sibling Views through dynamic close and reopen', async () => {
         let setLeftOpen!: (open: boolean) => void;
-        const Card=defineViewType<object>()({name:'Card',tools:{inspect_card:{description:'Inspect the current Card.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
+        const Card=defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Card',tools:{inspect_card:{description:'Inspect the current Card.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
         function Content({ owner }: { owner: string }) {
-            const value = useDataRef(`${owner}_record`, { owner });
+            const value = useDataRef(`${owner}_record`, { owner }, { scope: 'protected' });
             return h('section', {}, h('p', {}, value(owner)));
         }
         function OrdinaryWrapper({ children }: { children?: ComponentChildren }) {
@@ -177,9 +178,9 @@ describe('View nesting boundary', () => {
             setLeftOpen = updateLeft;
             return h('main',{},[
                 h('p', {}, 'Application content'),
-                leftOpen ? h(View, {kind: 'state', id: 'left', key: 'left', type: Card, context: {} },
+                leftOpen ? h(DynamicView, {idPrefix: 'left', key: 'left', type: Card, context: {} },
                     h(OrdinaryWrapper, {}, [h(Content, { owner: 'left' })])) : null,
-                h(View, {kind: 'state', id: 'right', key: 'right', type: Card, context: {} },
+                h(DynamicView, {idPrefix: 'right', key: 'right', type: Card, context: {} },
                     h(OrdinaryWrapper, {}, [h(Content, { owner: 'right' })])),
             ]);
         }
@@ -194,7 +195,7 @@ describe('View nesting boundary', () => {
             expect(initialTool).not.toHaveProperty('execution');
             expect(toolsOf(x.kernel)).toHaveLength(1);
 
-            expect(x.container.querySelectorAll('[data-view-id]')).toHaveLength(2);
+            expect(x.container.querySelectorAll('[data-aotui-view]')).toHaveLength(2);
             expect(x.container.textContent).toContain('Application content');
 
             await act(async () => setLeftOpen(false));

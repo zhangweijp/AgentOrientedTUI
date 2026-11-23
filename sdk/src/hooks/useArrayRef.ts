@@ -8,7 +8,7 @@
  * @example
  * ```tsx
  * function ChatView({ messages }) {
- *   const [listRef, itemRef] = useArrayRef('messages', messages, { itemType: 'Message' });
+ *   const [listRef, itemRef] = useArrayRef('messages', messages, { scope: 'private', itemType: 'Message' });
  *
  *   return <ul>{messages.map((msg, idx) => (
  *     <li key={msg.id}>{itemRef(idx, `${msg.role}: ${msg.content}`)}</li>
@@ -16,10 +16,9 @@
  * }
  * ```
  */
-import { useLayoutEffect, useRef } from 'preact/hooks';
 import type Type from 'typebox';
-import { arrayRef, captureRefEntries, formatRef, type ArrayRefOptions, type RefSourceValue } from '../app-factory/refs.js';
-import { useRefRegistry } from '../contexts/view-runtime-context.js';
+import { arrayRef, formatRef, type ArrayRefOptions, type RefSourceValue } from '../app-factory/refs.js';
+import { usePublishedRef } from './useRef.js';
 
 /**
  * ListRefFormatter - 列表标题格式化函数
@@ -54,52 +53,10 @@ export type ArrayRefHandle = [ListRefFormatter, ItemRefFormatter];
 export function useArrayRef<Schema extends Type.TSchema>(
   refId: string,
   data: readonly unknown[] & RefSourceValue<Schema>,
-  options?: ArrayRefOptions<Schema>,
+  options: ArrayRefOptions<Schema>,
 ): ArrayRefHandle {
-  const { captureRef, registerRef } = useRefRegistry('useArrayRef', refId);
   const descriptor = arrayRef(refId, data, options);
-  const itemType = descriptor.refType;
-  const desired = captureRefEntries(captureRef, descriptor);
-  type Binding = ReturnType<typeof registerRef>;
-  const owner = useRef<{ bindings: Map<string, Binding>; refId: string; itemType: string | undefined; registerRef: typeof registerRef }>();
-  const release = () => {
-    for (const binding of owner.current?.bindings.values() ?? []) binding.release();
-    owner.current = undefined;
-  };
-  useLayoutEffect(() => release, []);
-
-  useLayoutEffect(() => {
-    let current = owner.current;
-    if (!current || current.refId !== refId || current.itemType !== itemType || current.registerRef !== registerRef) {
-      release();
-      current = { bindings: new Map(), refId, itemType, registerRef };
-      owner.current = current;
-    }
-    const bindings = current.bindings;
-    const added: string[] = [];
-    try {
-      for (const [id, value] of desired) {
-        const binding = bindings.get(id);
-        if (binding) binding.update(value);
-        else {
-          bindings.set(id, registerRef(id, value, itemType));
-          added.push(id);
-        }
-      }
-    } catch (error) {
-      for (const id of added.reverse()) {
-        bindings.get(id)!.release();
-        bindings.delete(id);
-      }
-      throw error;
-    }
-    for (const [id, binding] of bindings) {
-      if (!desired.has(id)) {
-        binding.release();
-        bindings.delete(id);
-      }
-    }
-  });
+  usePublishedRef('useArrayRef', descriptor);
 
   return [
     content => formatRef(content, descriptor),

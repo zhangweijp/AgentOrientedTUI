@@ -7,7 +7,7 @@
  *
  * The existing configuration database is read-only. Credentials stay in memory;
  * the normal Host conversation database, project and app data are temporary.
- * No test Source, fake model, special IDE entrypoint or Legacy fallback is used.
+ * Uses the default Source, configured model and packaged IDE entrypoint.
  */
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import type { LLMConfig } from '@aotui/agent-driver-v2';
 import type { ModelMessage } from 'ai';
 import type { Session, GuiUpdateEvent } from '../src/types/session.js';
-import type { Message } from '../src/types-v2.js';
+import type { Message } from '../src/types/messages.js';
 
 const MAX_DURATION_MS = 300_000;
 const MAX_MODEL_REQUESTS = 12;
@@ -52,7 +52,6 @@ const facts = {
     elapsedMs: 0,
     provider: process.env.AOTUI_TEST_PROVIDER || 'deepseek',
     defaultSemanticSource: false,
-    legacyCalls: 0,
     modelRequests: [] as RequestFacts[],
     toolResults: [] as ToolResultFacts[],
     assistantMessages: [] as AssistantFacts[],
@@ -146,7 +145,7 @@ except Exception:
         provider: { id: row.provider_id, ...(typeof row.base_url === 'string' && row.base_url
             ? { baseURL: row.base_url } : {}) },
         temperature: 0,
-        maxSteps: MAX_MODEL_REQUESTS,
+
         modelCapabilities: { toolCall: true },
     };
 }
@@ -227,29 +226,25 @@ try {
     await fs.writeFile(demoFile, 'export const answer = 42;\n');
     process.env.DB_PATH = path.join(work, 'chat.sqlite');
     process.env.AOTUI_DATA_DIR = path.join(work, 'data');
-    delete process.env.AOTUI_HOST_SEMANTIC_DEV;
-    delete process.env.AOTUI_HOST_SEMANTIC_PROJECT;
-    delete process.env.AOTUI_HOST_SEMANTIC_DATA;
 
-    const { createRuntime, AppRegistry } = await import('@aotui/runtime');
+    const { createRuntime } = await import('@aotui/runtime');
+    const { AppCatalog } = await import('../src/app-distribution/app-catalog.js');
     const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
     const { AgentDriverV2 } = await import('@aotui/agent-driver-v2');
-    const { DesktopManager, desktopManager: moduleDesktopManager, desktopManagerReady } = await import('../src/core/desktop-manager.js');
+    const { DesktopManager, desktopManager: moduleDesktopManager } = await import('../src/core/desktop-manager.js');
     moduleRuntime = moduleDesktopManager.getKernel();
     const { SessionManagerV3 } = await import('../src/core/session-manager-v3.js');
-    const { MessageServiceV2 } = await import('../src/core/message-service-v2.js');
+    const { MessageService } = await import('../src/core/message-service.js');
     const { LLMConfigService } = await import('../src/core/llm-config-service.js');
     const { ModelRegistry } = await import('../src/services/model-registry.js');
     const { projectService } = await import('../src/core/project-service.js');
     database = await import('../src/db/index.js');
-    // Await the existing module singleton's config read; it creates no Desktop.
-    await desktopManagerReady;
     await database.initDatabase();
 
     class InMemoryLLMConfigService extends LLMConfigService {
         override async resolveLLMConfig(): Promise<LLMConfig> { return llmConfig; }
     }
-    class PrivateTestMessageService extends MessageServiceV2 {
+    class PrivateTestMessageService extends MessageService {
         override addMessage(topicId: string, message: ModelMessage): Message {
             // Session's normal error path attaches raw provider errors. Keep the
             // real persistence service, but never persist those details in a test.
@@ -267,15 +262,9 @@ try {
     }
 
     runtime = createRuntime();
-    const legacyForbidden = () => {
-        facts.legacyCalls += 1;
-        throw new AcceptanceFailure('LEGACY_INTERACTION_USED');
-    };
-    runtime.acquireSnapshot = legacyForbidden;
-    runtime.execute = legacyForbidden;
     const desktopManager = new DesktopManager({ kernel: runtime,
-        appRegistry: new AppRegistry({ configPath: path.join(work, 'apps.json') }) });
-    await desktopManager.initialize({ loadFromConfig: false, appEntries: [{
+        appCatalog: new AppCatalog({ configPath: path.join(work, 'apps.json') }) });
+    await desktopManager.initialize({ appEntries: [{
         name: 'system_ide', source: `local:${path.join(repo, 'demo-apps/aotui-ide')}`,
         enabled: true, autoStart: true,
     }] });
@@ -362,7 +351,6 @@ try {
     progress('verification');
     facts.finalFile43 = await fs.readFile(demoFile, 'utf8') === 'export const answer = 43;\n';
     requireFact(facts.finalFile43 && facts.markerReceived, 'FINAL_FILE_OR_ANSWER_INCORRECT');
-    requireFact(facts.legacyCalls === 0, 'LEGACY_INTERACTION_USED');
     requireFact(facts.modelRequests.length > 0, 'NO_REAL_MODEL_REQUEST');
     const firstRequest = facts.modelRequests[0]!;
     requireFact(firstRequest.openTool && !firstRequest.editTool, 'INITIAL_TOOL_SURFACE_INCORRECT');

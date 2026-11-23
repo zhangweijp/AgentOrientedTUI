@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
-import { refKey } from '../../core/snapshot/snapshot-support.js';
+import { refKey } from '@aotui/core';
 
 /**
  * M3 real Worker + bundled REAL SDK createTUIApp + Preact hooks.
@@ -21,7 +21,9 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             await mkdir(join(modules, '@aotui'), { recursive: true });
             await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
             await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
-            await symlink(join(root, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+            await symlink(join(root, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+            await symlink(join(root, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
+            await symlink(join(root, '../core'), join(modules, '@aotui/core'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
             const workerPath = join(temporary, 'worker.mjs');
             const appPath = join(temporary, 'app.mjs');
@@ -36,13 +38,13 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 import Type from 'typebox';
                 import { useLayoutEffect, useState } from 'preact/hooks';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
-                import { View } from './sdk/src/components/View.tsx';
+                import { DynamicView } from './sdk/src/components/View.tsx';
                 import { useAppRuntimeContext } from './sdk/src/context/AppRuntimeContext.tsx';
                 import { useDataRef } from './sdk/src/hooks/useRef.ts';
                 import { useArrayRef } from './sdk/src/hooks/useArrayRef.ts';
 
                 import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
-                const WorkspaceType = defineViewType()({ name: 'Workspace', tools: {
+                const WorkspaceType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
                     complete: {
                         description: 'Complete selected task', inputSchema: Type.Object({}, { additionalProperties: false }),
                         execute: async () => ({ success: true }),
@@ -62,8 +64,8 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                         parentPort.on('message', onCommand);
                         return () => parentPort.off('message', onCommand);
                     }, []);
-                    const selected = useDataRef('selected', target);
-                    const [listLabel, itemLabel] = useArrayRef('pending', [target], { itemType: 'Task' });
+                    const selected = useDataRef('selected', target, { scope: 'protected' });
+                    const [listLabel, itemLabel] = useArrayRef('pending', [target], { scope: 'protected', itemType: 'Task' });
                     return h('section', {}, [
                         h('p', {key:'selected'}, selected('Stable task label')),
                         h('p', {key:'list'}, listLabel('Stable list label')),
@@ -72,7 +74,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                     ]);
                 }
                 function Root() {
-                    return h('div', null, h(View, { kind: 'state', id: 'workspace', type: WorkspaceType, context: {} }, h(Content)));
+                    return h('div', null, h(DynamicView, { idPrefix: 'workspace', type: WorkspaceType, context: {} }, h(Content)));
                 }
                 export default createTUIApp({viewTypes:[WorkspaceType], app_name:'m3_integration',component:Root});
             `;
@@ -93,7 +95,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
                 expect(host?.getSemanticSnapshotReport()).toMatchObject({
                     health: 'ready', revision: 1, lastViewCount: 1,
-                    lastRefCount: 3, lastToolCount: 1,
+                    lastRefCount: 2, lastToolCount: 1,
                 });
             }, { timeout: 3_000 }));
             const initial = host.getSemanticSnapshotReport()!;
@@ -103,8 +105,8 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             const oldRead = semanticCore.store.getById(initial.snapshotId);
             expect(oldRead.status).toBe('found');
             const oldViewInstanceId = oldRead.snapshot.views[0].viewInstanceId;
-            const oldRefKey = refKey('workspace', oldViewInstanceId, 'pending[0]');
-            expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject({ id: 'A' });
+            const oldRefKey = refKey('workspace', oldViewInstanceId, 'pending');
+            expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject([{ id: 'A' }]);
             const markup = oldRead.snapshot.views[0].content.value;
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
@@ -113,7 +115,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 const report = host?.getSemanticSnapshotReport();
                 expect(report?.health).toBe('ready');
                 expect(report?.revision).toBeGreaterThan(initial.revision);
-                expect(report).toMatchObject({ lastViewCount: 1, lastRefCount: 3, lastToolCount: 1 });
+                expect(report).toMatchObject({ lastViewCount: 1, lastRefCount: 2, lastToolCount: 1 });
             }, { timeout: 3_000 }));
             const changed = host.getSemanticSnapshotReport()!;
             expect(changed.published).toBeGreaterThanOrEqual(2);
@@ -121,15 +123,15 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             const newRead = semanticCore.store.getById(changed.snapshotId);
             expect(newRead.status).toBe('found');
             expect(newRead.snapshot.views[0].viewInstanceId).toBe(oldViewInstanceId);
-            const newRefKey = refKey('workspace', oldViewInstanceId, 'pending[0]');
-            expect(newRead.snapshot.refs[newRefKey].target.payload).toMatchObject({ id: 'B' });
+            const newRefKey = refKey('workspace', oldViewInstanceId, 'pending');
+            expect(newRead.snapshot.refs[newRefKey].target.payload).toMatchObject([{ id: 'B' }]);
             const completeTool = Object.values(newRead.snapshot.tools).find((tool: any) => tool.name === 'complete') as any;
             expect(completeTool).toMatchObject({ viewType: 'Workspace' });
             expect(newRead.snapshot.views[0]!.toolBindings).toEqual([{ toolId: completeTool!.id, activationId: expect.any(String) }]);
             expect(completeTool).not.toHaveProperty('targets');
             // A historical Ref is pinned to its original object even when the
             // same visible Ref ID is reused in a new Snapshot.
-            expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject({ id: 'A' });
+            expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject([{ id: 'A' }]);
             expect(newRead.snapshot.views[0].content.value).toBe(markup);
             expect(changed.health).toBe('ready');
         } finally {

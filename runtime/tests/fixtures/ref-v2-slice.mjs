@@ -54,16 +54,16 @@ function makeTools() {
     };
     for (const [index, param] of specialNames.entries())
         definitions['special_' + index] = declare('special_' + index, Object.fromEntries([[param, ref('Data')]]));
-    return SDK.defineViewType()({name:"File",tools:definitions});
+    return SDK.defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:"File",tools:definitions});
 }
 const File = makeTools();
-const Guide = SDK.defineViewType({name:"Root"});
+const Guide = SDK.defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:"Root"});
 function NewTools({ view, state }) {
     const label = labelFor(view);
-    const file = SDK.useDataRef(label, { label: state.text, view, literal }, { refType: 'Data' });
+    const file = SDK.useDataRef(label, { label: state.text, view, literal }, { scope: 'protected', refType: 'Data' });
     // Complete effectiveArgs has root + payload + view scalar + list array + N entries: N + 4 nodes.
-    const big = SDK.useDataRef('capacity_' + label, { view, list: Array(Math.max(0, state.capacityNodes - 4)).fill(null) }, { refType: 'Data' });
-    const foreign = SDK.useDataRef('private_' + label, { view }, { refType: 'Data' });
+    const big = SDK.useDataRef('capacity_' + label, { view, list: Array(Math.max(0, state.capacityNodes - 4)).fill(null) }, { scope: 'protected', refType: 'Data' });
+    const foreign = SDK.useDataRef('private_' + label, { view }, { scope: 'protected', refType: 'Data' });
     return h('section', {}, [h('p', {}, `Private fixture object: ${view}`),
         h('p', {}, [file('Original file value'), big('List value'), foreign('View-specific value')]),
         h('p', {}, 'Private protocol tools: inspect and plain; availability is supplied by the committed Tool catalog.')]);
@@ -83,9 +83,9 @@ function Root() {
     }, []);
     useLayoutEffect(() => { parentPort.postMessage({ type: 'REF_V2_COMMITTED', state, tag: state.tag }); }, [state]);
     const key = JSON.stringify([state.rule,state.defaultValue,state.refType]);
-    const view = id => h(SDK.View, { kind: 'state', key: id + key, id, type: File, context: { id, state } }, h(NewTools, { view: id, state }));
+    const view = id => h(SDK.DynamicView, { key: id + key, idPrefix: id, type: File, context: { id, state } }, h(NewTools, { view: id, state }));
     return h('main',{},[
-        h(SDK.View, {kind: 'instruction', key: 'root', id: 'root', type: Guide }, [h('h1', {}, 'Reference Inspector Application Instruction'),
+        h(SDK.StaticView, {key: 'root', idPrefix: 'root', type: Guide }, [h('h1', {}, 'Reference Inspector Application Instruction'),
             h('h2', {}, 'What Reference Inspector is'), h('p', {}, 'Inspect displayed values from their original file views.'),
             h('h2', {}, 'How to use Reference Inspector'), h('p', {}, 'Use a displayed reference with the inspect tool. Read its result for the original value.'),
             h('h2', {}, 'Views of Reference Inspector'), state.show || state.showSecond ? h('section', {}, [h('h3', {}, 'File'), h('h4', {}, 'File Instruction'), h('p', {}, 'Displays original values and inspection tools.'), h('h4', {}, 'File Available Tools'), h('p', {}, 'inspect, capacity, open_ref, typed, plain')]) : null]),

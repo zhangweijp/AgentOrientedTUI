@@ -13,6 +13,7 @@ overrides:
   picomatch@4.0.3: 4.0.4
   preact: 10.29.1
   rollup: ^4.60.1
+  '@aotui/core': link:./core
   '@aotui/agent-driver-adapter': link:./agent-driver-adapter
   '@aotui/runtime': link:./runtime
   '@aotui/sdk': link:./sdk
@@ -28,6 +29,9 @@ importers:
       '@aotui/agent-driver-v2':
         specifier: link:agent-driver-v2
         version: link:agent-driver-v2
+      '@aotui/core':
+        specifier: link:core
+        version: link:core
       '@aotui/runtime':
         specifier: link:runtime
         version: link:runtime

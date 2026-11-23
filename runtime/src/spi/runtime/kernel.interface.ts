@@ -4,14 +4,19 @@
  * Defines the Kernel and Desktop runtime contracts.
  */
 
-import type { DesktopID, AppID } from '../core/types.js';
-import type { LLMUsageEvent } from '../core/llm-usage.js';
+import type { DesktopID, AppID } from '@aotui/core';
 import type { UpdateSignal } from '../core/signals.js';
-import type { IRuntimeContext } from './context.interface.js'; // New
 import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle } from './close.interface.js';
 export type { ShutdownOptions } from './close.interface.js';
 import type { AppInteractionOptions, AppInteractionResult } from './app-interaction.interface.js';
-import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy, RequestSources, RequestSourceSelection } from '@aotui/core';
+import type { AppWindows, ViewCloseResult, ViewWindowTarget } from './windows.js';
+
+export interface RegisterPendingAppOptions extends AppInteractionOptions {
+    installationId: string;
+    localPath: string;
+    config?: import('@aotui/core').AppLaunchConfig;
+}
 
 export interface ReinitializeDesktopAppsOptions {
     reason?: string;
@@ -20,7 +25,7 @@ export interface ReinitializeDesktopAppsOptions {
 export interface ReinitializeDesktopAppsResult {
     desktopId: DesktopID;
     reinitializedAppIds: AppID[];
-    skippedAppIds: AppID[];
+    skippedInstallationIds: string[];
     failedAppIds: AppID[];
 }
 
@@ -35,10 +40,11 @@ export interface ReinitializeDesktopAppsResult {
  * 所有 App 运行在独立的 Worker Thread 中。
  */
 export interface AppDiscoveryInfo {
-    readonly appId: AppID;
+    readonly installationId: string;
+    readonly appId?: AppID;
     /** Runtime-owned identity of the current Worker execution, absent when no execution is active. */
     readonly appInstanceId?: string;
-    readonly name?: string;
+    readonly name: string;
     readonly status: 'pending' | 'running' | 'closed' | 'collapsed';
     readonly description?: string;
     readonly whatItIs?: string;
@@ -47,10 +53,11 @@ export interface AppDiscoveryInfo {
 
 export interface IDesktop {
     getAppInteraction(appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult;
+    bindRequestSources(input: RequestSourceSelection): RequestSources;
     beginClose(options?: DesktopCloseOptions): DesktopCloseHandle;
-    id: DesktopID;
-
-    broadcastLLMUsage(event: LLMUsageEvent): void;
+    readonly id: DesktopID;
+    /** True from close admission onward, including after resources have been released. */
+    readonly isClosing: boolean;
 
     /** Installed application catalog used by Semantic context and lifecycle controls. */
     getInstalledApps(): readonly AppDiscoveryInfo[];
@@ -66,13 +73,13 @@ export interface IDesktop {
     installDynamicWorkerApp(
         appModulePath: string,
         options?: AppInteractionOptions & {
-            appId?: string;
+            installationId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */
             description?: string;
             whatItIs?: string;
             whenToUse?: string;
-            config?: import('../app/app-config.interface.js').AppLaunchConfig;
+            config?: import('@aotui/core').AppLaunchConfig;
         }
     ): Promise<string>;
 
@@ -82,22 +89,18 @@ export interface IDesktop {
      * App 信息写入 installedApps，但不启动 Worker。
      * Semantic context can present these apps and expose the corresponding open control.
      */
-    registerPendingApp(options: AppInteractionOptions & {
-        appId?: string;
-        name?: string;
-        description?: string;
-        whatItIs?: string;
-        whenToUse?: string;
-        modulePath: string;
-        config?: import('../app/app-config.interface.js').AppLaunchConfig;
-    }): Promise<string>;
+    registerPendingApp(options: RegisterPendingAppOptions): Promise<string>;
 
     // System Commands (App)
-    openApp(appId: AppID): Promise<void>;
+    openApp(installationId: string): Promise<AppID>;
     /** If supplied, a mismatch rejects with APP_INSTANCE_CHANGED before side effects; omitting it preserves trusted Host behavior. */
     closeApp(appId: AppID, expectedInstanceId?: string): Promise<void>;
-    collapseApp(appId: AppID, expectedInstanceId?: string): Promise<void>;
-    showApp(appId: AppID, expectedInstanceId?: string): Promise<void>;
+    getAppWindows(appId: AppID, expectedInstanceId: string): AppWindows | undefined;
+    collapseApp(appId: AppID, expectedInstanceId?: string, note?: string): Promise<void>;
+    expandApp(appId: AppID, expectedInstanceId?: string): Promise<void>;
+    collapseView(target: ViewWindowTarget, note?: string): Promise<void>;
+    expandView(target: ViewWindowTarget): Promise<void>;
+    closeView(target: ViewWindowTarget): Promise<ViewCloseResult>;
 
     output: {
         subscribe(listener: (signal: UpdateSignal) => void): void;
@@ -130,7 +133,7 @@ export interface IKernel {
     getAppInteraction(desktopId: DesktopID, appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult;
     beginShutdown(): RuntimeCloseHandle;
     beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseHandle;
-    createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;
+    createDesktop(desktopId?: DesktopID): Promise<DesktopID>;
     // [M1 FIX] Changed from void to Promise<void> to match implementation
     destroyDesktop(desktopId: DesktopID): Promise<void>;
 
@@ -148,11 +151,11 @@ export interface IKernel {
         desktopId: DesktopID,
         appModulePath: string,
         options?: AppInteractionOptions & {
-            appId?: string;
+            installationId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */
             description?: string;
-            config?: import('../app/app-config.interface.js').AppLaunchConfig;
+            config?: import('@aotui/core').AppLaunchConfig;
         }
     ): Promise<string>;
 

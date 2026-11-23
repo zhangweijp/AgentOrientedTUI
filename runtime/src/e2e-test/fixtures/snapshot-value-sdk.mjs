@@ -3,7 +3,7 @@ import { h } from 'preact';
 import { useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 import Type from 'typebox';
-import { createTUIApp, View, useDataRef, useArrayRef, defineViewType, refParam } from '@aotui/sdk';
+import { createTUIApp, DynamicView, useDataRef, useArrayRef, defineViewType, refParam } from '@aotui/sdk';
 
 const SENTINEL = 'W03_B_SDK_PRIVATE_b6143_秘密';
 let calls = 0, handlerEntries = 0, guards = 0;
@@ -19,7 +19,7 @@ const declaration = (name, fields) => ({
     enabled: context => context.toolEnabled,
     execute: ({ input, context }) => context.execute(context.receiver, name, input),
 });
-const FileType = defineViewType()({ name:'File', tools: {
+const FileType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'File', tools: {
     read: declaration('read', { file: ref('Data'), value: Type.Optional(Type.String()),
         choice: Type.Optional(Type.String({ enum: ['allowed'] })), text: Type.Optional(Type.String({ minLength: 1 })), mode: Type.Optional(Type.String()) }),
     typed: declaration('typed', { file: ref('File') }),
@@ -29,13 +29,13 @@ const FileType = defineViewType()({ name:'File', tools: {
 const labelFor = owner => owner === 'aa' ? 'alpha' : 'beta';
 function Marker({ owner, text }) {
     const label = labelFor(owner);
-    const reference = useDataRef(label, { owner, text, secret: SENTINEL, nested: { items: [1, false, null] } }, { refType: 'Data' });
-    const [array] = useArrayRef('array_' + label, [], { itemType: 'Data' });
+    const reference = useDataRef(label, { owner, text, secret: SENTINEL, nested: { items: [1, false, null] } }, { scope: 'protected', refType: 'Data' });
+    const [array] = useArrayRef('array_' + label, [], { scope: 'protected', itemType: 'Data' });
     // Payload.type deliberately says File while actual metadata remains Data.
-    const metadata = useDataRef('metadata_' + label, { type: 'File', owner, revision: 1 }, { refType: 'Data' });
+    const metadata = useDataRef('metadata_' + label, { type: 'File', owner, revision: 1 }, { scope: 'protected', refType: 'Data' });
     return h('p', {}, [reference('Stable file'), array('Array'), metadata('Metadata')]);
 }
-function ForeignMarker() { return h('p', {}, useDataRef('private_beta', { owner: 'bb' }, { refType: 'Data' })('Foreign')); }
+function ForeignMarker() { return h('p', {}, useDataRef('private_beta', { owner: 'bb' }, { scope: 'protected', refType: 'Data' })('Foreign')); }
 function Content({ owner, state }) {
     return h('section', {}, [state.showRef ? h(Marker, { owner, text: state.text, key: 'ref' }) : null,
         owner === 'bb' ? h(ForeignMarker, { key: 'foreign' }) : null, h('p', { key: 'revision' }, 'Revision ' + state.revision)]);
@@ -75,8 +75,8 @@ function Root() {
     }
     const context = receiver => ({ receiver, execute, toolEnabled: state.toolEnabled });
     return h('main', {}, [
-        h(View, {kind: 'state', id: 'aa', type: FileType, key: 'aa', context: context('aa') }, h(Content, { owner: 'aa', state: state.aa })),
-        h(View, {kind: 'state', id: 'bb', type: FileType, key: 'bb', context: context('bb') }, h(Content, { owner: 'bb', state: state.bb })),
+        h(DynamicView, {idPrefix: 'aa', type: FileType, key: 'aa', context: context('aa') }, h(Content, { owner: 'aa', state: state.aa })),
+        h(DynamicView, {idPrefix: 'bb', type: FileType, key: 'bb', context: context('bb') }, h(Content, { owner: 'bb', state: state.bb })),
     ]);
 }
 export default createTUIApp({ app_name: 'ref_sdk_fixture', component: Root, viewTypes:[FileType] });

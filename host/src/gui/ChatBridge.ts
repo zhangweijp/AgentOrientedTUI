@@ -3,16 +3,18 @@
  * 
  * - IPC (Electron tRPC): Topics/Messages/Snapshot/Agent 状态
  */
-import type { Message, Topic, Project, ImageAttachment } from '../types.js';
+import type { DisplayMessage, Topic, Project, ImageAttachment } from '../types.js';
+import type { ToolResultPart } from 'ai';
 import type { GuiUpdateEvent } from '../types/session.js';
 import type { ImConfig } from '../config/im-schema.js';
 import type { SourceControlsSnapshot } from '../core/source-controls.js';
-import { createMessageId } from '../types-v2.js';
+import { createMessageId } from '../types/messages.js';
 import { createTRPCProxyClient } from '@trpc/client';
 import type { Unsubscribable } from '@trpc/server/observable';
 import { ipcLink } from 'electron-trpc/renderer';
 import superjson from 'superjson';
-import type { AppRouter } from '../trpc/router-types.js';
+import type { AppRouter } from '../trpc/router.js';
+import type { DesktopPreview } from '../core/desktop-preview.js';
 import { isIMSessionKey } from '../im/routing.js';
 
 // Event types for subscribers
@@ -38,8 +40,8 @@ export class ChatBridge {
     // State
     private projects: Project[] = []; // [RFC-025]
     private topics: Map<string, Topic> = new Map();
-    private messages: Map<string, Message[]> = new Map();
-    private snapshots: Map<string, string> = new Map();
+    private messages: Map<string, DisplayMessage[]> = new Map();
+    private previews = new Map<string, DesktopPreview>();
     private agentStates: Map<string, string> = new Map();
     private agentPaused: Map<string, boolean> = new Map();  // [RFC-014]
     private streamingTexts: Map<string, string> = new Map();
@@ -138,7 +140,7 @@ export class ChatBridge {
 
     // ============ API - Messages ============
 
-    async sendMessage(topicId: string, content: string, attachments: ImageAttachment[] = []): Promise<Message | null> {
+    async sendMessage(topicId: string, content: string, attachments: ImageAttachment[] = []): Promise<DisplayMessage | null> {
         try {
             // 1. Ensure Desktop is active (Lazy Activation)
             await this.activateDesktop(topicId);
@@ -149,7 +151,7 @@ export class ChatBridge {
 
             // Optimistic update: Add message to local state immediately
             // [Fix] Move Optimistic Update BEFORE network call for instant feedback
-            const optimisticMessage: Message = {
+            const optimisticMessage: DisplayMessage = {
                 id: messageId,
                 role: 'user',
                 content,
@@ -182,7 +184,7 @@ export class ChatBridge {
 
     // ============ API - Snapshots ============
 
-    async requestSnapshot(topicId: string): Promise<void> {
+    async requestDesktopPreview(topicId: string): Promise<void> {
         let owner = this.trpcSubscriptions.get(topicId);
         if (!owner) { owner = {}; this.trpcSubscriptions.set(topicId, owner); }
         await this.ensureSessionReady(topicId, true);
@@ -198,11 +200,10 @@ export class ChatBridge {
                 while (owner.snapshotDirty && this.trpcSubscriptions.get(topicId) === owner) {
                     owner.snapshotDirty = false;
                     try {
-                        const snapshot = await this.getTrpcClient().session.snapshot.query({ id: topicId });
+                        const preview = await this.getTrpcClient().session.preview.query({ id: topicId });
                         if (this.trpcSubscriptions.get(topicId) !== owner) return;
                         if (owner.snapshotDirty) continue;
-                        if (typeof snapshot?.markup !== 'string') throw new Error('Preview snapshot unavailable');
-                        this.snapshots.set(topicId, snapshot.markup);
+                        this.previews.set(topicId, preview);
                         this.notify({ type: 'snapshot', topicId });
                     } catch (error) {
                         if (this.trpcSubscriptions.get(topicId) !== owner) return;
@@ -258,7 +259,7 @@ export class ChatBridge {
     // [RFC-015] Shutdown: 关机但保留数据
     async shutdownDesktop(topicId: string): Promise<void> {
         this.releaseSessionSubscription(topicId);
-        this.snapshots.delete(topicId);
+        this.previews.delete(topicId);
         this.notify({ type: 'snapshot', topicId });
         await this.getTrpcClient().session.shutdown.mutate({ id: topicId });
     }
@@ -269,7 +270,7 @@ export class ChatBridge {
             await this.getTrpcClient().db.deleteTopic.mutate({ id: topicId });
             this.topics.delete(topicId);
             this.messages.delete(topicId);
-            this.snapshots.delete(topicId);
+            this.previews.delete(topicId);
             this.agentStates.delete(topicId);
             this.agentPaused.delete(topicId);
             this.streamingTexts.delete(topicId);
@@ -342,13 +343,12 @@ export class ChatBridge {
         this.notify({ type: 'topic', topicId });
     }
 
-    getMessages(topicId: string): Message[] {
+    getMessages(topicId: string): DisplayMessage[] {
         return this.messages.get(topicId) ?? [];
     }
 
-    getSnapshot(topicId: string): string {
-        // Missing data is a loading state, not an empty Desktop snapshot.
-        return this.snapshots.get(topicId) || '';
+    getDesktopPreview(topicId: string): DesktopPreview | undefined {
+        return this.previews.get(topicId);
     }
 
     getAgentThinking(topicId: string): string {
@@ -388,7 +388,7 @@ export class ChatBridge {
      * Explicitly activate the desktop connection
      */
     async activateDesktop(topicId: string): Promise<void> {
-        if (!this.snapshots.has(topicId)) await this.requestSnapshot(topicId);
+        if (!this.previews.has(topicId)) await this.requestDesktopPreview(topicId);
         else await this.ensureSessionReady(topicId, true);
     }
 
@@ -434,10 +434,10 @@ export class ChatBridge {
         if (this.trpcSubscriptions.get(topicId) === owner) this.ensureSessionSubscription(topicId, owner);
     }
 
-    private toDisplayMessage(message: NonNullable<GuiUpdateEvent['message']>): Message {
+    private toDisplayMessage(message: NonNullable<GuiUpdateEvent['message']>): DisplayMessage {
         const { id = createMessageId(), timestamp = Date.now(), metadata, role, content } = message;
         const { attachments: _attachments, ...metadataWithoutAttachments } = metadata ?? {};
-        const base: Message = {
+        const base: DisplayMessage = {
             id, timestamp, role, messageType: 'text',
             content: typeof content === 'string' ? content : '',
             metadata: role === 'user' ? metadata : metadataWithoutAttachments,
@@ -497,9 +497,7 @@ export class ChatBridge {
         if (message.role === 'tool') {
             const toolResults = message.content.flatMap(part => {
                 if (part.type !== 'tool-result') return [];
-                // V2 history from Host compaction could store a raw receipt.
-                const output = part.output ?? (part as { result?: unknown }).result;
-                const { result, isError } = this.normalizeToolOutput(output);
+                const { result, isError } = this.normalizeToolOutput(part.output);
                 return [{ toolCallId: part.toolCallId, toolName: part.toolName, result, isError }];
             });
             if (toolResults.length) {
@@ -664,16 +662,11 @@ export class ChatBridge {
         this.notify({ type: 'message', topicId, data: display });
     }
 
-    private normalizeToolOutput(output: unknown): { result: unknown; isError: boolean } {
-        if (output && typeof output === 'object' && 'type' in output) {
-            if (output.type === 'execution-denied') return { result: output, isError: true };
-            if ('value' in output && ['json', 'text', 'error-json', 'error-text', 'content'].includes(String(output.type))) {
-                const isError = output.type === 'error-json' || output.type === 'error-text';
-                const result = output.value;
-                return { result, isError: isError || this.isFailedReceipt(result) };
-            }
-        }
-        return { result: output, isError: this.isFailedReceipt(output) };
+    private normalizeToolOutput(output: ToolResultPart['output']): { result: unknown; isError: boolean } {
+        if (output.type === 'execution-denied') return { result: output, isError: true };
+        const result = output.value;
+        const isError = output.type === 'error-json' || output.type === 'error-text' || this.isFailedReceipt(result);
+        return { result, isError };
     }
 
     private isFailedReceipt(result: unknown): boolean {
@@ -724,7 +717,7 @@ export class ChatBridge {
         return this.getTrpcClient().llmConfig.customProvidersDelete.mutate({ id });
     }
 
-    async createCustomModelConfig(input: { customProviderId: string; modelId: string; name?: string; temperature?: number; maxSteps?: number; setActive?: boolean }): Promise<any> {
+    async createCustomModelConfig(input: { customProviderId: string; modelId: string; name?: string; temperature?: number; setActive?: boolean }): Promise<any> {
         return this.getTrpcClient().llmConfig.customModelConfigsCreate.mutate(input);
     }
 

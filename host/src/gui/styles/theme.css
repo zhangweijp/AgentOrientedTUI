@@ -86,26 +86,7 @@
     --mat-lg-highlight-gradient: rgba(255, 255, 255, 0.08);
     --mat-overlay-bg: rgba(0, 0, 0, 0.40);
     
-    /* Legacy mappings to prevent breaking existing components before Phase 2/3 */
-    --color-accent-glow: transparent;
-    --color-accent-light: #47A1FF;
-    --color-accent-dark: #0062CC;
-    --color-text-secondary-glow: transparent;
-    --color-accent-muted: rgba(10, 132, 255, 0.2);
     --color-accent-ring: rgba(10, 132, 255, 0.3);
-    --color-danger-muted: rgba(255, 69, 58, 0.2);
-    --color-success-muted: rgba(48, 209, 88, 0.2);
-    --color-warning-muted: rgba(255, 159, 10, 0.2);
-    --color-border: var(--mat-border);
-    --color-border-hover: var(--mat-border-highlight);
-    --glass-bg: var(--mat-lg-regular-bg);
-    --glass-bg-hover: rgba(40, 40, 45, 0.8);
-    --glass-border: var(--mat-border);
-    --glass-border-highlight: var(--mat-border-highlight);
-    --glass-blur: 40px;
-    --gradient-start: transparent;
-    --gradient-mid: transparent;
-    --gradient-end: transparent;
 }
 
 /* --- Light Mode --- */
@@ -150,23 +131,5 @@
     --mat-lg-highlight-gradient: rgba(255, 255, 255, 0.92);
     --mat-overlay-bg: rgba(0, 0, 0, 0.15);
     
-    /* Legacy mappings */
-    --color-accent-glow: transparent;
-    --color-accent-light: #47A1FF;
-    --color-accent-dark: #0062CC;
-    --color-text-secondary-glow: transparent;
-    --color-accent-muted: rgba(0, 122, 255, 0.2);
     --color-accent-ring: rgba(0, 122, 255, 0.3);
-    --color-danger-muted: rgba(255, 59, 48, 0.2);
-    --color-success-muted: rgba(40, 205, 65, 0.2);
-    --color-warning-muted: rgba(255, 149, 0, 0.2);
-    --color-border: var(--mat-border);
-    --color-border-hover: var(--mat-border-highlight);
-    --glass-bg: var(--mat-lg-regular-bg);
-    --glass-bg-hover: rgba(255, 255, 255, 0.9);
-    --glass-border: var(--mat-border);
-    --glass-border-highlight: var(--mat-border-highlight);
-    --gradient-start: transparent;
-    --gradient-mid: transparent;
-    --gradient-end: transparent;
 }

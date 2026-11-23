@@ -1,17 +1,12 @@
-export interface FeishuSendBaseInput {
+export type FeishuReceiveIdType = 'chat_id' | 'open_id' | 'user_id' | 'email' | 'union_id'
+
+interface SendTextMessageInput {
   apiBaseUrl: string
   botToken: string
-  receiveIdType: 'chat_id' | 'open_id' | 'user_id' | 'email' | 'union_id'
+  receiveIdType: FeishuReceiveIdType
   receiveId: string
   rootId?: string
-}
-
-export interface SendTextMessageInput extends FeishuSendBaseInput {
   text: string
-}
-
-export interface SendCardMessageInput extends FeishuSendBaseInput {
-  card: Record<string, unknown>
 }
 
 export interface FeishuSendResult {
@@ -26,11 +21,7 @@ function requireField(value: string, fieldName: string): string {
   return normalized
 }
 
-async function sendMessage(
-  input: FeishuSendBaseInput,
-  messageType: 'text' | 'interactive',
-  content: Record<string, unknown>,
-): Promise<FeishuSendResult> {
+export async function sendTextMessage(input: SendTextMessageInput): Promise<FeishuSendResult> {
   const apiBaseUrl = requireField(input.apiBaseUrl, 'apiBaseUrl')
   const botToken = requireField(input.botToken, 'botToken')
   const receiveId = requireField(input.receiveId, 'receiveId')
@@ -44,8 +35,8 @@ async function sendMessage(
     },
     body: JSON.stringify({
       receive_id: receiveId,
-      msg_type: messageType,
-      content: JSON.stringify(content),
+      msg_type: 'text',
+      content: JSON.stringify({ text: input.text }),
       ...(input.rootId ? { root_id: input.rootId } : {}),
     }),
   })
@@ -66,12 +57,4 @@ async function sendMessage(
   }
 
   return { messageId }
-}
-
-export async function sendTextMessage(input: SendTextMessageInput): Promise<FeishuSendResult> {
-  return sendMessage(input, 'text', { text: input.text })
-}
-
-export async function sendCardMessage(input: SendCardMessageInput): Promise<FeishuSendResult> {
-  return sendMessage(input, 'interactive', input.card)
 }

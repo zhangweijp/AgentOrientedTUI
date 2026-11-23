@@ -24,7 +24,7 @@ const mockProviders: ProviderConfig[] = [
         isActive: true,
         model: 'gpt-4',
         temperature: 0.7,
-        maxSteps: 10,
+
         createdAt: Date.now(),
         updatedAt: Date.now(),
     },
@@ -36,7 +36,7 @@ const mockProviders: ProviderConfig[] = [
         isActive: false,
         model: 'claude-3',
         temperature: 0.7,
-        maxSteps: 10,
+
         createdAt: Date.now(),
         updatedAt: Date.now(),
     },

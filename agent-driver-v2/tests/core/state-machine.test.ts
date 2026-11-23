@@ -18,7 +18,7 @@ function stubLlmCall(driver: AgentDriverV2) {
         },
     });
 
-    (driver as any).llmClient = { call };
+    vi.spyOn(driver['llmClient'], 'call').mockImplementation(call);
     return call;
 }
 
@@ -110,7 +110,7 @@ describe('AgentDriver State Machine', () => {
             await callbacks?.beforeRequest?.(JSON.stringify({ messages, tools }));
             return call();
         };
-        (driver as any).llmClient = { call: modelCall };
+        vi.spyOn(driver['llmClient'], 'call').mockImplementation(modelCall);
 
         // 启动一个 run (会进入 thinking 状态)
         await driver.trigger();
@@ -147,97 +147,6 @@ describe('AgentDriver State Machine', () => {
     });
 });
 
-describe('Tool Mapping', () => {
-    it('should build correct tool-to-source mapping', async () => {
-        const source1: ContextDrivenSource = {
-            name: 'Source1',
-            getContext: vi.fn().mockResolvedValue({
-                messages: [],
-                tools: {
-                    tool1: {
-                        description: 'Tool 1',
-                        parameters: {},
-                    },
-                    tool2: {
-                        description: 'Tool 2',
-                        parameters: {},
-                    },
-                },
-                executeTool: vi.fn().mockResolvedValue(undefined),
-            }),
-            onUpdate: vi.fn().mockReturnValue(() => { }),
-        };
-
-        const source2: ContextDrivenSource = {
-            name: 'Source2',
-            getContext: vi.fn().mockResolvedValue({
-                messages: [],
-                tools: {
-                    tool3: {
-                        description: 'Tool 3',
-                        parameters: {},
-                    },
-                },
-                executeTool: vi.fn().mockResolvedValue(undefined),
-            }),
-            onUpdate: vi.fn().mockReturnValue(() => { }),
-        };
-
-        const driver = new AgentDriverV2({
-            sources: [source1, source2],
-            llm: { model: 'gpt-4', provider: { id: 'openai' } },
-        });
-        stubLlmCall(driver);
-
-        // 手动触发以建立映射
-        await driver.trigger();
-        await waitForIdle(driver);
-
-        // 验证映射
-        expect(driver.getToolSource('tool1')).toBe(source1);
-        expect(driver.getToolSource('tool2')).toBe(source1);
-        expect(driver.getToolSource('tool3')).toBe(source2);
-        expect(driver.getToolSource('nonexistent')).toBeUndefined();
-    });
-
-    it('should use tool mapping when executing', async () => {
-        const executeTool = vi.fn().mockResolvedValue({
-            toolCallId: 'test-id',
-            toolName: 'search',
-            result: { data: 'result' },
-        });
-
-        const source: ContextDrivenSource = {
-            name: 'TestSource',
-            getContext: vi.fn().mockResolvedValue({
-                messages: [],
-                tools: {
-                    search: {
-                        description: 'Search tool',
-                        parameters: {},
-                    },
-                },
-                executeTool,
-            }),
-            onUpdate: vi.fn().mockReturnValue(() => { }),
-        };
-
-        const driver = new AgentDriverV2({
-            sources: [source],
-            llm: { model: 'gpt-4', provider: { id: 'openai' } },
-        });
-        stubLlmCall(driver);
-
-        // 触发以建立映射
-        await driver.trigger();
-        await waitForIdle(driver);
-
-        // 验证 executeTool 被调用
-        // 注意：实际测试需要 mock LLM 返回 ToolCalls
-        // 这里只是验证映射建立成功
-        expect(driver.getToolSource('search')).toBe(source);
-    });
-});
 
 describe('Message Collection', () => {
     it('should collect and sort messages by timestamp', async () => {

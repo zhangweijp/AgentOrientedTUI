@@ -3,18 +3,18 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createRuntime } from '@aotui/runtime';
 import { coreFixtureFacts } from './core-out/public-core.js';
+import { stateFixtureFacts } from './core-out/public-memory-state.js';
 import { selectedViewId, otherViewId } from './core-out/work-items.js';
 
 const profile = process.argv[2];
-const facts = { profile, core: coreFixtureFacts, calls: [], reports: [] };
+const facts = { profile, core: coreFixtureFacts, state: stateFixtureFacts, calls: [], reports: [] };
 
 assert.equal(coreFixtureFacts.handlerEntries, 3);
 assert.deepEqual(coreFixtureFacts.witness, [{ text: 'old!', frozen: true }, { text: 'new!', frozen: true }]);
-for (const field of ['observationSlots', 'logicalBytes', 'leases', 'bindings', 'stateOwners']) {
+for (const field of ['observationSlots', 'logicalBytes', 'leases', 'bindings']) {
   assert.equal(coreFixtureFacts[field], 0, field);
 }
-assert.equal(coreFixtureFacts.restoredValue, 41);
-assert.equal(coreFixtureFacts.storedKeys, 1);
+assert.deepEqual(stateFixtureFacts, { restoredValue: 41, stateOwners: 0, storedKeys: 1 });
 
 const workRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
 facts.workItemsExamples = [];
@@ -27,7 +27,7 @@ try {
   const entry = new URL('./work-' + author + '.mjs', import.meta.url);
   await fs.writeFile(entry, 'import { workItemsApp } from ' + JSON.stringify(example) + ';\n' +
     'export default workItemsApp(' + JSON.stringify(appId) + ');\n');
-  await workRuntime.installDynamicWorkerApp(desktop, entry.href, { appId, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+  await workRuntime.installDynamicWorkerApp(desktop, entry.href, { installationId: appId, name: appId, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
   const desktopHandle = workRuntime.getDesktop(desktop);
   const instanceId = desktopHandle.getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
   assert.ok(instanceId);
@@ -52,14 +52,14 @@ try {
   try {
    const first = await observe();
    const selectedView = first.views.find(view => view.id === selectedViewId);
-   for (const marker of ['(Data:selected)', '(Data[]:items)', '(Data:items[0])']) {
+   for (const marker of ['(protected selected: Data)', '(protected items: Data[])', '(items[0])']) {
     assert.ok(selectedView.content.value.includes(marker), marker);
    }
    const selections = [
-    [otherViewId, otherViewId + '.selected', false],
-    [selectedViewId, selectedViewId + '.selected', null],
-    [otherViewId, selectedViewId + '.items[0]', 0],
-    [otherViewId, selectedViewId + '.items', [0, false, '', null, { nested: [1, [false]] }]],
+    [otherViewId, '$' + appId + '.' + otherViewId + '.selected', false],
+    [selectedViewId, '$' + appId + '.' + selectedViewId + '.selected', null],
+    [otherViewId, '$' + appId + '.' + selectedViewId + '.items[0]', 0],
+    [otherViewId, '$' + appId + '.' + selectedViewId + '.items', [0, false, '', null, { nested: [1, [false]] }]],
    ];
    for (const [index, [id, selected, expected]] of selections.entries()) {
     const current = observation ?? await observe();
@@ -88,6 +88,103 @@ try {
 }
 
 if (profile === 'full') {
+  const sdk = await import('@aotui/sdk');
+  const copy = await import('@aotui/sdk-copy');
+  assert.notEqual(await fs.realpath(fileURLToPath(import.meta.resolve('@aotui/sdk'))),
+    await fs.realpath(fileURLToPath(import.meta.resolve('@aotui/sdk-copy'))));
+  assert.notEqual(sdk.defineViewType, copy.defineViewType);
+  assert.equal(sdk.useState, copy.useState, 'Both SDK copies use the same physical Preact');
+  const primaryCore = import.meta.resolve('@aotui/core', import.meta.resolve('@aotui/sdk'));
+  const secondCore = import.meta.resolve('@aotui/core', import.meta.resolve('@aotui/sdk-copy'));
+  assert.notEqual(primaryCore, secondCore);
+  assert.deepEqual(await fs.readFile(new URL(primaryCore)), await fs.readFile(new URL(secondCore)));
+  facts.coreCopies = [primaryCore, secondCore];
+  const { SemanticProjectionCoordinator, SnapshotDataError } = await import(primaryCore);
+  const { SnapshotDataError: CopyDataError } = await import(secondCore);
+  const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId: 'copy_views', instanceId: 'diagnostic' }) });
+  const issue = { code: 'REF_DECLARATION_INVALID', path: '$.refs.example', message: 'Invalid Ref from the other Core' };
+  const error = new CopyDataError(issue.code, issue.path, issue.message);
+  assert.equal(error instanceof SnapshotDataError, false);
+  const rejectedProjection = projection.commit(() => { throw error; });
+  assert.deepEqual(rejectedProjection.issue, issue);
+  projection.close();
+  facts.copyDiagnostic = rejectedProjection.issue;
+  const copiesRuntime = createRuntime();
+  facts.preactCopies = [];
+  try {
+   const desktopId = await copiesRuntime.createDesktop('preact-copies');
+   const desktop = copiesRuntime.getDesktop(desktopId);
+   async function install(mode) {
+    const entry = new URL('./copy-' + mode + '.mjs', import.meta.url);
+    await fs.writeFile(entry, 'import { copyApp } from "./full-out/preact-sdk-copies.js";\n' +
+      'export default copyApp(' + JSON.stringify(mode) + ');\n');
+    const appFolder = new URL('./copy-manifest-' + mode + '/', import.meta.url);
+    await fs.mkdir(appFolder, { recursive: true });
+    await fs.writeFile(new URL('aoapp.json', appFolder), JSON.stringify({
+     app_name: 'copy_views', version: '0.1.0', entry: { main: '../copy-' + mode + '.mjs' },
+     toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2',
+    }));
+    const installationId = await desktop.registerPendingApp({
+     installationId: mode, localPath: fileURLToPath(appFolder), config: { word: mode },
+    });
+    return desktop.openApp(installationId);
+   }
+   async function capture(client) {
+    const result = await client.observe({ all: true });
+    assert.equal(result.status, 'observed', JSON.stringify(result));
+    const { observation } = result;
+    assert.equal(client.adoptObservation(observation.observationId).status, 'adopted');
+    return observation;
+   }
+   const pages = [];
+   for (const mode of ['local', 'direct', 'explicit']) {
+    const appId = await install(mode);
+    const app = desktop.getInstalledApps().find(app => app.appId === appId);
+    const access = copiesRuntime.getAppInteraction(desktopId, appId, app.appInstanceId);
+    assert.equal(access.status, 'ready');
+    const client = access.interaction;
+    const current = await capture(client);
+    assert.deepEqual(current.views.map(view => [view.id, view.type]), [['detail', 'file']]);
+    assert.match(current.views[0].content.value, /\[Select\]\(private value: CopyValue\)/);
+    assert.match(current.views[0].content.value, /Selected none/);
+    assert.ok(current.views[0].content.value.includes(appId));
+    assert.equal(current.refs[0].refId, 'value');
+    const [tool] = current.tools;
+    assert.equal(tool.name, 'choose');
+    assert.deepEqual(tool.inputSchema.required, ['value']);
+    pages.push({ mode, appId, client, current, tool });
+   }
+   assert.deepEqual(pages.map(page => page.appId), ['copy_views', 'copy_views_1', 'copy_views_2']);
+   for (const { mode, appId, client, current, tool } of pages) {
+    const request = { observationId: current.observationId, toolId: tool.id,
+      invocationId: 'select-' + mode, input: { value: '$' + appId + '.detail.value' } };
+    const result = await client.invoke(request);
+    assert.equal(result.receipt?.outcome.status, 'succeeded', JSON.stringify(result));
+    const next = await capture(client);
+    assert.ok(next.views[0].content.value.includes('Selected ' + mode), 'Only this App receives its page value');
+    assert.equal(next.views[0].viewInstanceId, current.views[0].viewInstanceId);
+    client.releaseObservation(next.observationId);
+    facts.preactCopies.push({ mode, appId, view: next.views[0], receipt: result.receipt });
+   }
+   facts.rejectedCopyDeclarations = [];
+   for (const mode of ['same-name', 'other-name']) {
+    await assert.rejects(install(mode), error => {
+     assert.equal(error.code, 'INSTALL_FAILED');
+     const open = error.cause?.cause;
+     assert.equal(open?.code, 'E_OPEN_FAILED');
+     assert.equal(open?.cause?.code, 'VIEW_TYPE_INVALID');
+     assert.match(open.cause.message, /App.s declared descriptor/);
+     facts.rejectedCopyDeclarations.push({ mode, code: open.cause.code });
+     return true;
+    });
+   }
+  } finally {
+   const report = await copiesRuntime.beginShutdown().completion;
+   facts.reports.push(report);
+   assert.equal(report.ok, true);
+   assert.equal(report.resourcesReleased, true);
+  }
+
   const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
   const runtime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 2 } });
   const held = [];
@@ -95,10 +192,10 @@ if (profile === 'full') {
   try {
    const desktop = await runtime.createDesktop('file-apps');
    const url = new URL('./full-out/file-app.js', import.meta.url).href;
-   for (const id of ['filesa', 'filesb']) await runtime.installDynamicWorkerApp(desktop, url, { appId: id, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+   for (const id of ['file_demo', 'file_demo_1']) await runtime.installDynamicWorkerApp(desktop, url, { installationId: id, name: 'file_demo', config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
    source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktop), runtime, { includeInstruction: false });
    const messages = c => c.messages.map(m => String(m.content));
-   const views = (c, app, id) => messages(c).filter(m => m.startsWith('<view ') && m.includes('app_id="'+app+'"') && (!id || m.includes('id="'+id+'"')));
+   const views = (c, app, id) => messages(c).filter(m => m.startsWith('<view ') && m.includes('app_id="'+app+'"') && (!id || m.includes('view_id="'+id+'"')));
    const name = (c, app, tool) => { const n = app+'-'+tool; assert.ok(c.tools[n], 'Tool available: '+n); return n; };
    async function capture(ready) {
     const end = Date.now()+15000;
@@ -114,33 +211,33 @@ if (profile === 'full') {
     const result = await c.executeTool(name(c,app,tool), { view_id: 'workspace', ...args }, 'files-'+facts.calls.length);
     facts.calls.push({ app, tool, result }); return result;
    }
-   let current = await capture(c => ['filesa','filesb'].every(app=>c.tools[app+'-open_file']));
-   const catalog = views(current,'filesa','root')[0]; assert.ok(catalog);
+   let current = await capture(c => ['file_demo','file_demo_1'].every(app=>c.tools[app+'-open_file']));
+   const catalog = views(current,'file_demo','root')[0]; assert.ok(catalog);
    assert.ok(catalog.includes('edit_file'));
    assert.ok(!catalog.includes('Edit an opened demo file and read its updated View.'));
    assert.ok(!catalog.includes('inputSchema') && !catalog.includes('additionalProperties'));
    assert.equal(Object.keys(current.tools).filter(n=>n.endsWith('-edit_file')).length,0);
-   for (const [app, file] of [['filesa','a.txt'],['filesa','b.txt'],['filesb','a.txt']]) assert.equal((await call(current,app,'open_file',{filePath:file})).outcomeStatus,'succeeded');
-   current = await capture(c=>views(c,'filesa').length===4 && c.tools['filesa-edit_file'] && c.tools['filesb-edit_file']);
+   for (const [app, file] of [['file_demo','a.txt'],['file_demo','b.txt'],['file_demo_1','a.txt']]) assert.equal((await call(current,app,'open_file',{filePath:file})).outcomeStatus,'succeeded');
+   current = await capture(c=>views(c,'file_demo').length===4 && c.tools['file_demo-edit_file'] && c.tools['file_demo_1-edit_file']);
    const observed = current;
-   assert.equal(Object.keys(current.tools).filter(n=>n==='filesa-edit_file').length,1);
-   const edit = await call(current,'filesa','edit_file',{view_id:'file_a',content:'UPDATED_A'});
+   assert.equal(Object.keys(current.tools).filter(n=>n==='file_demo-edit_file').length,1);
+   const edit = await call(current,'file_demo','edit_file',{view_id:'file_a',content:'UPDATED_A'});
    assert.equal(edit.outcomeStatus,'succeeded'); assert.ok(!JSON.stringify(edit).includes('UPDATED_A'));
-   assert.equal((await call(current,'filesa','close_file',{filePath:'b.txt'})).outcomeStatus,'succeeded');
-   const denied = await call(current,'filesa','edit_file',{view_id:'file_b',content:'MUST_NOT_APPEAR'});
+   assert.equal((await call(current,'file_demo','close_file',{filePath:'b.txt'})).outcomeStatus,'succeeded');
+   const denied = await call(current,'file_demo','edit_file',{view_id:'file_b',content:'MUST_NOT_APPEAR'});
    assert.equal(denied.outcomeStatus,'rejected');assert.equal(denied.error.code,'VIEW_INSTANCE_REVOKED');
-   current = await capture(c=>views(c,'filesa','file_a')[0]?.includes('UPDATED_A') && views(c,'filesa','file_b').length===0);
-   assert.ok(views(current,'filesb','file_a')[0].includes('Initial A'));
-   assert.ok(!views(current,'filesb','file_a')[0].includes('UPDATED_A'));
-   assert.equal(views(current,'filesa','root')[0],catalog);
-   assert.equal((await call(current,'filesa','close_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
-   const stale = await call(observed,'filesa','edit_file',{view_id:'file_a',content:'STALE'});assert.equal(stale.outcomeStatus,'rejected');
-   current = await capture(c=>!c.tools['filesa-edit_file'] && views(c,'filesa').length===2);
-   assert.ok(current.tools['filesb-edit_file'],'Other App still active');
-   assert.equal((await call(current,'filesa','open_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
-   current = await capture(c=>!!c.tools['filesa-edit_file']);
-   assert.equal((await call(observed,'filesa','edit_file',{view_id:'file_a',content:'STALE_AGAIN'})).outcomeStatus,'rejected');
-   assert.equal(views(current,'filesa','root')[0],catalog);
+   current = await capture(c=>views(c,'file_demo','file_a')[0]?.includes('UPDATED_A') && views(c,'file_demo','file_b').length===0);
+   assert.ok(views(current,'file_demo_1','file_a')[0].includes('Initial A'));
+   assert.ok(!views(current,'file_demo_1','file_a')[0].includes('UPDATED_A'));
+   assert.equal(views(current,'file_demo','root')[0],catalog);
+   assert.equal((await call(current,'file_demo','close_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
+   const stale = await call(observed,'file_demo','edit_file',{view_id:'file_a',content:'STALE'});assert.equal(stale.outcomeStatus,'rejected');
+   current = await capture(c=>!c.tools['file_demo-edit_file'] && views(c,'file_demo').length===2);
+   assert.ok(current.tools['file_demo_1-edit_file'],'Other App still active');
+   assert.equal((await call(current,'file_demo','open_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
+   current = await capture(c=>!!c.tools['file_demo-edit_file']);
+   assert.equal((await call(observed,'file_demo','edit_file',{view_id:'file_a',content:'STALE_AGAIN'})).outcomeStatus,'rejected');
+   assert.equal(views(current,'file_demo','root')[0],catalog);
    facts.fileExample = true;
   } finally {
    for (const c of held) await c.release?.();source?.dispose();
@@ -153,7 +250,7 @@ if (profile === 'full') {
   try {
    const desktop = await refRuntime.createDesktop('ref-app');
    await refRuntime.installDynamicWorkerApp(desktop, new URL('./full-out/ref-app.js', import.meta.url).href,
-    { appId: 'notes', config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+    { name: 'notes_example', config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
    refSource = new SemanticAOTUIDrivenSource(refRuntime.getDesktop(desktop), refRuntime, { includeInstruction: false });
    const text = c => c.messages.map(m => String(m.content)).join('\n');
    async function observe(ready) {
@@ -166,43 +263,43 @@ if (profile === 'full') {
      await new Promise(r => setTimeout(r, 20));
     }
    }
-   let context = await observe(c => c.tools['notes-open_notes']);
-   assert.ok(!context.tools['notes-inspect_note']);
-   assert.equal((await context.executeTool('notes-open_notes', { view_id: 'workspace' }, 'notes-open')).outcomeStatus, 'succeeded');
-   context = await observe(c => c.tools['notes-inspect_note'] && c.tools['notes-inspect_notes']);
-   for (const ref of ['Note:current', 'Note[]:notes', 'Note:notes[0]']) assert.ok(text(context).includes(ref));
+   let context = await observe(c => c.tools['notes_example-open_notes']);
+   assert.ok(!context.tools['notes_example-inspect_note']);
+   assert.equal((await context.executeTool('notes_example-open_notes', { view_id: 'workspace' }, 'notes-open')).outcomeStatus, 'succeeded');
+   context = await observe(c => c.tools['notes_example-inspect_note'] && c.tools['notes_example-inspect_notes']);
+   for (const ref of ['private current: Note', 'private notes: Note[]', '(notes[0])']) assert.ok(text(context).includes(ref));
    for (const [tool, args, expected] of [
-    ['inspect_note', { note: 'detail.current' }, 'First note: First line'],
-    ['inspect_notes', { notes: 'detail.notes' }, 'Second note: Another note'],
-    ['inspect_note', { note: 'detail.notes[0]' }, 'First note: First line'],
-    ['inspect_selection', { selected: ['detail.notes[1]', 'detail.notes[0]', 'detail.notes[1]'], primary: 'detail.current', whole: 'detail.notes' }, 'Second note: Another note'],
+    ['inspect_note', { note: '$notes_example.detail.current' }, 'First note: First line'],
+    ['inspect_notes', { notes: '$notes_example.detail.notes' }, 'Second note: Another note'],
+    ['inspect_note', { note: '$notes_example.detail.notes[0]' }, 'First note: First line'],
+    ['inspect_selection', { selected: ['$notes_example.detail.notes[1]', '$notes_example.detail.notes[0]', '$notes_example.detail.notes[1]'], primary: '$notes_example.detail.current', whole: '$notes_example.detail.notes' }, 'Second note: Another note'],
     ['inspect_selection', { selected: [] }, 'No notes selected.'],
    ]) {
-    const result = await context.executeTool('notes-' + tool, { view_id: 'detail', ...args }, 'ref-' + facts.calls.length);
+    const result = await context.executeTool('notes_example-' + tool, { view_id: 'detail', ...args }, 'ref-' + facts.calls.length);
     facts.calls.push({ app: 'notes', tool, args, result });
     assert.equal(result.outcomeStatus, 'succeeded');
     assert.ok(!JSON.stringify(result).includes('First line'), 'Business content stays in the View');
-    context = await observe(c => c.messages.some(m => String(m.content).startsWith('<view id="detail"') && String(m.content).split('## Inspection')[1]?.includes(expected)));
+    context = await observe(c => c.messages.some(m => String(m.content).startsWith('<view view_id="detail"') && String(m.content).split('## Inspection')[1]?.includes(expected)));
     if (tool === 'inspect_selection' && args.selected.length) {
-     const projection = context.messages.map(m => String(m.content)).find(m => m.startsWith('<view id="detail"'))?.split('## Inspection')[1];
+     const projection = context.messages.map(m => String(m.content)).find(m => m.startsWith('<view view_id="detail"'))?.split('## Inspection')[1];
      assert.match(projection, /Second note: Another note[\s\S]*First note: First line[\s\S]*Second note: Another note[\s\S]*First note: First line[\s\S]*First note: First line[\s\S]*Second note: Another note/);
     }
    }
    for (const [tool, args] of [
-    ['inspect_notes', { notes: 'detail.current' }],
+    ['inspect_notes', { notes: '$notes_example.detail.current' }],
     ['inspect_note', { note: 'Note:current' }],
     ['inspect_selection', { selected: [], primary: null }],
-    ['inspect_selection', { selected: ['detail.missing'] }],
+    ['inspect_selection', { selected: ['$notes_example.detail.missing'] }],
    ]) {
-    const result = await context.executeTool('notes-' + tool, { view_id: 'detail', ...args }, 'invalid-' + facts.calls.length);
+    const result = await context.executeTool('notes_example-' + tool, { view_id: 'detail', ...args }, 'invalid-' + facts.calls.length);
     assert.equal(result.outcomeStatus, 'rejected');
     facts.calls.push({ app: 'notes', tool, args, result });
    }
    const old = context;
-   assert.equal((await context.executeTool('notes-close_notes', { view_id: 'workspace' }, 'notes-close')).outcomeStatus, 'succeeded');
-   context = await observe(c => !c.tools['notes-inspect_note']);
-   assert.equal((await old.executeTool('notes-inspect_note', { view_id: 'detail', note: 'detail.current' }, 'closed-note')).outcomeStatus, 'rejected');
-   assert.ok(!text(context).includes('Note:notes[0]'));
+   assert.equal((await context.executeTool('notes_example-close_notes', { view_id: 'workspace' }, 'notes-close')).outcomeStatus, 'succeeded');
+   context = await observe(c => !c.tools['notes_example-inspect_note']);
+   assert.equal((await old.executeTool('notes_example-inspect_note', { view_id: 'detail', note: '$notes_example.detail.current' }, 'closed-note')).outcomeStatus, 'rejected');
+   assert.ok(!text(context).includes('(notes[0])'));
    facts.refExample = true;
   } finally {
    for (const c of refHeld) await c.release?.(); refSource?.dispose();
@@ -213,7 +310,13 @@ if (profile === 'full') {
   const { runManagedHost } = await import('./full-out/managed-host.js');
   const data=await fs.mkdtemp(fileURLToPath(new URL('./managed-host-data-', import.meta.url)));
   try {
-   const result=await runManagedHost(new URL('./managed-host-app.mjs',import.meta.url).href,data);
+   const localPath = new URL('./managed-host-app/', import.meta.url);
+   await fs.mkdir(localPath, { recursive: true });
+   await fs.writeFile(new URL('aoapp.json', localPath), JSON.stringify({
+    app_name: 'interaction_example', version: '0.1.0', entry: { main: '../managed-host-app.mjs' },
+    toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2',
+   }));
+   const result = await runManagedHost(fileURLToPath(localPath), data);
    assert.equal(result.outcomes.length,2);assert.ok(result.outcomes.every(o=>o.status==='succeeded'));
    assert.equal(result.close.ok,true);assert.equal(result.close.resourcesReleased,true);
    facts.runtimeExample=true;facts.reports.push(result.close);facts.runtimeOutcomes=result.outcomes;

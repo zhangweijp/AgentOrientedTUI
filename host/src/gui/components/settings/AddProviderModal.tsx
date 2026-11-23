@@ -15,8 +15,6 @@ import { useScreenReaderAnnouncement } from './hooks/useScreenReaderAnnouncement
 import type {
     AddProviderModalProps,
     NewProviderConfig,
-    ProviderConfig,
-    NewCustomProviderInput,
     CustomProviderProtocol,
 } from './types.js';
 
@@ -343,7 +341,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                         </button>
                                         {showProviderDropdown && !isLoadingProviders && (
                                             <div className="absolute top-full left-0 right-0 mt-2 rounded-[16px] mat-lg-clear shadow-xl z-[70] overflow-hidden" role="listbox">
-                                                <div className="p-2 border-b border-[var(--color-border)]">
+                                                <div className="p-2 border-b border-[var(--mat-border)]">
                                                     <input type="text" value={providerSearchQuery}
                                                         onChange={(e) => setProviderSearchQuery(e.target.value)}
                                                         placeholder="Search provider…"
@@ -403,7 +401,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                                 </button>
                                                 {showModelDropdown && (
                                                     <div className="absolute bottom-full left-0 right-0 mb-2 rounded-[16px] mat-lg-clear shadow-xl z-[70] overflow-hidden">
-                                                        <div className="p-2 border-b border-[var(--color-border)]">
+                                                        <div className="p-2 border-b border-[var(--mat-border)]">
                                                             <input type="text" value={modelSearchQuery}
                                                                 onChange={(e) => setModelSearchQuery(e.target.value)}
                                                                 placeholder="Search model…"

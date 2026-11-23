@@ -7,19 +7,29 @@
  * @module system-chat/gui/components/ApplicationBlock
  */
 import { useState } from 'react';
-import type { TuiApplication } from './TuiParser.js';
-import { getAppIcon } from './TuiParser.js';
+import type { DesktopPreviewApp } from '../../core/desktop-preview.js';
 import { ViewBlock } from './ViewBlock.js';
 
 interface ApplicationBlockProps {
-    app: TuiApplication;
+    app: DesktopPreviewApp;
+}
+
+function getAppIcon(appName: string): string {
+    const name = appName.toLowerCase();
+    if (name.includes('chat')) return '💬';
+    if (name.includes('todo')) return '📋';
+    if (name.includes('thought') || name.includes('recorder')) return '💭';
+    if (name.includes('log')) return '📜';
+    if (name.includes('file')) return '📁';
+    if (name.includes('setting')) return '⚙️';
+    return '📦';
 }
 
 export function ApplicationBlock({ app }: ApplicationBlockProps) {
     const [activeViewId, setActiveViewId] = useState<string | null>(null);
     const activeView = app.views.find(view => view.id === activeViewId) ?? app.views[0] ?? null;
     const appIcon = getAppIcon(app.name);
-    const status = app.status ?? 'running';
+    const status = app.status;
 
     return (
         <div className="tui-app-card">
@@ -29,7 +39,7 @@ export function ApplicationBlock({ app }: ApplicationBlockProps) {
                     <span className="tui-app-card-icon">{appIcon}</span>
                     <div className="tui-app-card-info">
                         <span className="tui-app-card-name">{app.name}</span>
-                        <span className="tui-app-card-id">{app.id}</span>
+                        <span className="tui-app-card-id">{app.installationId}</span>
                     </div>
                 </div>
                 <div className="tui-app-card-status">

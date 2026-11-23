@@ -9,7 +9,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ProviderCard } from './ProviderCard.js';
 import type { ProviderConfig } from './types.js';
-import { createMockProvider } from './test-helpers.js';
+import { createMockProvider } from './__tests__/mock-provider.js';
 
 describe('ProviderCard', () => {
     const mockProvider: ProviderConfig = createMockProvider({
@@ -87,7 +87,7 @@ describe('ProviderCard', () => {
 
             const card = screen.getByRole('radio', { name: /My OpenAI provider/ });
             // Selection style is removed as per new design
-            expect(card).toHaveClass('border-[var(--color-border)]');
+            expect(card).toHaveClass('border-[var(--mat-border)]');
         });
 
         it('should apply default border when not selected', () => {
@@ -101,7 +101,7 @@ describe('ProviderCard', () => {
             );
 
             const card = screen.getByRole('radio', { name: /My OpenAI provider/ });
-            expect(card).toHaveClass('border-[var(--color-border)]');
+            expect(card).toHaveClass('border-[var(--mat-border)]');
         });
 
         it('should include selected state in aria-label', () => {
@@ -201,7 +201,7 @@ describe('ProviderCard', () => {
         });
 
         it('should hide edit and delete buttons when not hovering', () => {
-            const { container } = render(
+            render(
                 <ProviderCard
                     provider={mockProvider}
                     isSelected={false}
@@ -257,7 +257,7 @@ describe('ProviderCard', () => {
 
     describe('Click handlers', () => {
         it('should call onSelect when card is clicked', () => {
-            const { container } = render(
+            render(
                 <ProviderCard
                     provider={mockProvider}
                     isSelected={false}
@@ -273,7 +273,7 @@ describe('ProviderCard', () => {
         });
 
         it('should call onEdit when edit button is clicked', () => {
-            const { container } = render(
+            render(
                 <ProviderCard
                     provider={mockProvider}
                     isSelected={false}
@@ -292,7 +292,7 @@ describe('ProviderCard', () => {
         });
 
         it('should call onDelete when delete button is clicked', () => {
-            const { container } = render(
+            render(
                 <ProviderCard
                     provider={mockProvider}
                     isSelected={false}
@@ -311,7 +311,7 @@ describe('ProviderCard', () => {
         });
 
         it('should not trigger onSelect when edit button is clicked', () => {
-            const { container } = render(
+            render(
                 <ProviderCard
                     provider={mockProvider}
                     isSelected={false}
@@ -429,7 +429,6 @@ describe('ProviderCard', () => {
             const logo = container.querySelector('img[alt="My OpenAI logo"]') ||
                          container.querySelector('[title="My OpenAI"]');
             if (logo) {
-                const style = window.getComputedStyle(logo);
                 expect(logo).toHaveStyle({ width: '48px', height: '48px' });
             }
         });

@@ -1,51 +1,38 @@
 import type { MessageWithTimestamp } from '@aotui/agent-driver-v2'
-import { createMessageId } from '../types-v2.js'
+import { createMessageId, type Message } from '../types/messages.js'
 import { getDb, persistDatabase } from '../db/index.js'
+import { readStoredMessage, type StoredMessageRow } from '../db/stored-message.js'
 
-type IMMessageRow = {
-  id: string
-  session_key: string
-  role: MessageWithTimestamp['role']
-  content: string
-  timestamp: number
-}
-
-function rowToMessage(row: IMMessageRow): MessageWithTimestamp {
-  return {
-    role: row.role,
-    content: JSON.parse(row.content),
-    timestamp: row.timestamp,
-  }
-}
-
-export function listIMMessages(sessionKey: string): MessageWithTimestamp[] {
+export function listIMMessages(sessionKey: string): Message[] {
   const db = getDb()
   const stmt = db.prepare(`
-    SELECT id, session_key, role, content, timestamp
+    SELECT id, role, content, timestamp
     FROM im_messages
     WHERE session_key = ?
     ORDER BY timestamp ASC, id ASC
   `)
-  stmt.bind([sessionKey])
-
-  const messages: MessageWithTimestamp[] = []
-  while (stmt.step()) {
-    messages.push(rowToMessage(stmt.getAsObject() as IMMessageRow))
+  try {
+    stmt.bind([sessionKey])
+    const messages: Message[] = []
+    while (stmt.step()) {
+      messages.push(readStoredMessage(stmt.getAsObject() as unknown as StoredMessageRow))
+    }
+    return messages
+  } finally {
+    stmt.free()
   }
-  stmt.free()
-
-  return messages
 }
 
-export function appendIMMessage(sessionKey: string, message: MessageWithTimestamp): void {
+export function appendIMMessage(sessionKey: string, message: MessageWithTimestamp): string {
   const db = getDb()
+  const id = createMessageId()
   db.run(
     `
       INSERT INTO im_messages (id, session_key, role, content, timestamp)
       VALUES (?, ?, ?, ?, ?)
     `,
     [
-      createMessageId(),
+      id,
       sessionKey,
       message.role,
       JSON.stringify(message.content),
@@ -53,26 +40,29 @@ export function appendIMMessage(sessionKey: string, message: MessageWithTimestam
     ],
   )
   persistDatabase()
+  return id
 }
 
-export function replaceIMMessages(sessionKey: string, messages: MessageWithTimestamp[]): void {
+export function replaceIMMessages(sessionKey: string, messages: MessageWithTimestamp[], ids?: WeakMap<MessageWithTimestamp, string>): void {
   const db = getDb()
   db.run('DELETE FROM im_messages WHERE session_key = ?', [sessionKey])
 
   for (const message of messages) {
+    const id = ids?.get(message) ?? createMessageId()
     db.run(
       `
         INSERT INTO im_messages (id, session_key, role, content, timestamp)
         VALUES (?, ?, ?, ?, ?)
       `,
       [
-        createMessageId(),
+        id,
         sessionKey,
         message.role,
         JSON.stringify(message.content),
         message.timestamp,
       ],
     )
+    ids?.set(message, id)
   }
 
   persistDatabase()

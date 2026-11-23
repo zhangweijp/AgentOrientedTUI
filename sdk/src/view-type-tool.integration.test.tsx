@@ -1,4 +1,5 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { mountedViews } from './__tests__/projection-facts.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { Component, type ComponentChildren, h } from 'preact';
 import { useState } from 'preact/hooks';
@@ -7,7 +8,7 @@ import Type from 'typebox';
 import { expect, it, vi } from 'vitest';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
-import { View } from './components/View.js';
+import { DynamicView, StaticView, defineViewType as defineJSXViewType } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { defineViewType, refParam } from './tools/view-type-tool.js';
 
@@ -15,6 +16,48 @@ const increment = { description:'Increment the counter', inputSchema:Type.Object
         amount:Type.Optional(Type.Integer()),
         observed:Type.Optional(refParam('Count', Type.Object({value:Type.Integer()}))),
     }, {additionalProperties:false}) };
+
+it('keeps the close action with the actual direct and explicit JSX mounts', async () => {
+    const Direct = defineJSXViewType({ name: 'Direct', multiplicity: 'single', region: 'dynamic' });
+    const Explicit = defineViewType({ name: 'Explicit', multiplicity: 'multiple', createId: ({ prefix }) => prefix });
+    const called: string[] = [];
+    function App() {
+        const [open, setOpen] = useState(['Direct', 'static_page', 'dynamic_page']);
+        const close = (name: string) => () => {
+            called.push(name);
+            setOpen(items => items.filter(item => item !== name));
+            return { success: true as const };
+        };
+        return <>
+            {open.includes('Direct') && <Direct onClose={close('Direct')}>direct page</Direct>}
+            {open.includes('static_page') && <StaticView type={Explicit} idPrefix="static_page" onClose={close('static_page')}>static</StaticView>}
+            {open.includes('dynamic_page') && <DynamicView type={Explicit} idPrefix="dynamic_page" onClose={close('dynamic_page')}>dynamic</DynamicView>}
+        </>;
+    }
+    const factory = createTUIApp({ app_name: 'closable', component: App, viewTypes: [Direct, Explicit] });
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory, appId: createAppId('closable'), desktopId: createDesktopId('desktop'),
+        instanceId: 'closable-run', projectionLimits: DEFAULT_PROJECTION_LIMITS });
+    const frame = () => {
+        const publication = kernel.getProjectionCoordinator().nextPublication();
+        if (!('draft' in publication)) throw new Error('Expected committed frame');
+        return publication.draft;
+    };
+    try {
+        await act(async () => kernel.onOpen());
+        const mounts = frame().views.slice();
+        expect(mounts.map(view => [view.id, view.region, view.canClose])).toEqual([
+            ['Direct', 'dynamic', true], ['static_page', 'static', true], ['dynamic_page', 'dynamic', true],
+        ]);
+        for (const view of mounts) {
+            await act(async () => {
+                expect(await kernel.closeView(view.id, view.viewInstanceId)).toMatchObject({ phase: 'entered-returned' });
+            });
+            expect(frame().views.some(current => current.viewInstanceId === view.viewInstanceId)).toBe(false);
+            expect(await kernel.closeView(view.id, view.viewInstanceId)).toMatchObject({ phase: 'not-entered' });
+        }
+        expect(called).toEqual(['Direct', 'static_page', 'dynamic_page']);
+    } finally { await act(async () => kernel.onClose()); }
+});
 type CounterContext = {
     id: string;
     generation: number;
@@ -24,7 +67,7 @@ type CounterContext = {
 
 it('commits Preact body, Ref and context-derived tools as one frame', async () => {
     const entered = vi.fn();
-    const Counter = defineViewType<CounterContext>()({ name:'Counter', tools:{
+    const Counter = defineViewType<CounterContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Counter', tools:{
         increment: {
             ...increment,
             execute({ input, context: { id, generation, setCount } }) {
@@ -42,10 +85,10 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
         const [count,setCount] = useState(id === 'a' ? 0 : 10);
         const context = { id, generation, enabled, setCount };
         const content = <Content count={count} broken={broken} />;
-        return <View id={id} kind="state" type={Counter} context={context}>{content}</View>;
+        return <DynamicView idPrefix={id}  type={Counter} context={context}>{content}</DynamicView>;
     }
     function Content({count, broken}: {count:number;broken:boolean}) {
-        const mark = useDataRef('count',{value:count},{refType:'Count'});
+        const mark = useDataRef('count',{value:count},{ scope: 'protected',refType:'Count'});
         if (broken) throw Error('failed-render');
         return <p>{mark(String(count))}</p>;
     }
@@ -91,8 +134,8 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
         expect(await call(a,{view_id:'b'})).toMatchObject({phase:'not-entered'});
         await act(async () => { expect(await call(b,{observed:{value:2}})).toMatchObject({phase:'entered-returned'}); });
         expect(entered).toHaveBeenLastCalledWith('b',0,{observed:{value:2}},true,true);
-        expect(frame().views.find(view => view.id === 'b')!.content.value).toContain('[12](Count:count)');
-        expect(frame().views.find(view => view.id === 'a')!.content.value).toContain('[0](Count:count)');
+        expect(frame().views.find(view => view.id === 'b')!.content.value).toContain('[12](protected count: Count)');
+        expect(frame().views.find(view => view.id === 'a')!.content.value).toContain('[0](protected count: Count)');
         await act(async () => advance(1));
         expect(receiver(frame(),'a')).toEqual(a);
         await act(async () => { await call(); });
@@ -101,7 +144,7 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
         await act(async () => advance(2)).catch(() => {});
         expect(projection.failed).toBe(true);
         expect(await call()).toMatchObject({phase:'not-entered'});
-        expect(kernel.getViewOwnedViewInstances().find(view => view.viewId === 'a')?.viewInstanceId).toBe(a.viewInstanceId);
+        expect(mountedViews(kernel).find(view => view.viewId === 'a')?.viewInstanceId).toBe(a.viewInstanceId);
 
         await act(async () => advance(3));
         const restricted = frame();
@@ -125,5 +168,5 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
     } finally {
         await act(async () => kernel.onClose());
     }
-    expect(kernel.getViewOwnedViewInstances()).toEqual([]);
+    expect(mountedViews(kernel)).toEqual([]);
 });

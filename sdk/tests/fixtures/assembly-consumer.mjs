@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { AppRegistry, createRuntime } from '@aotui/runtime';
-import { createAppInteraction, createSnapshotCore, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/runtime/core';
-import { APP_LIFECYCLE_PROTOCOL, hasViewTypeToolAuthoringProtocol, isTUIAppFactory } from '@aotui/runtime/spi';
+import { createRuntime } from '@aotui/runtime';
+import { createAppInteraction, createSnapshotCore, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core';
+import { APP_LIFECYCLE_PROTOCOL, hasViewTypeToolAuthoringProtocol, isTUIAppFactory } from '@aotui/core';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from '@aotui/runtime/adapters';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2 } from '@aotui/agent-driver-v2';
@@ -18,26 +18,28 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits) {
     const projection = new SemanticProjectionCoordinator({ identity: () => identity });
     const controller = new AbortController();
     let cleanup;
-    const instance = await factory.initialize({
+    const context = {
         appId: identity.appId, desktopId, signal: controller.signal, projectionLimits,
         appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, register(owner) {
             assert.equal(cleanup, undefined);
             cleanup = owner;
             return () => assert.ok(controller.signal.aborted, 'This fixture unmounts its owner only on shutdown');
         } },
-        defineTools: definitions => { projection.assertWritable(); registry.defineTools(definitions); },
+        defineViewTypes: definitions => { projection.assertWritable(); registry.defineViewTypes(definitions); },
+        readPreparedProjection: () => projection.readPreparedProjection(),
         publishFrame(build, options) {
             assert.equal(options, undefined, 'Work Items only uses ordinary commits in this scenario');
             const result = projection.commit(() => {
                 const { views } = build();
                 const plan = registry.prepareFrame(views);
                 return {
-                    views: views.map(({ id, type, name, kind, content }, i) => ({
-                        id, type, name, kind, content, viewInstanceId: plan.instances[i].viewInstanceId,
+                    views: views.map(({ type, name, region, content }, i) => ({
+                        id: plan.instances[i].viewId, type, name: name ?? plan.instances[i].viewId, region, content,
+                        viewInstanceId: plan.instances[i].viewInstanceId,
                         toolBindings: plan.instances[i].toolBindings,
                     })),
                     refs: views.flatMap((view, i) => view.refs.map(ref => ({
-                        ...ref, viewId: view.id, viewInstanceId: plan.instances[i].viewInstanceId,
+                        ...ref, viewId: plan.instances[i].viewId, viewInstanceId: plan.instances[i].viewInstanceId,
                     }))),
                     tools: plan.tools, accept: plan.accept,
                 };
@@ -46,7 +48,15 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits) {
             if (result.status === 'prepared') assert.ok(['published', 'unchanged'].includes(publication.status));
             return result;
         },
+    };
+    const { readPreparedProjection, ...withoutReader } = context;
+    await assert.rejects(factory.initialize({ ...withoutReader, defineViewTypes() {} }), {
+        code: 'SNAPSHOT_INVALID', path: 'RuntimeContext.readPreparedProjection',
+        message: /same delivery/,
     });
+    assert.equal(projection.token().epoch, 0);
+    const instance = await factory.initialize(context);
+    assert.deepEqual(readPreparedProjection(), { status: 'prepared', sourceEpoch: 1 });
     const binding = {
         identity: {},
         isLive: ({ tool, receiver }) => ({ ok: !controller.signal.aborted && !projection.failed &&
@@ -64,7 +74,7 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits) {
         execution: { resolve: source => source.appId === identity.appId && source.instanceId === identity.instanceId ? binding : null },
     });
     return {
-        app: { appId: identity.appId, appInstanceId: identity.instanceId, name: 'local', status: 'running' },
+        app: { installationId: 'local_installation', appId: identity.appId, appInstanceId: identity.instanceId, name: 'local', status: 'running' },
         client: { ...authority,
             async observe(selection) { await instance.whenCommitted(controller.signal); return authority.observe(selection); },
             async invoke(request) { await instance.whenCommitted(controller.signal); return authority.invoke(request); },
@@ -116,7 +126,8 @@ const factory = (await import(entry)).default;
 assert.ok(isTUIAppFactory(factory) && hasViewTypeToolAuthoringProtocol(factory));
 assert.equal(factory.kernelConfig.appName, manifest.app_name);
 const jsonLimits = Object.freeze({ maxDepth: 12, maxNodes: 8192, maxApproxBytes: 65536, maxCanonicalBytes: 65536 });
-const limits = Object.freeze({ maxViews: 8, maxRefs: 64, maxTools: 16, observation: jsonLimits, metadata: jsonLimits });
+const limits = Object.freeze({ maxViews: 8, maxRefs: 64, maxTools: 16,
+    observation: Object.freeze({ ...jsonLimits, maxDepth: 20 }), metadata: jsonLimits });
 const runtime = createRuntime();
 const originalFetch = globalThis.fetch;
 const turns = [];
@@ -126,12 +137,11 @@ let source, local, driver, turn;
 try {
     const desktopId = await runtime.createDesktop('assembly');
     const desktop = runtime.getDesktop(desktopId);
-    const apps = new AppRegistry();
-    await apps.registerTransient('local:' + appDirectory);
-    const [installed] = await apps.installAll(desktop, { projectionLimits: limits, dynamicConfig: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
-    assert.equal(installed.status, 'installed', JSON.stringify(installed));
+    const installationId = await desktop.registerPendingApp({ installationId: 'work_items_install', localPath: appDirectory,
+        projectionLimits: limits, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+    const appId = await desktop.openApp(installationId);
     const [managed] = desktop.getInstalledApps();
-    const access = runtime.getAppInteraction(desktopId, installed.appId, managed.appInstanceId);
+    const access = runtime.getAppInteraction(desktopId, appId, managed.appInstanceId);
     assert.equal(access.status, 'ready');
     local = await openLocalWorkItems(factory, desktopId, limits);
     const clients = new Map([[managed.appId, access.interaction], [local.app.appId, local.client]]);
@@ -141,6 +151,12 @@ try {
     delete process.env.AOTUI_SYSTEM_INSTRUCTION_PATH;
     source = new SemanticAOTUIDrivenSource({
         id: desktopId, getInstalledApps: () => [...desktop.getInstalledApps(), local.app], getSystemLogs: () => [],
+        getAppWindows: (appId, instanceId) => desktop.getAppWindows(appId, instanceId),
+        // This mixed managed/pure Core fixture only makes same-App calls.
+        bindRequestSources({ apps }) {
+            assert.deepEqual(apps.map(item => item.observationId), turn.adoptions.map(([appId]) => turn.observations[appId]));
+            return Object.freeze({});
+        },
     }, { getAppInteraction(id, appId, instanceId) {
         const client = clients.get(appId);
         assert.equal(id, desktopId);
@@ -153,10 +169,10 @@ try {
                 turn.observations[appId] = result.observation.observationId;
                 return result;
             },
-            adoptObservation(oid) {
+            adoptObservation(oid, windows) {
                 assert.equal(oid, candidates.get(appId).observationId);
                 if (turn.partial && appId === local.app.appId) client.releaseObservation(oid);
-                const result = client.adoptObservation(oid);
+                const result = client.adoptObservation(oid, windows);
                 turn.adoptions.push([appId, result.status]);
                 return result;
             },
@@ -164,8 +180,7 @@ try {
                 const observed = candidates.get(appId);
                 assert.equal(request.observationId, observed.observationId);
                 const captured = turn.calls.find(([id]) => id === request.invocationId);
-                const appName = appId === managed.appId ? managed.name : local.app.name;
-                const tool = observed.tools.find(tool => appName + '-' + tool.name === captured[1]);
+                const tool = observed.tools.find(tool => appId + '-' + tool.name === captured[1]);
                 assert.equal(request.toolId, tool.id);
                 assert.deepEqual({ ...request.input }, captured[2]);
                 const result = await client.invoke(request);
@@ -208,7 +223,7 @@ try {
             const texts = request.messages.map(message => message.content);
             for (const message of turn.context.messages) assert.ok(texts.includes(message.content), 'Candidate message missing from actual request');
             assert.ok(texts.includes(DEFAULT_AOTUI_SYSTEM_INSTRUCTION));
-            assert.match(DEFAULT_AOTUI_SYSTEM_INSTRUCTION, /trusted App in a Worker thread/);
+            assert.match(DEFAULT_AOTUI_SYSTEM_INSTRUCTION, /installation_id/);
             assert.ok(texts.includes('Compare the two workspaces. Turn ' + label));
             assert.deepEqual(request.tools.map(tool => tool.function.name).sort(), Object.keys(turn.context.tools).sort());
             for (const { function: wireTool } of request.tools) {
@@ -237,15 +252,15 @@ try {
     const list = 'billing_export_2026_11';
     for (const [id, observed] of previous) {
         const result = await clients.get(id).invoke({ invocationId: 'prior-count', observationId: observed.observationId,
-            toolId: observed.tools.find(tool => tool.name === 'count').id, input: { view_id: 'b', selected: list + '.items[0]' } });
+            toolId: observed.tools.find(tool => tool.name === 'count').id, input: { view_id: 'b', selected: '$' + id + '.' + list + '.items[0]' } });
         assert.equal(result.receipt?.outcome.status, 'succeeded', 'Budget refusal preserved the previously adopted source');
     }
     const scripts = name => [
         [name + '-reverse', name + '-update', { view_id: 'workspace', operation: 'reverse' }],
-        [name + '-remember', name + '-inspect', { view_id: 'b', selected: list + '.items[0]' }],
+        [name + '-remember', name + '-inspect', { view_id: 'b', selected: '$' + name + '.' + list + '.items[0]' }],
         [name + '-close', name + '-update', { view_id: 'workspace', operation: 'close' }],
         [name + '-open', name + '-update', { view_id: 'workspace', operation: 'open' }],
-        [name + '-stale', name + '-inspect', { view_id: list, selected: 'b.selected' }],
+        [name + '-stale', name + '-inspect', { view_id: list, selected: '$' + name + '.b.selected' }],
     ];
     const calls = [...scripts(managed.name), ...scripts(local.app.name)];
     const before = await run('operate', calls);
@@ -269,11 +284,11 @@ try {
     assert.ifError(after.error);
     for (const { appId, name } of [managed, local.app]) {
         const view = (step, viewId) => step.requests[0].messages.filter(m => m.role === 'user' &&
-            typeof m.content === 'string' && m.content.startsWith('<view id="' + viewId + '"') && m.content.includes('app_id="' + appId + '"'));
+            typeof m.content === 'string' && m.content.startsWith('<view view_id="' + viewId + '"') && m.content.includes('app_id="' + appId + '"'));
         assert.equal(view(before, list).length, 1);
-        assert.match(view(before, list)[0].content, /Data:items\[4\]/);
+        assert.match(view(before, list)[0].content, /items\[4\]/);
         assert.equal(view(after, list).length, 1);
-        assert.doesNotMatch(view(after, list)[0].content, /Data:items\[4\]/);
+        assert.doesNotMatch(view(after, list)[0].content, /items\[4\]/);
         assert.match(view(before, 'workspace')[0].content, /Inspections: 0/);
         assert.match(view(after, 'workspace')[0].content, /Inspections: 1[\s\S]*"selected":0/);
         const tools = after.requests[0].tools.filter(tool => tool.function.name === name + '-inspect');
@@ -295,7 +310,7 @@ try {
         assert.deepEqual(await clients.get(appId).readReceipt({ observationId, invocationId }), result);
     }
     const recovery = recovered.requests[0];
-    const listMessages = recovery.messages.filter(m => typeof m.content === 'string' && m.content.startsWith('<view id="' + list + '"'));
+    const listMessages = recovery.messages.filter(m => typeof m.content === 'string' && m.content.startsWith('<view view_id="' + list + '"'));
     assert.equal(listMessages.length, 1);
     assert.ok(listMessages[0].content.includes('app_id="local"'));
     assert.ok(recovery.tools.some(tool => tool.function.name === managed.name + '-inspect'), 'Second Item still receives the shared Tool');

@@ -2,22 +2,24 @@
  * @aotui/agent-driver-v2 - AgentDriver V2 Core
  * 
  * 多源消息聚合器，负责：
- * 1. 聚合来自多个 DrivenSource 的消息和工具
+ * 1. 聚合来自多个 ContextDrivenSource 的消息和工具
  * 2. 按时间戳排序消息
- * 3. 路由 ToolCall 到对应的 DrivenSource
+ * 3. 路由 ToolCall 到对应的 ContextDrivenSource
  * 4. 管理工作循环
  * 
  * 设计原则：
  * - **依赖反转**: 依赖 ContextDrivenSource 接口，不依赖具体实现
  * - **职责清晰**: AgentDriver 只负责聚合和路由，不负责业务逻辑
- * - **可扩展**: 易于添加新的 DrivenSource
+ * - **可扩展**: 易于添加新的 ContextDrivenSource
  */
 
-import type { ModelMessage, Tool } from 'ai';
+import { asSchema, type ModelMessage, type Tool } from 'ai';
 import type {
-    DrivenSource,
+    ContextDrivenSource,
     DrivenSourceContext,
     MessageWithTimestamp,
+    FittedModelRequest,
+    ToolExecutionBudget,
     ToolResult,
     ToolOutcomeStatus,
     AgentDriverV2Config,
@@ -25,19 +27,61 @@ import type {
 } from './interfaces.js';
 import { debounce } from '../utils/debounce.js';
 import { Logger } from '../utils/logger.js';
-import { LLMClient } from './llm-client.js';
+import { LLMClient, inputBudgetExceeded } from './llm-client.js';
+import { ProviderToolSchemaError } from './provider-tool-schema.js';
 import { assembleContextRegions } from './context-regions.js';
 
 const REQUEST_SKIPPED = Symbol('model request skipped');
+const TOOL_TURN_CLOSED = Symbol('tool turn closed');
 
 interface CapturedSourceContext {
-    source: DrivenSource;
+    source: ContextDrivenSource;
     context: DrivenSourceContext;
 }
 
 interface ToolExecutionRoute {
-    source: DrivenSource;
+    source: ContextDrivenSource;
     executeTool?: DrivenSourceContext['executeTool'];
+    settlesOnAbort: boolean;
+}
+type InputMeasure = NonNullable<Awaited<ReturnType<LLMClient['createInputMeasurement']>>>;
+type ToolBatch = { assistant: ModelMessage; results: readonly ToolResult[]; feedbackSource?: ContextDrivenSource; routes: ReadonlyMap<string, ToolExecutionRoute> };
+
+function createToolTurn() {
+    let closing = false;
+    let interrupt!: (value: typeof TOOL_TURN_CLOSED) => void;
+    let delivered!: () => void;
+    let failed!: (error: unknown) => void;
+    const interrupted = new Promise<typeof TOOL_TURN_CLOSED>(resolve => { interrupt = resolve; });
+    const completion = new Promise<void>((resolve, reject) => {
+        delivered = resolve;
+        failed = reject;
+    });
+    void completion.catch(() => {});
+    return {
+        interrupted, completion, delivered, failed,
+        get closing() { return closing; },
+        close() { closing = true; interrupt(TOOL_TURN_CLOSED); },
+    };
+}
+
+type ToolTurn = ReturnType<typeof createToolTurn>;
+
+function toolIds(message: MessageWithTimestamp, type: 'tool-call' | 'tool-result'): string[] {
+    if (!Array.isArray(message.content)) return [];
+    return message.content.flatMap(part => part.type === type && 'toolCallId' in part ? [part.toolCallId] : []);
+}
+
+function recoveryHistory(messages: readonly MessageWithTimestamp[]): MessageWithTimestamp[] {
+    const history = messages.filter(message => message.region === undefined || message.region === 'session')
+        .sort((a, b) => b.timestamp - a.timestamp);
+    const user = history.find(message => message.role === 'user');
+    const lastResult = history.findIndex(message => message.role === 'tool');
+    const result = history[lastResult];
+    const ids = result ? new Set(toolIds(result, 'tool-result')) : undefined;
+    const call = ids && history.find((message, index) => index > lastResult &&
+        message.role === 'assistant' && toolIds(message, 'tool-call').some(id => ids.has(id)));
+    return messages.filter(message => message.role === 'system' || message === user || (!!call && (message === call || message === result)));
 }
 
 /**
@@ -47,7 +91,7 @@ export class AgentDriverV2 {
     private static nextId = 1;
 
     private readonly driverId: number;
-    private sources: DrivenSource[];
+    private sources: ContextDrivenSource[];
     private unsubscribers: (() => void)[] = [];
     private updateDebounced: () => void;
     private logger: Logger;
@@ -59,10 +103,10 @@ export class AgentDriverV2 {
     private state: AgentState = 'idle';
     private pending = false;
     private runInFlight: Promise<void> | null = null;
+    private toolTurn?: ToolTurn;
+    private runningTool?: { source: string; controller: AbortController };
     private lastInputSignature: string | null = null;
-
-    // Tool → Source 映射
-    private toolToSourceMap = new Map<string, DrivenSource>();
+    private lastModelRequestFailed = false;
 
     private running = false;
     private paused = false;
@@ -84,8 +128,17 @@ export class AgentDriverV2 {
             });
         }, debounceMs);
 
-        this.setupUpdateListeners();
-        this.start(); // 启动事件循环
+        try {
+            this.setupUpdateListeners();
+            this.start();
+        } catch (error) {
+            this.running = false;
+            try { this.dispose(); }
+            catch (cleanupError) {
+                throw new AggregateError([error, cleanupError], error instanceof Error ? error.message : String(error), { cause: error });
+            }
+            throw error;
+        }
     }
 
     /**
@@ -109,26 +162,20 @@ export class AgentDriverV2 {
         return this.pending;
     }
 
-    /**
-     * 获取 Tool 对应的 Source (用于测试)
-     */
-    getToolSource(toolName: string): DrivenSource | undefined {
-        return this.toolToSourceMap.get(toolName);
-    }
-
     setSourceEnabled(sourceName: string, enabled: boolean): void {
         this.sourceEnabledMap.set(sourceName, enabled);
+        if (!enabled && this.runningTool?.source === sourceName) this.runningTool.controller.abort();
         this.updateDebounced();
     }
 
-    private getActiveSources(): DrivenSource[] {
+    private getActiveSources(): ContextDrivenSource[] {
         return this.sources.filter((source) => this.sourceEnabledMap.get(source.name) !== false);
     }
 
     /**
      * 设置更新监听器
      * 
-     * 订阅所有 DrivenSource 的更新事件
+     * 订阅所有 ContextDrivenSource 的更新事件
      */
     private setupUpdateListeners(): void {
         this.sources.forEach((source) => {
@@ -149,65 +196,24 @@ export class AgentDriverV2 {
      * - 每个 source 已经保证消息去重
      * - AgentDriver 只需拼接并排序
      */
-    private async collectMessages(captured: readonly CapturedSourceContext[]): Promise<ModelMessage[]> {
-        const allMessages: MessageWithTimestamp[] = [];
+    private async collectMessages(captured: readonly CapturedSourceContext[], batch?: ToolBatch, feedback?: object): Promise<ModelMessage[]> {
+        const management = captured.find(({ context }) => context.managementOnly)?.context;
+        const history = captured.flatMap(({ context }) => context === management ? [] : context.messages);
+        if (batch) {
+            const { assistant, results, feedbackSource, routes } = batch;
+            const identical = JSON.stringify(assistant.content);
+            for (let index = history.length - 1; index >= 0; index--) {
+                const message = history[index]!;
+                if (message.role === 'assistant' && JSON.stringify(message.content) === identical) { history.splice(index, 1); break; }
+            }
+            const time = history.reduce((latest, message) => Math.max(latest, message.timestamp), Date.now()) + 1;
+            history.push({ ...assistant, timestamp: time },
+                { ...this.createToolMessage(results, feedback, result => routes.get(result.toolName)?.source === feedbackSource), timestamp: time + 1 });
+        }
+        const allMessages = management ? [...management.messages, ...recoveryHistory(history)] : history;
 
-        for (const { context } of captured) allMessages.push(...context.messages);
-
-        this.logger.info(`Total messages collected: ${allMessages.length}`);
-
-        const normalizedTimedMessages = allMessages
-            .map((message) => ({ ...message }))
-            .map((message) => {
-                if (message.role === 'assistant') {
-                    if (typeof message.content === 'string') {
-                        const trimmed = message.content.trim();
-                        if (trimmed === '') {
-                            return null;
-                        }
-
-                        try {
-                            const parsed = JSON.parse(trimmed);
-                            if (Array.isArray(parsed) && parsed.every((part) => part && typeof part === 'object' && typeof part.type === 'string')) {
-                                message = { ...message, content: parsed } as MessageWithTimestamp;
-                            }
-                        } catch {
-                            // Not JSON; keep as string.
-                        }
-                    }
-
-                    if (Array.isArray(message.content) && message.content.length === 0) {
-                        return null;
-                    }
-                }
-
-                if (message.role === 'tool' && Array.isArray(message.content)) {
-                    const content = message.content.map((part: any) => {
-                        if (part?.type !== 'tool-result') {
-                            return part;
-                        }
-
-                        let output = part.output;
-                        if (output === undefined && part.result !== undefined) {
-                            output = part.result;
-                        }
-
-                        if (output && typeof output === 'object' && 'type' in output) {
-                            return { ...part, output };
-                        }
-
-                        const wrapped = part.error
-                            ? { type: 'error-json', value: part.error }
-                            : { type: 'json', value: output ?? null };
-
-                        return { ...part, output: wrapped };
-                    });
-                    return { ...message, content } as ModelMessage;
-                }
-
-                return message;
-            })
-            .filter((message): message is MessageWithTimestamp => message !== null);
+        const normalizedTimedMessages = allMessages.filter(message => message.role !== 'assistant' ||
+            (typeof message.content === 'string' ? message.content.trim().length > 0 : message.content.length > 0));
 
         const normalized = assembleContextRegions(normalizedTimedMessages);
 
@@ -321,7 +327,7 @@ export class AgentDriverV2 {
     private async captureContexts(retained: CapturedSourceContext[]): Promise<void> {
         for (const source of this.getActiveSources()) {
             try {
-                const context = await source.getContext();
+                const context = await this.captureSource(source);
                 retained.push({ source, context });
             } catch (error) {
                 this.logger.error(`Failed to capture context from ${source.name}:`, error);
@@ -329,6 +335,78 @@ export class AgentDriverV2 {
                 // capture must fail the turn, not silently omit that state.
                 throw error;
             }
+        }
+    }
+
+    private async captureSource(source: ContextDrivenSource): Promise<DrivenSourceContext> {
+        const policy = await this.llmClient.toolSchemaPolicy();
+        const context = await source.getContext(policy);
+        if (!policy.check) return context;
+        try {
+            const tools: [string, Tool][] = [];
+            const omitted: string[] = [];
+            for (const [name, tool] of Object.entries(context.tools)) {
+                const issue = tool.type === 'provider' ? undefined : policy.check(await asSchema(tool.inputSchema).jsonSchema);
+                if (!issue) { tools.push([name, tool]); continue; }
+                const error = new ProviderToolSchemaError(policy.label, name, issue.path, issue.reason);
+                if (context.preserveTools) throw error;
+                omitted.push(error.message);
+            }
+            if (!omitted.length) return context;
+            return {
+                ...context, tools: Object.fromEntries(tools),
+                messages: [...context.messages, { role: 'user', region: 'dynamic', timestamp: 0,
+                    content: 'Optional tools unavailable for this request.\n' + omitted.join('\n') }],
+            };
+        } catch (error) {
+            await context.release?.();
+            throw error;
+        }
+    }
+
+    private collectTools(captured: readonly CapturedSourceContext[]) {
+        const management = captured.find(({ context }) => context.managementOnly);
+        const tools: Record<string, Tool> = {};
+        const routes = new Map<string, ToolExecutionRoute>();
+        const bound = new Set<string>();
+        for (const { source, context } of management ? [management] : captured) {
+            const executeTool = context.executeTool?.bind(context);
+            for (const [name, tool] of Object.entries(context.tools)) {
+                if (bound.has(name)) continue;
+                if (context.preserveTools) {
+                    if (routes.has(name)) this.logger.warn('Tool conflicts with an observation-bound tool', { name, source: routes.get(name)?.source.name });
+                    bound.add(name);
+                }
+                tools[name] = tool;
+                routes.set(name, { source, executeTool, settlesOnAbort: context.toolsSettlingOnAbort?.has(name) === true });
+            }
+        }
+        return { tools, routes, preserveTools: captured.some(({ context }) => context.preserveTools) };
+    }
+
+    private async measureContexts(measure: InputMeasure, captured: readonly CapturedSourceContext[], batch?: ToolBatch, feedback?: object) {
+        const { tools, preserveTools } = this.collectTools(captured);
+        return measure(await this.collectMessages(captured, batch, feedback), tools, preserveTools);
+    }
+
+    private async fitContexts(measure: InputMeasure, captured: CapturedSourceContext[], batch?: ToolBatch,
+        sealedFeedback?: object): Promise<FittedModelRequest | undefined> {
+        const owner = captured.find(item => item.context.fitModelBudget && (!batch?.feedbackSource || batch.feedbackSource === item.source));
+        if (!owner) return;
+        const fit = await owner.context.fitModelBudget!(async (candidate, feedback) =>
+            this.measureContexts(measure, captured.map(item => item === owner ? { source: owner.source, context: candidate } : item),
+                batch, sealedFeedback ?? feedback), !!batch && !sealedFeedback);
+        if (fit.context) {
+            const release = owner.context.release?.bind(owner.context);
+            owner.context = release ? { ...fit.context, release } : fit.context;
+        }
+        return fit;
+    }
+
+    private async releaseContexts(retained: CapturedSourceContext[]): Promise<void> {
+        for (const { source, context } of retained.reverse()) {
+            try { await context.release?.(); }
+            catch (error) { this.logger.error(`Failed to release context from ${source.name}:`, error); }
         }
     }
 
@@ -347,7 +425,9 @@ export class AgentDriverV2 {
             toolName: string;
             args: unknown;
         }>,
-        routes: ReadonlyMap<string, ToolExecutionRoute>
+        routes: ReadonlyMap<string, ToolExecutionRoute>,
+        turn: ToolTurn,
+        expansion?: (source: ContextDrivenSource, previous: readonly ToolResult[]) => ToolExecutionBudget
     ): Promise<ToolResult[]> {
         const results: ToolResult[] = [];
 
@@ -356,6 +436,11 @@ export class AgentDriverV2 {
             const route = routes.get(toolCall.toolName);
             const source = route?.source;
 
+            if (turn.closing) {
+                results.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, outcomeStatus: 'rejected',
+                    error: { code: 'E_TOOL_NOT_DISPATCHED', message: 'The session closed before this Tool call was dispatched.' } });
+                continue;
+            }
             if (!this.running || (source && this.sourceEnabledMap.get(source.name) === false)) {
                 results.push({
                     toolCallId: toolCall.toolCallId,
@@ -377,14 +462,17 @@ export class AgentDriverV2 {
                     });
                     continue;
                 }
+                const controller = new AbortController();
+                this.runningTool = { source: source.name, controller };
                 try {
-                    const result = await execute(
-                        toolCall.toolName,
-                        toolCall.args,
-                        toolCall.toolCallId
-                    );
+                    const execution = execute(toolCall.toolName, toolCall.args, toolCall.toolCallId,
+                        expansion?.(source, results), controller.signal);
+                    const result = await (route.settlesOnAbort ? execution : Promise.race([execution, turn.interrupted]));
 
-                    if (result) {
+                    if (result === TOOL_TURN_CLOSED) {
+                        results.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, outcomeStatus: 'unknown',
+                            error: { code: 'E_TOOL_OUTCOME_UNKNOWN', message: 'The session closed while this Tool call was running.' } });
+                    } else if (result) {
                         results.push(result);
                         this.logger.debug(
                             `Tool ${toolCall.toolName} executed by ${source.name}`
@@ -421,6 +509,8 @@ export class AgentDriverV2 {
                                     : String(error),
                         },
                     });
+                } finally {
+                    this.runningTool = undefined;
                 }
             } else {
                 // 没有找到对应的 source
@@ -527,23 +617,20 @@ export class AgentDriverV2 {
     private async run(): Promise<void> {
         await this.setState('thinking');
         const retained: CapturedSourceContext[] = [];
+        let turn: ToolTurn | undefined;
 
         try {
             // 1. 收集 Messages 和 Tools
             await this.captureContexts(retained);
             if (!this.running) return;
-            const messages = await this.collectMessages(retained);
-            const tools: Record<string, Tool> = {};
-            const routes = new Map<string, ToolExecutionRoute>();
-            this.toolToSourceMap.clear();
-            for (const { source, context } of retained) {
-                const executeTool = context.executeTool?.bind(context);
-                for (const [name, tool] of Object.entries(context.tools)) {
-                    tools[name] = tool;
-                    routes.set(name, { source, executeTool });
-                    this.toolToSourceMap.set(name, source);
-                }
+            const hasWindowPlanner = retained.some(({ context }) => context.fitModelBudget);
+            const measure = hasWindowPlanner && this.config.llm.inputBudget ? await this.llmClient.createInputMeasurement() : undefined;
+            if (measure) {
+                const fit = await this.fitContexts(measure, retained);
+                if (fit && fit.measurement.estimated > fit.measurement.inputLimit) throw inputBudgetExceeded(fit.measurement);
             }
+            const messages = await this.collectMessages(retained);
+            const { tools, routes, preserveTools } = this.collectTools(retained);
             if (!this.running) return;
 
             this.logger.info('Run iteration:', {
@@ -552,19 +639,26 @@ export class AgentDriverV2 {
             });
 
             // 2. 调用 LLM (若配置了流式回调，实时推送增量文本/推理)
+            let admitted = false;
             const response = await this.llmClient.call(messages, tools, {
-                preserveTools: retained.some(({ context }) => context.preserveTools),
+                preserveTools,
                 beforeRequest: async signature => {
                     if (!this.running || signature === this.lastInputSignature) throw REQUEST_SKIPPED;
                     for (const { context } of retained) {
                         if (!this.running) throw REQUEST_SKIPPED;
+                        if (retained.some(item => item.context.managementOnly) && !context.managementOnly) continue;
                         await context.adopt?.();
                     }
                     if (!this.running) throw REQUEST_SKIPPED;
                     this.lastInputSignature = signature;
+                    this.lastModelRequestFailed = false;
+                    admitted = true;
                 },
                 onTextDelta: this.config.onTextDelta,
                 onReasoningDelta: this.config.onReasoningDelta,
+            }).catch(error => {
+                if (admitted) this.lastModelRequestFailed = true;
+                throw error;
             });
             // stop/dispose of the owning session cannot admit a late model call.
             if (!this.running) return;
@@ -575,19 +669,20 @@ export class AgentDriverV2 {
                 finishReason: response.finishReason,
             });
 
-            if (response.usage && this.config.onLLMUsage) {
-                this.config.onLLMUsage(response.usage);
-            }
-
-            // ✅ 新增: 发射 assistant message 事件
-            if (response.assistantMessage && this.config.onAssistantMessage) {
+            const assistant = response.assistantMessage ?? (response.toolCalls.length ? {
+                role: 'assistant' as const, content: response.toolCalls.map(call => ({
+                    type: 'tool-call' as const, toolName: call.toolName, toolCallId: call.toolCallId, input: call.args,
+                })),
+            } : undefined);
+            if (response.toolCalls.length) this.toolTurn = turn = createToolTurn();
+            if (assistant && this.config.onAssistantMessage) {
                 console.log('\n=== AgentDriver calling onAssistantMessage ===');
-                console.log('Message:', JSON.stringify(response.assistantMessage, null, 2));
+                console.log('Message:', JSON.stringify(assistant, null, 2));
                 console.log('Callback exists:', !!this.config.onAssistantMessage);
                 console.log('=============================================\n');
                 
                 this.logger.debug('Emitting onAssistantMessage event');
-                this.config.onAssistantMessage(response.assistantMessage);
+                this.config.onAssistantMessage(assistant);
             } else {
                 console.log('\n⚠️  onAssistantMessage NOT called!');
                 console.log('assistantMessage:', response.assistantMessage);
@@ -595,14 +690,38 @@ export class AgentDriverV2 {
                 console.log('\n');
             }
 
+            const { usage } = response;
+            if (usage && this.config.onLLMUsage) {
+                void (async () => {
+                    try { await this.config.onLLMUsage?.(usage); }
+                    catch (error) { this.logger.warn('Model usage observer failed', { error }); }
+                })();
+            }
+
             // 3. 如果有 ToolCalls
-            if (response.toolCalls && response.toolCalls.length > 0) {
+            if (turn && assistant) {
                 await this.setState('executing');
 
                 this.logger.info(`Executing ${response.toolCalls.length} tool calls...`);
 
-                // 执行所有 ToolCalls
-                const results = await this.executeToolCalls(response.toolCalls, routes);
+                const results = await this.executeToolCalls(response.toolCalls, routes, turn, measure && ((source, previous) => ({
+                    checkExpansion: async (candidate, proposed) => {
+                        const captured: CapturedSourceContext[] = [];
+                        try {
+                            for (const active of this.getActiveSources()) {
+                                captured.push({ source: active, context: active === source ? candidate : await this.captureSource(active) });
+                            }
+                            const results = [...previous, proposed, ...response.toolCalls.slice(previous.length + 1)
+                                .map(call => ({ toolName: call.toolName, toolCallId: call.toolCallId, result: { pending: true } }))];
+                            const batch = { assistant, results, routes, feedbackSource: source };
+                            const trial = await this.fitContexts(measure, captured.map(item => ({ ...item })), batch);
+                            if (!trial) return await this.measureContexts(measure, captured, batch);
+                            if (!trial.feedback || trial.measurement.estimated > trial.measurement.inputLimit) return trial.measurement;
+                            const sealed = await this.fitContexts(measure, captured, batch, trial.feedback);
+                            return (sealed ?? trial).measurement;
+                        } finally { await this.releaseContexts(captured.filter(item => item.source !== source)); }
+                    },
+                })));
                 const counts = { succeeded: 0, rejected: 0, failed: 0, accepted: 0, unknown: 0 };
                 for (const result of results) counts[this.outcomeStatus(result)] += 1;
 
@@ -617,11 +736,36 @@ export class AgentDriverV2 {
                 });
 
                 // ✅ 新增: 发射 toolresult message 事件
+                let budgetFailure: unknown;
                 if (this.config.onToolResult) {
-                    const toolMessage = this.createToolMessage(results);
+                    let feedback: object | undefined;
+                    const feedbackSource = retained.find(({ source, context }) => context.fitModelBudget &&
+                        results.some(result => routes.get(result.toolName)?.source === source))?.source;
+                    if (measure && feedbackSource && this.running) {
+                        try {
+                            const prepareFeedback = async () => {
+                                const next: CapturedSourceContext[] = [];
+                                try {
+                                    await this.captureContexts(next);
+                                    return await this.fitContexts(measure, next, { assistant, results, routes, feedbackSource });
+                                } finally { await this.releaseContexts(next); }
+                            };
+                            const plan = await Promise.race([prepareFeedback(), turn.interrupted]);
+                            if (plan !== TOOL_TURN_CLOSED && !turn.closing) {
+                                plan?.retainFeedback?.();
+                                feedback = plan?.feedback;
+                                if (plan && plan.measurement.estimated > plan.measurement.inputLimit)
+                                    budgetFailure = inputBudgetExceeded(plan.measurement);
+                            }
+                        } catch (error) { budgetFailure = error; }
+                    }
+                    const toolMessage = this.createToolMessage(results, feedback, result => routes.get(result.toolName)?.source === feedbackSource);
                     this.logger.debug('Emitting onToolResult event');
-                    this.config.onToolResult(toolMessage);
+                    await this.config.onToolResult(toolMessage, results);
                 }
+                turn.delivered();
+                this.toolTurn = undefined;
+                if (budgetFailure) throw budgetFailure;
 
                 // Outcomes alone never schedule retries. In particular an unknown
                 // result is not evidence that the Tool call had no side effects.
@@ -644,6 +788,7 @@ export class AgentDriverV2 {
             await this.setState('idle');
 
         } catch (error) {
+            turn?.failed(error);
             if (error === REQUEST_SKIPPED) return;
             this.logger.error('Error in run loop:', error);
             if (this.config.onRunError) {
@@ -652,10 +797,7 @@ export class AgentDriverV2 {
             }
             await this.setState('idle');
         } finally {
-            for (const { source, context } of retained.reverse()) {
-                try { await context.release?.(); }
-                catch (error) { this.logger.error(`Failed to release context from ${source.name}:`, error); }
-            }
+            await this.releaseContexts(retained);
             await this.setState('idle');
         }
     }
@@ -668,19 +810,21 @@ export class AgentDriverV2 {
      * @param results - ToolResult 数组
      * @returns Tool Message
      */
-    private createToolMessage(results: ToolResult[]): ModelMessage {
+    private createToolMessage(results: readonly ToolResult[], feedback?: object, isRelated = (_result: ToolResult) => false): ModelMessage {
+        let included = false;
         return {
             role: 'tool',
-            content: results.map((result) => ({
-                type: 'tool-result' as const,
-                toolCallId: result.toolCallId,
-                toolName: result.toolName,
-                output: this.toolOutput(result),
-            })) as any,
+            content: results.map((result) => {
+                const report = feedback && isRelated(result) ? included && 'report_id' in feedback ? { report_id: feedback.report_id } : feedback
+                    : undefined;
+                included ||= report !== undefined;
+                return { type: 'tool-result', toolCallId: result.toolCallId, toolName: result.toolName,
+                    output: this.toolOutput(result, report) };
+            }) as any,
         };
     }
 
-    private toolOutput(result: ToolResult): unknown {
+    private toolOutput(result: ToolResult, feedback?: object): unknown {
         const status = result.outcomeStatus;
         const uncertain = status === 'unknown' || status === 'accepted';
         const error = result.error ?? (status && status !== 'succeeded' ? {
@@ -689,9 +833,11 @@ export class AgentDriverV2 {
         } : undefined);
         return error ? { type: 'error-json', value: {
             ...error, ...(result.result === undefined ? {} : { result: result.result }),
+            ...(feedback ? { window_budget: feedback } : {}),
             ...(uncertain ? { retryable: false,
                 message: error.message + ' The Tool call may have had effects. Check the application View before retrying.' } : {}),
-        } } : { type: 'json', value: result.result ?? { success: true } };
+        } } : { type: 'json', value: feedback ? { result: result.result ?? { success: true }, window_budget: feedback }
+            : result.result ?? { success: true } };
     }
 
     /**
@@ -712,7 +858,16 @@ export class AgentDriverV2 {
      */
     stop(): void {
         this.running = false;
+        this.runningTool?.controller.abort();
         this.logger.info('AgentDriver stopped');
+    }
+
+    /** Stop scheduling and wait for the published turn's results to be delivered to the Host. */
+    closeToolTurn(): Promise<void> {
+        const turn = this.toolTurn;
+        if (this.running) this.stop();
+        turn?.close();
+        return turn?.completion ?? Promise.resolve();
     }
 
     /**
@@ -725,6 +880,10 @@ export class AgentDriverV2 {
             this.logger.warn('AgentDriver is busy, marking update instead');
         }
 
+        if (!this.runInFlight && this.lastModelRequestFailed) {
+            this.lastInputSignature = null;
+            this.lastModelRequestFailed = false;
+        }
         this.requestRun();
     }
 
@@ -765,8 +924,14 @@ export class AgentDriverV2 {
      * 清理资源
      */
     dispose(): void {
-        this.unsubscribers.forEach((fn) => fn());
-        this.unsubscribers = [];
+        this.runningTool?.controller.abort();
+        const errors: unknown[] = [];
+        for (const unsubscribe of this.unsubscribers.splice(0)) {
+            try { unsubscribe(); }
+            catch (error) { errors.push(error); }
+        }
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1) throw new AggregateError(errors, 'Failed to unsubscribe Driver sources');
         this.logger.info('AgentDriver V2 disposed');
     }
     

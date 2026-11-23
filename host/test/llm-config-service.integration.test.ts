@@ -110,7 +110,7 @@ describe('LLMConfigService Integration Tests', () => {
                 baseUrl: input.baseUrl,
                 apiKey: input.apiKey,
                 temperature: input.temperature ?? 0.7,
-                maxSteps: input.maxSteps ?? 10,
+
                 isActive: mockConfigs.length === 0,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
@@ -203,67 +203,6 @@ describe('LLMConfigService Integration Tests', () => {
         });
     });
 
-    describe('Recommended Configuration Generation', () => {
-        it('should recommend lower temperature for reasoning models', async () => {
-            const config = await service.getModelRecommendedConfig('openai', 'o1');
-
-            expect(config.temperature).toBe(0.5);
-            expect(config.maxSteps).toBe(20);
-        });
-
-        it('should recommend standard config for tool-calling models', async () => {
-            const config = await service.getModelRecommendedConfig('openai', 'gpt-4o');
-
-            expect(config.temperature).toBe(0.7);
-            expect(config.maxSteps).toBe(10);
-        });
-
-        it('should return default config for unknown models', async () => {
-            const config = await service.getModelRecommendedConfig('openai', 'unknown-model');
-
-            expect(config.temperature).toBe(0.7);
-            expect(config.maxSteps).toBe(10);
-        });
-
-        it('should handle reasoning models from different providers', async () => {
-            // Add a reasoning model to anthropic
-            const modifiedResponse = {
-                ...mockModelsDevResponse,
-                anthropic: {
-                    ...mockModelsDevResponse.anthropic,
-                    models: {
-                        ...mockModelsDevResponse.anthropic.models,
-                        'claude-3-opus-reasoning': {
-                            id: 'anthropic/claude-3-opus-reasoning',
-                            name: 'Claude 3 Opus Reasoning',
-                            tool_call: true,
-                            reasoning: true,
-                            cost: { input: 15, output: 75 },
-                            limit: { context: 200000, output: 8192 },
-                        },
-                    },
-                },
-            };
-
-            global.fetch = vi.fn().mockResolvedValue({
-                ok: true,
-                json: async () => modifiedResponse,
-            } as any);
-
-            // Create new registry to pick up the modified response
-            const newRegistry = new ModelRegistry();
-            const newService = new LLMConfigService(newRegistry);
-
-            const config = await newService.getModelRecommendedConfig(
-                'anthropic',
-                'claude-3-opus-reasoning'
-            );
-
-            expect(config.temperature).toBe(0.5);
-            expect(config.maxSteps).toBe(20);
-        });
-    });
-
     describe('Error Handling', () => {
         it('should handle ModelRegistry API failure gracefully', async () => {
             // Mock fetch to fail
@@ -305,18 +244,6 @@ describe('LLMConfigService Integration Tests', () => {
             );
         });
 
-        it('should handle getModelRecommendedConfig errors gracefully', async () => {
-            // Mock getModels to throw error
-            vi.spyOn(modelRegistry, 'getModels').mockRejectedValue(
-                new Error('Registry error')
-            );
-
-            const config = await service.getModelRecommendedConfig('openai', 'gpt-4o');
-
-            // Should return default config
-            expect(config.temperature).toBe(0.7);
-            expect(config.maxSteps).toBe(10);
-        });
     });
 
     describe('Cache Integration', () => {
@@ -388,16 +315,6 @@ describe('LLMConfigService Integration Tests', () => {
             expect(isValid).toBe(false);
         });
 
-        it('should get recommended config for specific provider models', async () => {
-            const openaiConfig = await service.getModelRecommendedConfig('openai', 'o1');
-            const anthropicConfig = await service.getModelRecommendedConfig(
-                'anthropic',
-                'claude-3-5-sonnet-20241022'
-            );
-
-            expect(openaiConfig.temperature).toBe(0.5); // reasoning model
-            expect(anthropicConfig.temperature).toBe(0.7); // standard model
-        });
     });
 
     describe('Model Capabilities', () => {
@@ -415,16 +332,6 @@ describe('LLMConfigService Integration Tests', () => {
             expect(models.every(m => m.reasoning === true)).toBe(true);
         });
 
-        it('should recommend appropriate config based on capabilities', async () => {
-            const reasoningModels = await modelRegistry.getModels({ providerId: 'openai', capability: 'reasoning' });
-
-            for (const model of reasoningModels) {
-                const config = await service.getModelRecommendedConfig('openai', model.id);
-
-                expect(config.temperature).toBe(0.5);
-                expect(config.maxSteps).toBe(20);
-            }
-        });
     });
 
     describe('End-to-End Configuration Flow', () => {
@@ -435,7 +342,7 @@ describe('LLMConfigService Integration Tests', () => {
                 providerId: 'anthropic',
                 apiKey: 'sk-prod-key',
                 temperature: 0.8,
-                maxSteps: 15,
+
             };
 
             const config = await service.createConfig(input);
@@ -445,26 +352,9 @@ describe('LLMConfigService Integration Tests', () => {
             expect(config.model).toBe('claude-3-5-sonnet-20241022');
             expect(config.providerId).toBe('anthropic');
             expect(config.temperature).toBe(0.8);
-            expect(config.maxSteps).toBe(15);
+
         });
 
-        it('should use recommended config when creating new config', async () => {
-            const recommendedConfig = await service.getModelRecommendedConfig('openai', 'o1');
-
-            const input: LLMConfigInput = {
-                name: 'Reasoning Config',
-                model: 'o1',
-                providerId: 'openai',
-                apiKey: 'sk-test',
-                temperature: recommendedConfig.temperature,
-                maxSteps: recommendedConfig.maxSteps,
-            };
-
-            const config = await service.createConfig(input);
-
-            expect(config.temperature).toBe(0.5);
-            expect(config.maxSteps).toBe(20);
-        });
 
         it('should validate and create multiple configs', async () => {
             const configs = [

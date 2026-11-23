@@ -68,7 +68,6 @@ export const AgentSkillsEditor: React.FC<AgentSkillsEditorProps> = ({
         onClose();
     };
 
-    const allNames = [...globalSkills.map(s => s.name), ...projectSkills.map(s => s.name)];
     const anyEnabled = Object.values(draft).some(set => set.size > 0);
     const toggleAll = (v: boolean) => {
         if (v) {

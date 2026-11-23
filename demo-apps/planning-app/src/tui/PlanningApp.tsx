@@ -1,4 +1,4 @@
-import { createTUIApp, View, useEffect, useMemo, useState, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
+import { createTUIApp, useEffect, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
 import type { Plan, Phase, PhaseInput, TaskInput, TaskItem, TaskStatus } from '../types.js';
 import { RootView } from './RootView.js';
 import { PlanListView } from './PlanListView.js';
@@ -7,25 +7,11 @@ import { planningService } from '../core/planning-service.js';
 import type { AppContext } from '@aotui/sdk';
 import { RootType, PlanListType, PlanDetailType, planningViewTypes } from './planning-tools.js';
 
-const isPlanCompleted = (plan: Plan) => {
-    if (plan.phases.length === 0) {
-        return false;
-    }
-    return plan.phases.every(phase => phase.status === 'completed');
-};
-
 function PlanningApp() {
     const [plans, setPlans] = useState<Plan[]>([]);
-    const [activePlanId, setActivePlanId] = usePersistentState<string | null>('activePlanId', null, {
-        deserialize: (value) => {
-            if (typeof value === 'string') {
-                return value;
-            }
-            return null;
-        },
-        serialize: (value) => (typeof value === 'string' ? value : null),
-    });
-    const { desktopId } = useAppRuntimeContext();
+    const [activePlanId, setActivePlanId] = useState<string | null>(null);
+    const selectedInSession = useRef(false);
+    const { desktopId, persistence } = useAppRuntimeContext();
 
     const activePlan = useMemo(
         () => plans.find(plan => plan.id === activePlanId) || null,
@@ -41,20 +27,29 @@ function PlanningApp() {
                 return;
             }
             setPlans(loadedPlans);
-            if (activePlanId && !loadedPlans.some(plan => plan.id === activePlanId)) {
-                setActivePlanId(null);
-            }
+            try {
+                const previous = await persistence?.load('activePlanId');
+                if (!cancelled && !selectedInSession.current && typeof previous === 'string' &&
+                    loadedPlans.some(plan => plan.id === previous)) setActivePlanId(previous);
+            } catch (error) { console.warn('Unable to load the active plan selection', error); }
         };
         void loadPlans();
         return () => {
             cancelled = true;
         };
-    }, [desktopId]);
+    }, [desktopId, persistence]);
+
+    const selectPlan = async (id: string | null) => {
+        selectedInSession.current = true;
+        setActivePlanId(id);
+        try { await persistence?.save('activePlanId', id); }
+        catch (error) { console.warn('Unable to save the active plan selection', error); }
+    };
 
     const createPlan = async (title: string, description?: string, phases: PhaseInput[] = []) => {
         const plan = await planningService.createPlan(desktopId, title, description ?? '', phases);
         setPlans((prev: Plan[]) => [...prev, plan]);
-        setActivePlanId(plan.id);
+        await selectPlan(plan.id);
         return plan.id;
     };
 
@@ -85,7 +80,7 @@ function PlanningApp() {
         }
         setPlans((prev: Plan[]) => prev.filter((plan: Plan) => plan.id !== planId));
         if (activePlanId === planId) {
-            setActivePlanId(null);
+            await selectPlan(null);
         }
         return true;
     };
@@ -93,14 +88,12 @@ function PlanningApp() {
     const openPlan = async (planId: string) => {
         const exists = plans.some(plan => plan.id === planId);
         if (exists) {
-            setActivePlanId(planId);
+            await selectPlan(planId);
         }
         return exists;
     };
 
-    const closePlan = () => {
-        setActivePlanId(null);
-    };
+    const closePlan = () => selectPlan(null);
 
     const addPhase = async (title: string, description?: string, tasks: TaskInput[] = []) => {
         const planId = activePlanId;
@@ -356,18 +349,18 @@ function PlanningApp() {
 
     return (
         <>
-            <View kind="instruction" id="root" type={RootType} name="Root">
+            <RootType id="root" name="Root">
                 <RootView />
-            </View>
+            </RootType>
 
-            <View kind="state" id="plan_list" type={PlanListType} context={planListContext} name={planListName}>
+            <PlanListType id="plan_list" context={planListContext} name={planListName}>
                 <PlanListView plans={plans} activePlan={activePlan} />
-            </View>
+            </PlanListType>
 
             {activePlan ? (
-                <View kind="state" id="plan_detail" type={PlanDetailType} context={planDetailContext} name={planDetailName}>
+                <PlanDetailType id="plan_detail" context={planDetailContext} name={planDetailName}>
                     <PlanDetailView plan={activePlan} />
-                </View>
+                </PlanDetailType>
             ) : null}
         </>
     );

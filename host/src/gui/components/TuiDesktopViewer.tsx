@@ -7,49 +7,41 @@
  *
  * @module system-chat/gui/components/TuiDesktopViewer
  */
-import { useEffect, useMemo, useState } from 'react';
-import { parseTuiSnapshot } from './TuiParser.js';
+import { useEffect, useState } from 'react';
+import type { DesktopPreview } from '../../core/desktop-preview.js';
 import { ApplicationBlock } from './ApplicationBlock.js';
 
 interface TuiDesktopViewerProps {
-    snapshot: string;
+    preview: DesktopPreview | undefined;
     agentThinking?: string;
     apps?: { enabled: boolean; items: Array<{ name: string; enabled: boolean }> };
 }
 
-export function TuiDesktopViewer({ snapshot, agentThinking, apps }: TuiDesktopViewerProps) {
-    const parsed = useMemo(() => parseTuiSnapshot(snapshot), [snapshot]);
-    const applications = parsed.desktop?.applications ?? [];
+export function TuiDesktopViewer({ preview, agentThinking, apps }: TuiDesktopViewerProps) {
+    const applications = preview?.applications ?? [];
     const [activeAppId, setActiveAppId] = useState<string | null>(null);
 
     useEffect(() => {
         if (applications.length === 0) { setActiveAppId(null); return; }
-        const stillExists = activeAppId && applications.some(app => app.id === activeAppId);
+        const stillExists = activeAppId && applications.some(app => app.installationId === activeAppId);
         if (stillExists) return;
-        const defaultApp = applications.find(app => app.id === 'app_0') ?? applications[0];
-        setActiveAppId(defaultApp.id);
+        setActiveAppId(applications[0].installationId);
     }, [applications, activeAppId]);
 
     /* ── Empty / error state ── */
-    if (!parsed.desktop) {
+    if (!preview) {
         return (
             <div className="absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6 custom-scrollbar">
                 <div className="flex flex-col items-center justify-center min-h-[200px]
                                 text-[var(--color-text-tertiary)]">
                     <span className="text-3xl mb-3">📡</span>
-                    <p className="text-[13px]">Waiting for TUI snapshot…</p>
-                    {parsed.parseErrors.length > 0 && (
-                        <pre className="mt-3 text-[11px] font-mono opacity-60 whitespace-pre-wrap max-w-md">
-                            {parsed.parseErrors.join('\n')}
-                        </pre>
-                    )}
+                    <p className="text-[13px]">Waiting for the Desktop preview…</p>
                 </div>
             </div>
         );
     }
 
-    const activeApp = applications.find(app => app.id === activeAppId)
-        ?? applications.find(app => app.id === 'app_0') ?? applications[0] ?? null;
+    const activeApp = applications.find(app => app.installationId === activeAppId) ?? applications[0] ?? null;
 
     return (
         /* Mirrors ChatArea layout: absolute inset-0 + pt-[78px] so first content clears
@@ -60,10 +52,16 @@ export function TuiDesktopViewer({ snapshot, agentThinking, apps }: TuiDesktopVi
             {apps && (
                 <p className="text-[13px] text-[var(--color-text-tertiary)]">
                     Installed applications preview. {apps.enabled ? apps.items.filter(app => app.enabled).length : 0} enabled for this topic.
-                    {activeApp && !(apps.enabled && apps.items.some(app => app.name === activeApp.name && app.enabled)) && (
+                    {activeApp && !(apps.enabled && apps.items.some(app => app.name === activeApp.installationId && app.enabled)) && (
                         <span> {activeApp.name} is not enabled for this topic; its Views and Tools are not sent to the Agent. Change this in Chat → Apps.</span>
                     )}
                 </p>
+            )}
+
+            {preview.diagnostics.length > 0 && (
+                <ul className="text-[13px] text-[var(--color-text-secondary)] whitespace-pre-wrap">
+                    {preview.diagnostics.map((diagnostic, index) => <li key={index}>{diagnostic}</li>)}
+                </ul>
             )}
 
             {/* ── App Switcher Row ── */}
@@ -75,13 +73,13 @@ export function TuiDesktopViewer({ snapshot, agentThinking, apps }: TuiDesktopVi
                     </span>
                     {applications.map(app => (
                         <button
-                            key={app.id}
-                            onClick={() => setActiveAppId(app.id)}
+                            key={app.installationId}
+                            onClick={() => setActiveAppId(app.installationId)}
                             className={`
                                 h-8 px-3.5 rounded-full text-[13px] font-medium
                                 transition-all duration-200 select-none
                                 active:scale-[0.97]
-                                ${app.id === activeApp?.id
+                                ${app.installationId === activeApp?.installationId
                                     ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
                                     : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-white/5'}
                             `}
@@ -94,7 +92,7 @@ export function TuiDesktopViewer({ snapshot, agentThinking, apps }: TuiDesktopVi
 
             {/* ── Active App Content ── */}
             {activeApp ? (
-                <ApplicationBlock key={activeApp.id} app={activeApp} />
+                <ApplicationBlock key={activeApp.installationId} app={activeApp} />
             ) : (
                 <div className="text-[13px] text-[var(--color-text-tertiary)] py-4">
                     No applications found.

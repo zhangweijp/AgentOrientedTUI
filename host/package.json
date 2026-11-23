@@ -7,12 +7,16 @@
   "bin": {
     "agentina": "./dist/app-distribution/cli.js"
   },
-  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "dist-gui",
+    "scripts/patch-electron-trpc.sh"
+  ],
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/app-distribution/cli.js && ELECTRON_BUILD_TARGET=main vite build -c vite.electron.config.ts && ELECTRON_BUILD_TARGET=preload vite build -c vite.electron.config.ts",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && chmod +x dist/app-distribution/cli.js && ELECTRON_BUILD_TARGET=main vite build -c vite.electron.config.ts && ELECTRON_BUILD_TARGET=preload vite build -c vite.electron.config.ts",
     "dev": "vite",
     "build:all": "npm run build && npm run build:gui",
     "build:gui": "vite build",
@@ -38,6 +42,7 @@
     },
     "asarUnpack": [
       "**/worker-runtime/**/*",
+      "**/agent-driver-adapter/dist/console/program-child.mjs",
       "**/adapters/storage/sqlite-state-worker.js",
       "**/better-sqlite3/prebuilds/**/*"
     ],
@@ -55,19 +60,13 @@
     }
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.39",
-    "@ai-sdk/google": "^3.0.22",
-    "@ai-sdk/openai": "^3.0.14",
     "@aotui/agent-driver-v2": "0.3.2",
     "@aotui/runtime": "8.0.0",
-    "@aotui/sdk": "0.9.0",
     "@heroui/react": "^2.7.5",
-    "@heroui/styles": "3.0.0-beta.5",
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@trpc/client": "^10.45.4",
     "@trpc/server": "^10.45.4",
-    "@types/sql.js": "^1.4.9",
     "adm-zip": "^0.6.1",
     "ai": "6.0.326",
     "better-sqlite3": "13.2.0",
@@ -75,18 +74,13 @@
     "express": "^4.22.3",
     "framer-motion": "^12.29.0",
     "marked": "^17.0.1",
-    "open": "^11.0.0",
-    "openai": "^6.15.0",
     "react": "^19.0.0",
-    "react-aria-components": "^1.14.0",
     "react-dom": "^19.0.0",
     "sql.js": "^1.13.0",
     "superjson": "^2.2.6",
-    "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.0.0",
     "zod": "^4.6.7",
-    "@aotui/agent-driver-adapter": "0.5.0",
-    "@ai-sdk/provider-utils": "4.0.65"
+    "@aotui/agent-driver-adapter": "0.5.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
@@ -95,7 +89,6 @@
     "@testing-library/react": "^16.3.2",
     "@types/adm-zip": "^0.5.7",
     "@types/express": "^4.17.21",
-    "@types/marked": "^5.0.2",
     "@types/node": "^22.15.21",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -111,7 +104,9 @@
     "vite": "^6.4.6",
     "vitest": "^4.1.12",
     "wait-on": "^9.5.1",
-    "@types/json-schema": "7.0.15"
+    "@types/json-schema": "7.0.15",
+    "@aotui/core": "0.1.0",
+    "@types/sql.js": "^1.4.9"
   },
   "overrides": {
     "@hono/node-server": "^1.19.12",
@@ -134,7 +129,6 @@
     "overrides": {
       "@aotui/agent-driver-v2": "link:../agent-driver-v2",
       "@aotui/runtime": "link:../runtime",
-      "@aotui/sdk": "link:../sdk",
       "@hono/node-server": "^1.19.12",
       "@xmldom/xmldom": "^0.8.15",
       "brace-expansion@1": "^1.1.20",
@@ -153,7 +147,8 @@
       "@aotui/agent-driver-adapter": "link:../agent-driver-adapter",
       "ai@6": "6.0.326",
       "axios@1": "^1.20.0",
-      "protobufjs@7": "^7.6.1"
+      "protobufjs@7": "^7.6.1",
+      "@aotui/core": "link:../core"
     },
     "patchedDependencies": {
       "@ai-sdk/provider-utils@4.0.65": "../agent-driver-v2/patches/provider-utils-4.0.65.patch"

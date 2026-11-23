@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { captureViewBindings } from '../../../sdk/src/tools/view-type-tool.js';
+import { captureViewBindings, captureViewTypes } from '../../../sdk/src/tools/view-type-tool.js';
 import { ResultListType } from '../src/tui/BrowserTools.js';
 import { ResultListView } from '../src/tui/ResultListView.js';
 import type { SearchResultItem } from '../src/types.js';
@@ -13,7 +13,8 @@ const result = (url: string): SearchResultItem => ({
 });
 
 function openResultTool(results: SearchResultItem[], onOpenResult: (url: string) => Promise<string>) {
-    return captureViewBindings(ResultListType, 'results', { results, onOpenResult, onClearResults() {} })
+    const type = captureViewTypes([ResultListType]).values().next().value!;
+    return captureViewBindings(type, 'results', { results, onOpenResult, onClearResults() {} })
         .find(tool => tool.name === 'open_result')!;
 }
 

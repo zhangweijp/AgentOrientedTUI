@@ -15,6 +15,9 @@
       "import": "./dist/app.js"
     }
   },
+  "bin": {
+    "generate-aoapp": "bin/generate-aoapp.mjs"
+  },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && node ./node_modules/@typescript/native/bin/tsc",
     "test": "vitest",
@@ -33,7 +36,8 @@
     }
   },
   "dependencies": {
-    "@aotui/runtime": "8.0.0"
+    "@aotui/core": "0.1.0",
+    "linkedom": "0.18.12"
   },
   "devDependencies": {
     "@testing-library/preact": "^3.2.4",
@@ -66,7 +70,7 @@
   },
   "pnpm": {
     "overrides": {
-      "@aotui/runtime": "link:../runtime",
+      "@aotui/core": "link:../core",
       "ajv": "^6.14.0",
       "flatted": "^3.4.2",
       "minimatch@3.1.2": "3.1.4",
@@ -79,7 +83,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "keywords": [
     "aotui",

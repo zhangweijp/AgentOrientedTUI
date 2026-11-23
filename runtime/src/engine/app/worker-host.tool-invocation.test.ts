@@ -6,8 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
-import { compileToolParameters } from '../../core/tool/tool-parameters.js';
-import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
+import { compileToolParameters } from '@aotui/core';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 const NORMAL_HOST_TIMEOUT_MS = 3000;
 const FAULT_HOST_TIMEOUT_MS = 1500;
 const closing: Array<() => Promise<void> | void> = [];
@@ -104,16 +104,17 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
     workerFile = join(runtime, 'dist/worker-runtime/index.js');
     await mkdir(join(temporary, 'node_modules/@aotui'), { recursive: true }); await mkdir(join(temporary, 'node_modules/@preact'), { recursive: true });
-    for (const name of ['preact', 'linkedom']) await symlink(join(runtime, 'node_modules', name), join(temporary, 'node_modules', name), 'dir');
+    for (const [owner, name] of [['.', 'preact'], ['../sdk', 'linkedom'], ['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', name), join(temporary, 'node_modules', name), 'dir');
     await symlink(join(sdk, 'node_modules/typebox'), join(temporary, 'node_modules/typebox'), 'dir');
     await symlink(runtime, join(temporary, 'node_modules/@aotui/runtime'), 'dir');
+    await symlink(resolve(runtime, '../core'), join(temporary, 'node_modules/@aotui/core'), 'dir');
     appFile = join(temporary, 'app.mjs');
     await build({ entryPoints: [join(runtime, 'tests/fixtures/ordinary-v2-slice.mjs')], outfile: appFile,
       alias: { '@aotui/sdk': join(sdk, 'dist/index.js') }, bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
     legacySdkAppFile = join(temporary, 'legacy-sdk-app.mjs');
     await writeFile(legacySdkAppFile, `export default {
       kernelConfig: { appName: 'legacy_sdk' },
-      persistenceSupport: 'state-session-v1',
+      persistenceSupport: 'state-session-v2',
       appLifecycleSupport: 'app-lifecycle-v2',
       initialize() { throw new Error('UNSUPPORTED_FACTORY_EXECUTED'); }
     };\n`);
@@ -157,7 +158,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     const output = value(await s.client.invoke(request));
     expect(output.data.view).toBe('aa'); expect(output.data.args).toEqual(good);
     expect(s.authorized[0].rawInput).toEqual(good); expect(s.authorized[0].effectiveInput).toEqual(good);
-    expect(x.posts()[0].effectiveArgs).toEqual(good); expect(x.entries()[0]).toMatchObject({ view: 'aa', name: 'find', args: good, frozen: true, nestedFrozen: true });
+    expect(x.posts()[0]).not.toHaveProperty('effectiveArgs'); expect(x.entries()[0]).toMatchObject({ view: 'aa', name: 'find', args: good, frozen: true, nestedFrozen: true });
     expect(Object.hasOwn(output.data.args, 'n')).toBe(false); expect(Object.hasOwn(output.data.args, 'payload')).toBe(false);
     expect(x.host.getInteractionReport().toolsEnabled).toBe(true);
   });
@@ -186,7 +187,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     const accepted = value(await s.client.invoke(s.request(o, 'nodes-5000', 'flags', { flags: Array(4997).fill(true) })));
     expect(accepted.data).toEqual({ count: 4997, allTrue: true });
     expect(s.authorized).toHaveLength(1); expect(x.posts()).toHaveLength(1); expect(x.entries()).toHaveLength(1);
-    expect(s.authorized[0].effectiveInput).toEqual(x.posts()[0].effectiveArgs); expect(x.entries()[0].args).toEqual(x.posts()[0].effectiveArgs);
+    expect(s.authorized[0].effectiveInput).toEqual(x.posts()[0].rawArgs); expect(x.entries()[0].args).toEqual(x.posts()[0].rawArgs);
     const denied = receipt(await s.client.invoke(s.request(o, 'nodes-5001', 'flags', { flags: Array(4998).fill(true) })));
     expect(denied).toMatchObject({ executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'ACTION_INPUT_INVALID' } });
     expect(s.authorized).toHaveLength(1); expect(x.posts()).toHaveLength(1); expect(x.entries()).toHaveLength(1);
@@ -196,7 +197,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     const input = JSON.parse('{"q":"x","extra":[null,{"kept":false}],"__proto__":{"safe":true},"constructor":0,"toString":false}');
     const output = value(await s.client.invoke(s.request(o, 'open-input', 'open', input)));
     const expected = input;
-    expect(output.data.args).toEqual(expected); expect(s.authorized[0].effectiveInput).toEqual(expected); expect(x.posts()[0].effectiveArgs).toEqual(expected);
+    expect(output.data.args).toEqual(expected); expect(s.authorized[0].effectiveInput).toEqual(expected); expect(x.posts()[0].rawArgs).toEqual(expected);
     expect(x.entries()[0].args).toEqual(expected); expect(({} as any).safe).toBeUndefined();
   });
   it('R14 explicit policy denial does not dispatch or enter', async () => {
@@ -233,14 +234,14 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       expect(x.messages.find((m: any) => m.requestId === queued[0].requestId && m.type === 'VIEW_TOOL_INVOKE_RESPONSE').terminal.phase).toBe('not-entered');
     } finally { x.host.terminate(); await pending.catch(() => undefined); }
   });
-  it('R16 direct invalid V6 requests remain not-entered without trusting Host validation', async () => {
+  it('R16 rejects invalid Worker arguments before entering the handler', async () => {
     const x = await start(), snapshot = x.snapshot();
     const { nameSharedAcrossViewTypes: _sharedName, ...tool } = Object.values(snapshot.tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
     const from = x.messages.length;
     x.physical({ type: 'VIEW_TOOL_INVOKE', requestId: 'direct-invalid', appId: 'app', instanceId: x.host.appInstanceId,
-      snapshotId: snapshot.id, tool, receiver: receiver(snapshot,tool), rawArgs: { ...good, e: 1 }, effectiveArgs: { ...good, e: 1 }, refSources: [] });
+      snapshotId: snapshot.id, observationId: 'tampered-probe', tool, receiver: receiver(snapshot,tool), rawArgs: { ...good, e: 1 }, refSources: [] });
     const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_RESPONSE' && m.requestId === 'direct-invalid', from);
-    expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'E_INVALID_ARGS' } } });
+    expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'TOOL_INVALID_ARGS' } } });
     expect(x.entries()).toHaveLength(0); expect(JSON.stringify(response)).not.toContain('PRIVATE');
   });
   it.each(['business', 'throw', 'malformed', 'huge'])('R17 result %s preserves phase and transport health', async mode => {
@@ -320,7 +321,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     const requestId = 'read-only-probe', from = x.messages.length;
     x.physical({ type: 'VIEW_TOOL_INVOKE', requestId, appId: 'app', instanceId: x.host.appInstanceId,
       snapshotId: snapshot.id, tool, receiver: receiver(snapshot,tool),
-      rawArgs: good, effectiveArgs: good, refSources: [] });
+      observationId: 'read-only-probe', rawArgs: good, refSources: [] });
     expect(await wait(x, message => message.requestId === requestId, from)).toMatchObject({
       type: 'VIEW_TOOL_INVOKE_RESPONSE', terminal: { phase: 'not-entered', result: {
         success: false, error: { code: 'TOOL_EXECUTION_UNAVAILABLE' },

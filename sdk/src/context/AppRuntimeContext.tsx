@@ -6,12 +6,12 @@
  * Supplies app metadata and the Preact adapter's View attachments.
  */
 
-import type { AppLifecyclePort } from '@aotui/runtime/spi';
-import type { AppStatePersistence } from '@aotui/runtime/spi';
-import { createContext } from 'preact';
+import type { AppLifecyclePort } from '@aotui/core';
+import type { AppStatePersistence } from '@aotui/core';
 import { useContext, useMemo } from 'preact/hooks';
+import { sharedPreactContext } from './shared-preact-context.js';
 import type { ViewType } from '../tools/view-type-tool.js';
-import type { AppID, DesktopID, AppFrameView, AppLaunchConfig, PreparedProjection, ProjectionLimits } from '@aotui/runtime/spi';
+import type { AppID, DesktopID, AppFrameView, AppLaunchConfig, PreparedProjection, ProjectionLimits } from '@aotui/core';
 import type { createViewRefs } from '../app-factory/render-commit.js';
 
 // ═══════════════════════════════════════════════════════════════
@@ -43,7 +43,9 @@ interface AppRuntimeContextValue {
     readonly projectionLimits: ProjectionLimits;
 
     viewTypes: ReadonlyMap<string, ViewType>;
-    views: WeakMap<Element, Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings'> & Pick<ReturnType<typeof createViewRefs>, 'readRefs'>>;
+    resolveViewType: (definition: ViewType) => ViewType;
+    createViewRefs: (label: string) => ReturnType<typeof createViewRefs>;
+    views: Map<Element, Omit<AppFrameView, 'content' | 'refs'> & Pick<ReturnType<typeof createViewRefs>, 'readRefs'>>;
     prepareProjection: PrepareProjection;
     prepareOpeningProjection: PrepareOpeningProjection;
 }
@@ -69,7 +71,7 @@ interface AppRuntimePublicContextValue {
  * 
  * The Preact adapter installs the provider at the root.
  */
-export const AppRuntimeContext = createContext<AppRuntimeContextValue | null>(null);
+export const AppRuntimeContext = sharedPreactContext<AppRuntimeContextValue>('app');
 
 // ═══════════════════════════════════════════════════════════════
 //  Hook

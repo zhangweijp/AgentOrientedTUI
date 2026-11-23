@@ -19,16 +19,16 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
                 }
             };
             const workspace = createView(WorkspaceType, {
-                id: 'workspace', kind: 'state', render: () => ({ body: workspaceText(state), context: { change, options } }),
+                idPrefix: 'workspace', region: 'dynamic', render: () => ({ body: workspaceText(state), context: { change, options } }),
             });
             const other = createView(ItemType, {
-                id: otherViewId, kind: 'state', render: () => {
+                idPrefix: otherViewId, region: 'dynamic', render: () => {
                     const selected = ref('selected', false, itemRefOptions);
                     return { body: formatRef('Other item', selected), refs: [selected], context: { change } };
                 },
             });
             const selected = createView(ItemType, {
-                id: selectedViewId, kind: 'state', render: () => {
+                idPrefix: selectedViewId, region: 'dynamic', render: () => {
                     const selectedRef = ref('selected', state.value, itemRefOptions);
                     const items = arrayRef('items', state.items, listRefOptions);
                     return {

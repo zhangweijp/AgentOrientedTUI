@@ -5,7 +5,10 @@ import { expect, it, vi } from 'vitest';
 import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
 import type { ModelMessage } from 'ai';
 import { LLMConfigService } from '../src/core/llm-config-service.js';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
+import { HostDrivenSourceV2 } from '../src/adapters/host-driven-source.js';
+import { IMDrivenSource } from '../src/im/im-driven-source.js';
+import { listIMMessages } from '../src/im/message-store.js';
 import * as db from '../src/db/index.js';
 import { createHostV2Core } from '../src/server/host-v2.js';
 import { ModelRegistry } from '../src/services/model-registry.js';
@@ -21,7 +24,9 @@ it('writes and reloads ModelMessage history through the current Host while leavi
     vi.spyOn(LLMConfigService.prototype, 'resolveLLMConfig').mockResolvedValue({
         model: 'local-synthetic', provider: { id: 'openai' },
         inputBudget: async () => ({ contextWindow: 32_000, maxOutputTokens: 1_000 }),
+        modelCapabilities: { input: { pdf: true } },
     });
+    vi.spyOn(LLMClient.prototype, 'createInputMeasurement').mockResolvedValue(undefined);
     const provider = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({
         text: 'Stored answer', toolCalls: [], finishReason: 'stop',
         assistantMessage: { role: 'assistant', content: [{ type: 'reasoning', text: 'reasoned' }, { type: 'text', text: 'Stored answer' }] },
@@ -44,7 +49,7 @@ it('writes and reloads ModelMessage history through the current Host while leavi
             INSERT INTO messages VALUES ('historical-message', 'archive', 'old text');
             INSERT INTO message_parts VALUES ('historical-part', 'historical-message', 'old part');
         `);
-        const messages = new MessageServiceV2();
+        const messages = new MessageService();
         messages.addMessage('archive', { role: 'assistant', content: 'V2 archive' });
         const legacyRows = () => db.getDb().exec('SELECT * FROM messages; SELECT * FROM message_parts;');
         const archive = legacyRows();
@@ -101,5 +106,51 @@ it('writes and reloads ModelMessage history through the current Host while leavi
         vi.restoreAllMocks();
         vi.unstubAllEnvs();
         await rm(home, { recursive: true, force: true });
+    }
+});
+
+it('rejects a retired schema before changing the database file', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'host-retired-schema-'));
+    const location = join(folder, 'retired.sqlite');
+    vi.stubEnv('DB_PATH', location);
+    try {
+        const initial = await db.initDatabase();
+        initial.run('ALTER TABLE im_sessions DROP COLUMN source_controls');
+        db.persistDatabase();
+        db.closeDatabase();
+        const original = await readFile(location);
+
+        await expect(db.initDatabase()).rejects.toThrow('Use a current database or a new DB_PATH.');
+        expect(() => db.getDb()).toThrow('Database not initialized');
+        expect(await readFile(location)).toEqual(original);
+    } finally {
+        db.closeDatabase();
+        vi.unstubAllEnvs();
+        await rm(folder, { recursive: true, force: true });
+    }
+});
+
+it('fails to prepare Topic and IM history in a retired tool format without rewriting it', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'host-retired-tool-message-'));
+    const location = join(folder, 'retired-tool-message.sqlite');
+    vi.stubEnv('DB_PATH', location);
+    try {
+        const initial = await db.initDatabase();
+        db.createTopic({ id: 'topic', title: 'Topic', status: 'cold', createdAt: 1, updatedAt: 1 });
+        const content = JSON.stringify([{ type: 'tool-result', toolCallId: 'call', toolName: 'test', result: 'obsolete' }]);
+        initial.run("INSERT INTO messages_v2 (id, topic_id, role, content, timestamp) VALUES ('topic-result', 'topic', 'tool', ?, 1)", [content]);
+        initial.run("INSERT INTO im_messages (id, session_key, role, content, timestamp) VALUES ('im-result', 'im', 'tool', ?, 1)", [content]);
+        db.persistDatabase();
+        const original = await readFile(location);
+
+        const topic = new HostDrivenSourceV2(new MessageService(), 'topic');
+        const im = new IMDrivenSource({ sessionKey: 'im', loadHistory: async key => listIMMessages(key) });
+        await expect(topic.getContext()).rejects.toThrow('Stored tool message topic-result uses an unsupported format.');
+        await expect(im.getContext()).rejects.toThrow('Stored tool message im-result uses an unsupported format.');
+        expect(await readFile(location)).toEqual(original);
+    } finally {
+        db.closeDatabase();
+        vi.unstubAllEnvs();
+        await rm(folder, { recursive: true, force: true });
     }
 });

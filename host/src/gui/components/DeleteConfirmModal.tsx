@@ -1,4 +1,3 @@
-import React from 'react';
 import { Button, Card, CardBody } from "@heroui/react";
 import { IconDelete } from './Icons.js';
 

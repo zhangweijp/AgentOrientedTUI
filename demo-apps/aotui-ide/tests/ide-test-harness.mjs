@@ -15,14 +15,14 @@ async function setup() {
     if (!process.env.AOTUI_IDE_CONSUMER) {
     await fs.mkdir(path.join(modules, '@aotui'), { recursive: true });
     await fs.mkdir(path.join(modules, '@agentina'), { recursive: true });
-    for (const [source, target] of [['runtime', '@aotui/runtime'], ['sdk', '@aotui/sdk'], ['demo-apps/aotui-ide', '@agentina/aotui-ide']]) {
+    for (const [source, target] of [['core', '@aotui/core'], ['runtime', '@aotui/runtime'], ['sdk', '@aotui/sdk'], ['demo-apps/aotui-ide', '@agentina/aotui-ide']]) {
         const base = path.join(modules, target); await fs.mkdir(base);
         await fs.copyFile(path.join(repo, source, 'package.json'), path.join(base, 'package.json'));
         await fs.cp(path.join(repo, source, 'dist'), path.join(base, 'dist'), { recursive: true });
         if (source === 'demo-apps/aotui-ide') for (const asset of ['native-lsp', 'toolchain'])
             await fs.cp(path.join(repo, source, asset), path.join(base, asset), { recursive: true });
     }
-    for (const source of ['runtime', 'sdk', 'demo-apps/aotui-ide']) {
+    for (const source of ['core', 'runtime', 'sdk', 'demo-apps/aotui-ide']) {
         const deps = path.join(repo, source, 'node_modules');
         for (const name of await fs.readdir(deps)) {
             if (name.startsWith('.') || name === '@aotui' || name === '@agentina') continue;
@@ -46,8 +46,9 @@ async function setup() {
     }
     entry = pathToFileURL(await fs.realpath(ideMainPath)).href;
     const ideModule = await import(entry);
-    const { isTUIAppFactory, hasViewTypeToolAuthoringProtocol } =
-        await import(pathToFileURL(path.join(modules, '@aotui/runtime/dist/spi/index.js')).href);
+    const coreManifest = pathToFileURL(path.join(modules, '@aotui/core/package.json'));
+    const { exports: coreExports } = JSON.parse(await fs.readFile(coreManifest, 'utf8'));
+    const { isTUIAppFactory, hasViewTypeToolAuthoringProtocol } = await import(new URL(coreExports['.'].import, coreManifest).href);
     const factory = ideModule.default;
     if (!isTUIAppFactory(factory) || !hasViewTypeToolAuthoringProtocol(factory) ||
         Object.hasOwn(ideModule, 'ideEntryForRoute')) {
@@ -73,13 +74,14 @@ async function start(root, id, options = {}) {
     worker.stdout?.on('data', buffer => { logs.push(String(buffer)); if (logs.length > 30) logs.shift(); });
     worker.stderr?.on('data', buffer => { logs.push(String(buffer)); if (logs.length > 30) logs.shift(); });
     worker.on('message', message => { if (message.type !== 'SNAPSHOT_PREPARED') messages.push(message.type); });
-    const host = new Host({ appId: id, desktopId: 'test', appModulePath: entry, existingWorker: worker,
+    const appId = id.replaceAll('-', '_');
+    const host = new Host({ appId, desktopId: 'test', appModulePath: entry, existingWorker: worker,
         timeout: 45000,
         config: { projectPath: root, ideSessionKey: options.sessionKey ?? id,
             ideHistoryPath: options.historyPath ?? path.join(working, 'history', id + '.json'),
             enableDiagnosticsRead: options.slices !== false, enableWorkspaceCreate: options.slices !== false, AOTUI_DATA_DIR: data },
     });
-    const x = { id, host, worker, logs, messages, data, closed: false }; apps.push(x);
+    const x = { id: appId, host, worker, logs, messages, data, closed: false }; apps.push(x);
     await host.start(); await host.open();
     try { await eventually(() => toolNames(x).includes('multi_open_file'), id + ' ready'); }
     catch (error) { console.error('APP DEBUG', logs, host.getSemanticSnapshotReport()); throw error; }
@@ -99,7 +101,7 @@ async function invoke(x, name, args, { view = 'workspace', status = 'succeeded',
     const beforeRevision = snapshot(x).revision;
     const started = performance.now();
     try {
-        const reply = await c.invoke({ invocationId: 'ide-' + ++sequence, observationId: observed.observationId, toolId: tool.id, input: { view_id: view, ...args } });
+        const reply = await c.invoke({ invocationId: 'ide-' + ++sequence, observationId: observed.observationId, toolId: tool.id, input: { ...args, ...(tool.multiplicity === 'multiple' ? { view_id: view } : {}) } });
         assert.equal(reply.kind, 'receipt', name + ': ' + JSON.stringify(reply));
         const outcome = reply.receipt.outcome;
         facts.calls.push({ name, view, status: outcome.status, elapsedMs: performance.now() - started, outcome });

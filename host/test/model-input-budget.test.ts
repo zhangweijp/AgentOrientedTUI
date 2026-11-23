@@ -50,36 +50,47 @@ describe('Host model input budget', () => {
         }) };
         let contextWindow = 4_000;
         const inputBudget = vi.fn(() => ({ contextWindow, maxOutputTokens: 500 }));
-        const driver = setup({ model: 'resolved-model', provider: { id: 'openai' }, apiKey: 'unused', inputBudget }, [first.source, second.source, history]);
+        const sent: { max_tokens: number; messages: unknown[]; tools: unknown[] }[] = [];
+        vi.stubGlobal('fetch', async (_url: string, options: RequestInit) => {
+            sent.push(JSON.parse(String(options.body)));
+            const response = { id: 'budget-fixture', object: 'chat.completion.chunk', created: 1, model: 'resolved-model',
+                choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] };
+            return new Response('data: ' + JSON.stringify(response) + '\n\ndata: [DONE]\n\n',
+                { headers: { 'content-type': 'text/event-stream' } });
+        });
+        const onRunError = vi.fn();
+        const driver = new AgentDriverV2({ llm: { model: 'resolved-model', provider: { id: 'openai', baseURL: 'https://budget-fixture.test/v1' },
+            apiKey: 'unused', inputBudget }, sources: [first.source, second.source, history], onRunError });
+        const run = async () => { await driver.trigger(); await driver['runInFlight']; };
         try {
-            await driver.run();
-            expect(driver.onRunError).toHaveBeenCalledWith(expect.objectContaining({ code: 'MODEL_INPUT_BUDGET_EXCEEDED',
+            await run();
+            expect(onRunError).toHaveBeenCalledWith(expect.objectContaining({ code: 'MODEL_INPUT_BUDGET_EXCEEDED',
                 details: expect.objectContaining({ method: 'utf8-bytes', inputLimit: 3500, outputReserved: 500 }) }));
-            expect(driver.sent).toHaveLength(0);
+            expect(sent).toHaveLength(0);
             for (const source of [first, second]) {
                 expect(source.adopt).not.toHaveBeenCalled();
                 expect(source.release).toHaveBeenCalledOnce();
             }
             contextWindow = 24_000;
-            await driver.run();
+            await run();
             expect(inputBudget).toHaveBeenCalledWith({ providerId: 'openai', modelId: 'resolved-model' });
-            expect(driver.sent).toHaveLength(1);
-            const request = driver.sent[0]!;
-            expect(request.maxOutputTokens).toBe(500);
-            expect(JSON.stringify(request.prompt)).toContain('中文和代码');
-            expect(JSON.stringify(request.prompt)).toContain('history input');
-            expect(JSON.stringify(request.prompt)).toContain('history result');
+            expect(sent).toHaveLength(1);
+            const request = sent[0]!;
+            expect(request.max_tokens).toBe(500);
+            expect(JSON.stringify(request.messages)).toContain('中文和代码');
+            expect(JSON.stringify(request.messages)).toContain('history input');
+            expect(JSON.stringify(request.messages)).toContain('history result');
             expect(request.tools).toEqual(expect.arrayContaining(['first', 'second'].map(name => expect.objectContaining({
-                name: name + '-update', inputSchema: expect.objectContaining({
+                function: expect.objectContaining({ name: name + '-update', strict: false, parameters: expect.objectContaining({
                     properties: { choice: { type: 'string', enum: ['选择 A', '选择 B'] } },
-                }),
+                }) }),
             }))));
-            await driver.run();
-            expect(driver.sent).toHaveLength(1);
+            await run();
+            expect(sent).toHaveLength(1);
             expect(first.adopt).toHaveBeenCalledOnce();
             expect(second.adopt).toHaveBeenCalledOnce();
             expect(first.release).toHaveBeenCalledTimes(3);
-        } finally { driver.close(); }
+        } finally { driver.stop(); driver.dispose(); }
     });
 
     it('applies final tool capability filtering and refuses unknown windows without a request', async () => {

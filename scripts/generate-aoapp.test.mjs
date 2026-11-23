@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
-import { buildAoappManifest, writeAoappManifest } from './generate-aoapp.mjs';
+import { buildAoappManifest, writeAoappManifest } from '../sdk/bin/generate-aoapp.mjs';
 
 test('buildAoappManifest derives aoapp.json from the configured built entry and its metadata', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
@@ -31,8 +31,8 @@ test('buildAoappManifest derives aoapp.json from the configured built entry and 
       path.join(tempDir, 'dist/custom.js'),
       `
       export default {
-        toolAuthoringProtocol: 'view-type-tools-v6',
-        persistenceSupport: 'state-session-v1',
+        toolAuthoringProtocol: 'view-type-tools-v7',
+        persistenceSupport: 'state-session-v2',
         appLifecycleSupport: 'app-lifecycle-v2',
         initialize() {},
         kernelConfig: {
@@ -91,7 +91,7 @@ test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', asyn
     await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'incomplete-app' }));
     await writeFile(
       path.join(tempDir, 'dist/index.js'),
-      `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v6', kernelConfig: { appName: 'incomplete_app' } };`,
+      `export default { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'incomplete_app' } };`,
     );
 
     await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
@@ -102,8 +102,8 @@ test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', asyn
 
 test('buildAoappManifest rejects named and nested factories instead of resolving a fallback export', async () => {
   for (const source of [
-      `const f = { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v6', kernelConfig: { appName: 'named_app' }, initialize() {} }; export const factory = f;`,
-    `export default { factory: { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v6', kernelConfig: { appName: 'nested_app' }, initialize() {} } };`,
+      `const f = { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'named_app' }, initialize() {} }; export const factory = f;`,
+    `export default { factory: { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'nested_app' }, initialize() {} } };`,
   ]) {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
 
@@ -125,7 +125,7 @@ test('buildAoappManifest requires the canonical appName on the default factory',
     await mkdir(path.join(tempDir, 'dist'), { recursive: true });
     await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'invalid-metadata' }));
     await writeFile(path.join(tempDir, 'dist/index.js'),
-      `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v6', kernelConfig: { appName: '' }, initialize() {} };`);
+      `export default { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: '' }, initialize() {} };`);
 
     await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
   } finally {

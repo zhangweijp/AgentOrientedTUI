@@ -164,31 +164,4 @@ describe('SystemPromptDrivenSource', () => {
             expect(changed).toHaveBeenCalledTimes(1);
         });
     });
-    
-    describe('getMetadata', () => {
-        it('should return empty object when no metadata provided', () => {
-            const source = new SystemPromptDrivenSource({
-                systemPrompt: 'Test',
-            });
-            
-            const metadata = source.getMetadata();
-            expect(metadata).toEqual({});
-        });
-        
-        it('should return provided metadata', () => {
-            const source = new SystemPromptDrivenSource({
-                systemPrompt: 'Test',
-                metadata: {
-                    version: '1.0',
-                    locale: 'en-US',
-                },
-            });
-            
-            const metadata = source.getMetadata();
-            expect(metadata).toEqual({
-                version: '1.0',
-                locale: 'en-US',
-            });
-        });
-    });
 });

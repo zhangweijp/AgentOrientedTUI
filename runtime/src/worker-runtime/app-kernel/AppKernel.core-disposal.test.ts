@@ -1,4 +1,4 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { detailFrame, publishedTool } from '../../../tests/fixtures/app-frame.js';
 import { expect, it, vi } from 'vitest';
 import { AppKernel } from './AppKernel.js';
@@ -17,11 +17,10 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         const execute = async () => {
             calls++; handlerStarted.resolve(); await handlerGate.promise; return { success: true, data: 19 };
         };
-        context.defineTools([{ viewType: 'Detail', name: 'held', description: 'Held',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false } }]);
+        context.defineViewTypes([{ name: "Detail", multiplicity: 'multiple', tools: [{ name: 'held', description: 'Held', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }] }]);
         context.publishFrame(() => ({ views: [detailFrame({
             bindings: [{ name: 'held', enabled: true, execute }],
-            refs: [{ id: 'r', refType: 'Value', value: { value: 19 } }],
+            refs: [{ scope: 'protected', id: 'r', refType: 'Value', value: { value: 19 } }],
         })] }));
         return { close: unmount };
     } } } as any);
@@ -39,6 +38,6 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
     expect(owned.inspect()).toEqual({ state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
     expect(() => owned.prepareFrame([])).toThrow(expect.objectContaining({ code: 'VIEW_REGISTRY_CLOSED' }));
     expect(() => runtime.publishFrame(() => ({ views: [] }))).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
-    expect(unmount).toHaveBeenCalledTimes(1); expect(kernel.getViewRefs()).toEqual([]);
+    expect(unmount).toHaveBeenCalledTimes(1); expect(kernel.getProjectionCoordinator()['prepared']).toBeUndefined();
     expect((kernel as any).viewRegistry).toBeUndefined(); expect((kernel as any).typeTools).toBeUndefined();
 });

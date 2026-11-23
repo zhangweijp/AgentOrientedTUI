@@ -1,68 +1,109 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
-import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
-import { h } from 'preact';
+import { mountedViews } from './__tests__/projection-facts.js';
+import { h, type ComponentType } from 'preact';
+import { useState } from 'preact/hooks';
 import { act } from 'preact/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createApp, createView } from './app-factory/createApp.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
-import { View } from './components/View.js';
-const _FixtureGuide = defineViewType({ name:'Guide' });
-const _FixtureFileDetail = defineViewType({ name:'FileDetail' });
+import { defineViewType, DynamicView } from './components/View.js';
 
-import { defineViewType } from './tools/view-type-tool.js';
+const Guide = defineViewType({ name: 'Guide', multiplicity: 'single', region: 'static' });
+const Detail = defineViewType({ name: 'FileDetail', multiplicity: 'multiple' });
 
-describe('explicit View author metadata', () => {
-    it.each([
-        { id: 'detail', type: 'Detail' },
-        { id: 'detail', type: 'Detail', kind: 'other' },
-    ])('rejects invalid metadata before registering a View: %j', props => {
-        expect(() => View(props as any)).toThrow(/VIEW_METADATA_INVALID/);
+function kernelFor(factory: ReturnType<typeof createApp> | ReturnType<typeof createTUIApp>) {
+    return new AppKernel({ ...factory.kernelConfig, factory,
+        appId: createAppId('metadata'), desktopId: createDesktopId('desktop'),
+        instanceId: 'metadata_run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+    });
+}
+
+describe('explicit View metadata', () => {
+    it.each([undefined, null, 'other'])('requires a valid region for a direct View without a default (%s)', async region => {
+        const component = () => h(Detail as unknown as ComponentType<{ region: unknown }>, { region });
+        const kernel = kernelFor(createTUIApp({ app_name: 'metadata', viewTypes: [Detail], component }));
+        try {
+            await expect(kernel.onOpen()).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID', path: 'ViewType FileDetail.region' });
+        } finally { await kernel.onClose(); }
     });
 
-    it('rejects empty and non-ASCII View IDs in both authoring paths, including final line breaks', async () => {
-        for (const id of ['', 'file.a', 'file a', 'file-a', '文件', 'file"', 'file\n', 'file\r\n']) {
-            expect(() => View({ id, type: _FixtureFileDetail, kind: 'state' })).toThrow(/View.*[Ii][Dd]/);
-            const factory = createApp({ app_name: 'metadata', viewTypes:[_FixtureFileDetail], initialize({ prepareProjection }) {
-                prepareProjection({views:[createView(_FixtureFileDetail,{id,kind:'state',render:()=>({body:'File data'})})]});
+    it('rejects invalid View IDs in both authoring paths, including final line breaks and all-numeric names', async () => {
+        const ids = ['', '123', 'file.a', 'file a', 'file-a', '文件', 'file"', 'file\n', 'file\r\n'];
+        for (const id of ids) {
+            const preact = createTUIApp({ app_name: 'metadata', viewTypes: [Guide], component: () => h(Guide, { id }) });
+            const plain = createApp({ app_name: 'metadata', viewTypes: [Guide], initialize({ prepareProjection }) {
+                prepareProjection({ views: [createView(Guide, { id, render: () => ({ body: 'File data' }) })] });
             } });
-            const kernel = new AppKernel({ ...factory.kernelConfig, factory,
-                appId: createAppId('metadata'), desktopId: createDesktopId('desktop'),
-                instanceId: 'metadata-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
-            });
-            try {
-                await expect(kernel.onOpen())
-                    .rejects.toMatchObject({ code: 'SNAPSHOT_INVALID', path: '$.views' });
-            } finally { await kernel.onClose(); }
+            for (const factory of [preact, plain]) {
+                const kernel = kernelFor(factory);
+                try {
+                    await expect(kernel.onOpen()).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID' });
+                    expect(mountedViews(kernel)).toEqual([]);
+                } finally { await kernel.onClose(); }
+            }
         }
     });
 
-    it('publishes explicit metadata without interpreting descendant roles and releases mounted identity', async () => {
+    it('commits direct and wrapper Views without interpreting descendant roles and releases their mounted identities', async () => {
+        const item = h('p', { 'data-role': 'application-instruction' }, 'File data');
         const component = () => h('main', {}, [
-            h(View, { id: 'guide', type: _FixtureGuide, kind: 'instruction' }, 'Instructions'),
-            h(View, { id: 'file_1', type: _FixtureFileDetail, kind: 'state' },
-                h('p', { 'data-role': 'application-instruction' }, 'File data')),
+            h(Guide, { id: '1_guide' }, 'Instructions'),
+            h(DynamicView, { idPrefix: 'file', type: Detail }, item),
         ]);
-        const factory = createTUIApp({viewTypes:[_FixtureGuide,_FixtureFileDetail],  app_name: 'metadata', component });
-        const kernel = new AppKernel({ ...factory.kernelConfig, factory,
-            appId: createAppId('metadata'), desktopId: createDesktopId('desktop'),
-            instanceId: 'metadata-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
-        });
+        const kernel = kernelFor(createTUIApp({ app_name: 'metadata', viewTypes: [Guide, Detail], component }));
         try {
             await act(async () => kernel.onOpen());
-            const container = document.getElementById('app-root-metadata')!;
             const publication = kernel.getProjectionCoordinator().nextPublication();
-            if (!('draft' in publication)) throw Error('Expected a View projection');
-            expect(publication.draft.views.map(({ id, type, kind }) => ({ viewId: id, viewType: type, kind })))
-                .toEqual([
-                    { viewId: 'guide', viewType: 'Guide', kind: 'instruction' },
-                    { viewId: 'file_1', viewType: 'FileDetail', kind: 'state' },
-                ]);
-            expect(kernel.getViewOwnedViewInstances().map(view => view.viewType).sort()).toEqual(['FileDetail', 'Guide']);
-            expect(container.querySelector('[view]')).toBeNull();
-        } finally {
-            await act(async () => kernel.onClose());
+            if (!('draft' in publication)) throw new Error('Expected a View projection');
+            expect(publication.draft.views.map(({ id, type, region }) => ({ id, type, region }))).toEqual([
+                { id: '1_guide', type: 'Guide', region: 'static' },
+                { id: 'file_1', type: 'FileDetail', region: 'dynamic' },
+            ]);
+            expect(document.getElementById('app-root-metadata')?.querySelector('[view]')).toBeNull();
+        } finally { await act(async () => kernel.onClose()); }
+        expect(mountedViews(kernel)).toEqual([]);
+    });
+
+    it('uses one naming call per mount and preserves its identity across reordering and region changes', async () => {
+        const createId = vi.fn(({ context }: { context: { file: string } }) => 'doc_' + context.file);
+        const File = defineViewType<{ file: string }>()({ name: 'File', multiplicity: 'multiple', region: 'dynamic', createId });
+        let update!: () => void;
+        function Component() {
+            const [changed, setChanged] = useState(false);
+            update = () => setChanged(true);
+            return (changed ? ['B', 'A'] : ['A', 'B']).map(file =>
+                h(File, { key: file, context: { file }, region: changed ? 'static' : 'dynamic' }, file));
         }
-        expect(kernel.getViewOwnedViewInstances()).toEqual([]);
+        const kernel = kernelFor(createTUIApp({ app_name: 'metadata', viewTypes: [File], component: () => h(Component, {}) }));
+        const views = () => {
+            const publication = kernel.getProjectionCoordinator().nextPublication();
+            if (!('draft' in publication)) throw new Error('Expected a View projection');
+            return publication.draft.views;
+        };
+        try {
+            await act(async () => kernel.onOpen());
+            const original = new Map(views().map(view => [view.id, view.viewInstanceId]));
+            expect([...original.keys()]).toEqual(['doc_A', 'doc_B']);
+            await act(() => update());
+            expect(views().map(view => [view.id, view.viewInstanceId, view.region])).toEqual([
+                ['doc_B', original.get('doc_B'), 'static'],
+                ['doc_A', original.get('doc_A'), 'static'],
+            ]);
+            expect(createId).toHaveBeenCalledTimes(2);
+        } finally { await act(async () => kernel.onClose()); }
+    });
+
+    it('rejects two simultaneous mounts of a tool-free single ViewType', async () => {
+        const component = () => h('main', {}, [h(Guide, { id: 'one' }), h(Guide, { id: 'two' })]);
+        const kernel = kernelFor(createTUIApp({ app_name: 'metadata', viewTypes: [Guide], component }));
+        try {
+            await kernel.onOpen();
+            expect(kernel.getProjectionCoordinator().nextPublication()).toMatchObject({
+                failure: { issue: { message: expect.stringMatching(/single/i) } },
+            });
+            expect(mountedViews(kernel)).toEqual([]);
+        } finally { await kernel.onClose(); }
     });
 });

@@ -1,10 +1,10 @@
 import { performance } from 'node:perf_hooks';
-import { createSnapshotCore } from '../../core/snapshot/store.js';
-import { createAppInteraction } from '../../core/invocation/app-interaction.js';
-import { hostedObservationNamespace, previewCommittedApp } from '../../core/invocation/observation-registry.js';
-import type { ExecutionResolver, InstanceInteraction, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
-import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '../../core/snapshot/types.js';
+import { createSnapshotCore } from '@aotui/core';
+import { createAppInteraction } from '@aotui/core';
+import { hostedObservationNamespace, previewCommittedApp } from '@aotui/core/internal';
+import type { ExecutionResolver, InstanceInteraction, AppInteractionPolicy } from '@aotui/core';
+import type { ProjectionLimits, ViewWindowAccess } from '@aotui/core';
+import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '@aotui/core/internal';
 
 export interface SemanticSnapshotReport {
     readonly appId: string;
@@ -52,15 +52,24 @@ export class SemanticSnapshotReceiver {
         this.core = createSnapshotCore({ appId, instanceId, now });
     }
 
-    interaction(policy: AppInteractionPolicy, execution: ExecutionResolver, projectionLimits?: ProjectionLimits): InstanceInteraction {
+    interaction(policy: AppInteractionPolicy, execution: ExecutionResolver, projectionLimits?: ProjectionLimits,
+        windowAccess?: ViewWindowAccess): InstanceInteraction {
         if (this.interactionsClosed || this.stopped) throw new Error('App interaction is unavailable');
         return this.interactions ??= createAppInteraction(this.core.store, {
             appId: this.appId, instanceId: this.instanceId, namespace: hostedObservationNamespace(this.instanceId), now: this.now, policy, execution,
             observationLimits: projectionLimits,
+            ...(windowAccess ? { windowAccess } : {}),
         });
     }
 
     preview() { return previewCommittedApp(this.core.store, this.appId, this.instanceId); }
+
+    currentPublication() { return this.core.currentPublication(); }
+
+    currentViews() {
+        const state = this.core.store.readLatest(this.appId);
+        return (state.status === 'ready' ? state.snapshot : state.status === 'degraded' ? state.lastGood : undefined)?.views ?? [];
+    }
 
     getInteractionStats() { return this.interactions?.inspect() ?? null; }
 

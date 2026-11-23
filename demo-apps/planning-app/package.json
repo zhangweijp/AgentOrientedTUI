@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc && node ../../scripts/generate-aoapp.mjs .",
+    "build": "tsc && generate-aoapp .",
     "test": "vitest",
     "test:run": "vitest run"
   },
@@ -17,14 +17,10 @@
     "typebox": "1.4.3"
   },
   "devDependencies": {
-    "@aotui/runtime": "8.0.0",
     "@types/node": "^22.15.21",
     "@types/sql.js": "^1.4.9",
     "typescript": "7.0.2",
     "vitest": "^4.1.12"
-  },
-  "peerDependencies": {
-    "@aotui/runtime": "8.0.0"
   },
   "overrides": {
     "picomatch@4.0.3": "4.0.4",
@@ -32,7 +28,6 @@
   },
   "pnpm": {
     "overrides": {
-      "@aotui/runtime": "link:../../runtime",
       "@aotui/sdk": "link:../../sdk",
       "picomatch@4.0.3": "4.0.4",
       "rollup": "^4.60.1"

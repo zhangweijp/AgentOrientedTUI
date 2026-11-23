@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { IMDrivenSource } from '../../src/im/im-driven-source.js'
 import { IMSessionManager } from '../../src/im/im-session-manager.js'
+import { createRuntime, createDesktopId } from '@aotui/runtime'
+
+function desktopFactory() {
+  const runtime = createRuntime()
+  return vi.fn(async (sessionKey: string) =>
+    runtime.getDesktop(await runtime.createDesktop(createDesktopId(sessionKey))))
+}
 
 function createManager() {
-  const createDesktop = vi.fn(async ({ sessionKey }: { sessionKey: string }) => ({
-    id: `desktop-${sessionKey}`,
-    destroy: vi.fn(),
-  }))
+  const createDesktop = desktopFactory()
 
   const createAgentDriver = vi.fn(() => ({
     stop: vi.fn(),
@@ -50,10 +54,7 @@ describe('IMSessionManager', () => {
   })
 
   it('keeps sourceControls when createAgentDriver returns a bundle', async () => {
-    const createDesktop = vi.fn(async ({ sessionKey }: { sessionKey: string }) => ({
-      id: `desktop-${sessionKey}`,
-      destroy: vi.fn(),
-    }))
+    const createDesktop = desktopFactory()
     const persistSession = vi.fn(async () => undefined)
 
     const manager = new IMSessionManager({
@@ -171,12 +172,12 @@ describe('IMSessionManager', () => {
     )
   })
 
-  it('destroys session and calls stop/destroy hooks', async () => {
+  it('ends the session and begins close on its Desktop', async () => {
     const { manager, deletePersistedSession } = createManager()
     const session = await manager.ensureSession('agent:a:feishu:direct:u4', 'agent-a')
 
     const stopSpy = vi.spyOn(session.agentDriver, 'stop')
-    const destroySpy = vi.spyOn(session.desktop, 'destroy')
+    const destroySpy = vi.spyOn(session.desktop, 'beginClose')
 
     await manager.destroySession('agent:a:feishu:direct:u4')
 
@@ -189,6 +190,68 @@ describe('IMSessionManager', () => {
   it('noops when destroying unknown session', async () => {
     const { manager } = createManager()
     await expect(manager.destroySession('not-exist')).resolves.toBeUndefined()
+  })
+
+  it('finishes a close requested during the first save before opening the same key again', async () => {
+    const { manager, persistSession, deletePersistedSession } = createManager()
+    const key = 'agent:a:feishu:direct:provisional'
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+    persistSession.mockImplementationOnce(async () => { entered.resolve();await release.promise })
+    const opening = manager.ensureSession(key, 'agent-a')
+    const failed = expect(opening).rejects.toHaveProperty('code', 'DESKTOP_DISPOSED')
+    await entered.promise
+    expect(manager.getSession(key)).toBeUndefined()
+    const closing = manager.destroySession(key)
+    expect(manager.destroySession(key)).toBe(closing)
+    const replacement = manager.ensureSession(key, 'agent-a')
+    try {
+      await expect(manager.ensureSession('agent:a:feishu:direct:other-provisional', 'agent-a')).resolves.toBeDefined()
+      expect(deletePersistedSession).not.toHaveBeenCalled()
+      release.resolve()
+      await closing
+      await failed
+      const next = await replacement
+      expect(next.desktop.isClosing).toBe(false)
+      expect(manager.getSession(key)).toBe(next)
+      expect(deletePersistedSession).toHaveBeenCalledExactlyOnceWith(key)
+    } finally {
+      release.resolve()
+      await Promise.allSettled([failed, closing, replacement])
+      await manager.destroyAllSessions()
+    }
+  })
+
+  it('waits for the old session row writes and deletion before saving a same-key successor', async () => {
+    const { manager, persistSession, deletePersistedSession } = createManager()
+    const key = 'agent:a:feishu:direct:held-row'
+    const original = await manager.ensureSession(key, 'agent-a')
+    const enteredSave = Promise.withResolvers<void>(), finishSave = Promise.withResolvers<void>()
+    const enteredDelete = Promise.withResolvers<void>(), finishDelete = Promise.withResolvers<void>()
+    persistSession.mockImplementationOnce(async () => { enteredSave.resolve();await finishSave.promise })
+    deletePersistedSession.mockImplementationOnce(async () => { enteredDelete.resolve();await finishDelete.promise })
+    const touching = manager.ensureSession(key, 'agent-a')
+    await enteredSave.promise
+    const closing = manager.destroySession(key)
+    expect(manager.destroySession(key)).toBe(closing)
+    let ready = false
+    const successor = manager.ensureSession(key, 'agent-a').then(session => { ready = true;return session })
+    try {
+      await expect(manager.ensureSession('agent:a:feishu:direct:another', 'agent-a')).resolves.toBeDefined()
+      expect(deletePersistedSession).not.toHaveBeenCalled()
+      finishSave.resolve()
+      await enteredDelete.promise
+      expect(ready).toBe(false)
+      finishDelete.resolve()
+      await closing
+      const session = await successor
+      expect(session).not.toBe(original)
+      expect(await touching).toBe(session)
+      expect(deletePersistedSession).toHaveBeenCalledExactlyOnceWith(key)
+    } finally {
+      finishSave.resolve();finishDelete.resolve()
+      await Promise.allSettled([touching, successor, closing])
+      await manager.destroyAllSessions()
+    }
   })
 
   it('evicts oldest session when maxSessions exceeded', async () => {

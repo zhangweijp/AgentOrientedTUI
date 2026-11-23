@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { captureViewBindings } from '../../../sdk/src/tools/view-type-tool.js';
+import { captureViewBindings, captureViewTypes } from '../../../sdk/src/tools/view-type-tool.js';
 import { PlanDetailType, PlanListType } from '../src/tui/planning-tools.js';
 import type { Plan } from '../src/types.js';
 
@@ -15,7 +15,7 @@ const plan = (id: string, phaseId: string, taskId: string): Plan => ({
 });
 
 const pageTools = (type: typeof PlanListType | typeof PlanDetailType, context: object) =>
-    Object.fromEntries(captureViewBindings(type, 'plan', context).map(tool => [tool.name, tool]));
+    Object.fromEntries(captureViewBindings(captureViewTypes([type]).values().next().value!, 'plan', context).map(tool => [tool.name, tool]));
 
 describe('planning app type-level tool handlers', () => {
     it('rejects stale PlanDetail calls after the active plan changes', async () => {

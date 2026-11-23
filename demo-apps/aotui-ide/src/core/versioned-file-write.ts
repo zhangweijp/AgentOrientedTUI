@@ -7,16 +7,6 @@ import { IDEError } from './ide-errors.js';
 const MAX_BYTES = 4 * 1024 * 1024;
 const versionOf = (data: Buffer) => 'sha256:' + createHash('sha256').update(data).digest('hex');
 
-async function inWorkspace(root: string, file: string): Promise<string> {
-    const base = await fs.realpath(root);
-    const absolute = path.resolve(root, file);
-    const parent = await fs.realpath(path.dirname(absolute));
-    if (parent !== base && !parent.startsWith(base + path.sep)) {
-        throw new Error('RESOURCE_SCOPE_DENIED: file is outside the workspace');
-    }
-    return path.join(parent, path.basename(absolute));
-}
-
 async function readRegularFile(file: string, maxBytes = MAX_BYTES) {
     // O_NOFOLLOW checks the final component at open time, not only during lstat.
     const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -49,14 +39,6 @@ async function readRegularFile(file: string, maxBytes = MAX_BYTES) {
     } finally {
         try { await handle.close(); } catch { throw new IDEError('RESOURCE_CLOSE_UNCERTAIN', 'unknown'); }
     }
-}
-
-/**
- * A version is a content checksum, not an authorization token or a file lock.
- * Both write paths require the caller to name an existing trusted workspace.
- */
-export async function readVersionedFile(workspaceRoot: string, filePath: string) {
-    return readRegularFile(await inWorkspace(workspaceRoot, filePath));
 }
 
 export function inside(root: string, file: string): boolean {
@@ -104,7 +86,7 @@ export async function replaceFileIfVersion(
     filePath: string,
     expectedVersion: string,
     nextContent: string,
-    observed?: { readonly stamp: string; readonly current: () => void },
+    observed: { readonly stamp: string; readonly current: () => void },
 ): Promise<
     | { status: 'written'; version: string; cleanupWarning?: string }
     | { status: 'conflict'; currentVersion: string }
@@ -114,11 +96,9 @@ export async function replaceFileIfVersion(
     }
     const data = Buffer.from(nextContent, 'utf8');
     if (data.length > MAX_BYTES) throw new Error('RESOURCE_TOO_LARGE: new file exceeds 4 MiB');
-    const file = await inWorkspace(workspaceRoot, filePath);
-    if (observed) {
-        const current = await readObservedFile(workspaceRoot, filePath);
-        if (current.stamp !== observed.stamp) return { status: 'conflict', currentVersion: current.version };
-    }
+    const current = await readObservedFile(workspaceRoot, filePath);
+    if (current.stamp !== observed.stamp) return { status: 'conflict', currentVersion: current.version };
+    const file = current.path;
     const lockPath = file + '.aotui-lock';
     let lock: Awaited<ReturnType<typeof fs.open>>;
     try {
@@ -138,7 +118,7 @@ export async function replaceFileIfVersion(
         if (before.version !== expectedVersion) {
             return { status: 'conflict', currentVersion: before.version };
         }
-        if (observed && (await readObservedFile(workspaceRoot, filePath)).stamp !== observed.stamp)
+        if ((await readObservedFile(workspaceRoot, filePath)).stamp !== observed.stamp)
             return { status: 'conflict', currentVersion: before.version };
 
         temporary = path.join(path.dirname(file), '.' + path.basename(file) + '.aotui-' + randomUUID());
@@ -152,10 +132,7 @@ export async function replaceFileIfVersion(
 
         // Check again for best-effort detection of an uncooperative editor,
         // a swapped parent symlink, or a replacement lock inode.
-        const lockedFile = await inWorkspace(workspaceRoot, filePath);
-        if (lockedFile !== file) {
-            throw new Error('RESOURCE_SCOPE_CHANGED: workspace path changed during mutation');
-        }
+        await checkedPath(workspaceRoot, filePath);
         const lockNow = await fs.lstat(lockPath);
         if (!lockNow.isFile() || lockNow.dev !== lockOwner!.dev ||
             lockNow.ino !== lockOwner!.ino) {
@@ -166,11 +143,9 @@ export async function replaceFileIfVersion(
             now.stat.dev !== before.stat.dev || now.stat.ino !== before.stat.ino) {
             return { status: 'conflict', currentVersion: now.version };
         }
-        if (observed) {
-            if ((await readObservedFile(workspaceRoot, filePath)).stamp !== observed.stamp)
-                return { status: 'conflict', currentVersion: now.version };
-            observed.current();
-        }
+        if ((await readObservedFile(workspaceRoot, filePath)).stamp !== observed.stamp)
+            return { status: 'conflict', currentVersion: now.version };
+        observed.current();
         await fs.rename(temporary, file);
         temporary = undefined;
         written = { status: 'written', version: versionOf(data) };

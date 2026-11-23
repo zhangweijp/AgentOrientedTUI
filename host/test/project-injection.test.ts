@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createRuntime } from '@aotui/runtime';
 import { DesktopManager } from '../src/core/desktop-manager.js';
 import { LLMConfigService } from '../src/core/llm-config-service.js';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
 import { SessionManagerV3 } from '../src/core/session-manager-v3.js';
 import * as db from '../src/db/index.js';
 import { ModelRegistry } from '../src/services/model-registry.js';
@@ -22,7 +22,7 @@ it.each(['/synthetic/project', undefined])('passes the selected project path to 
     const createDesktop = vi.spyOn(desktopManager, 'createDesktop');
     const llm = new LLMConfigService(new ModelRegistry());
     vi.spyOn(llm, 'resolveLLMConfig').mockResolvedValue({ model: 'synthetic', provider: { id: 'openai' } });
-    const manager = new SessionManagerV3(kernel, desktopManager, llm, new MessageServiceV2());
+    const manager = new SessionManagerV3(kernel, desktopManager, llm, new MessageService());
     try {
         await manager.ensureSession(desktopId);
         expect(createDesktop).toHaveBeenCalledExactlyOnceWith(desktopId,

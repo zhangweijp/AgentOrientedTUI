@@ -4,7 +4,7 @@
  * Property tests for theme application consistency
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach } from 'vitest';
 import * as fc from 'fast-check';
 
 /**

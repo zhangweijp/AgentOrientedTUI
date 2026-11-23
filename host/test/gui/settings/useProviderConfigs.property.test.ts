@@ -21,7 +21,7 @@ function arbitraryProviderConfig(overrides?: Partial<ProviderConfig>): fc.Arbitr
         isActive: fc.boolean(),
         model: fc.string({ minLength: 1, maxLength: 100 }),
         temperature: fc.double({ min: 0, max: 1 }),
-        maxSteps: fc.integer({ min: 1, max: 100 }),
+
         createdAt: fc.integer({ min: 1000000000000, max: 9999999999999 }),
         updatedAt: fc.integer({ min: 1000000000000, max: 9999999999999 }),
     }).map(config => ({ ...config, ...overrides }));

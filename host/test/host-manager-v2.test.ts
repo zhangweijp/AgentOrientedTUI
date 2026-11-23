@@ -4,12 +4,12 @@ import { HostManagerV2 } from '../src/core/host-manager-v2';
 import type { ModelMessage } from 'ai';
 import type { ModelRegistry } from '../src/services/model-registry.js';
 
-// Mock MessageServiceV2
+// Mock MessageService
 const mockAddMessage = vi.fn();
 const mockGetMessages = vi.fn();
 
-vi.mock('../src/core/message-service-v2', () => ({
-    MessageServiceV2: vi.fn(function () {
+vi.mock('../src/core/message-service', () => ({
+    MessageService: vi.fn(function () {
         return {
             addMessage: mockAddMessage,
             getMessages: mockGetMessages

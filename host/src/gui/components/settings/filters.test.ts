@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { filterProviders, filterModels } from './filters.js';
 import type { ProviderConfig } from './types.js';
 import type { ModelsDevModel } from '../../../services/index.js';
-import { createMockProvider } from './test-helpers.js';
+import { createMockProvider } from './__tests__/mock-provider.js';
 
 describe('filterProviders', () => {
     const mockProviders: ProviderConfig[] = [

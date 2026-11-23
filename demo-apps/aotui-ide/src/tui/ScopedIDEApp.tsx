@@ -1,6 +1,6 @@
-import { View, ToolCatalog, useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
+import { useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
 import { IDESession, type IDEFile } from '../core/ide-session.js';
-import { RootType, WorkspaceType, FileDetailType, SearchResultType } from './ide-tool-contracts.js';
+import { RootType, WorkspaceType, FileDetailType, SearchResultType, closeFileDetail } from './ide-tool-contracts.js';
 import { WorkspaceCreateView } from './WorkspaceCreateView.js';
 import { requireIDE } from '../core/ide-errors.js';
 import { resolveIDEOptions } from '../core/app-options.js';
@@ -57,7 +57,7 @@ export function ScopedIDEApp() {
     useEffect(() => { void owner.start().catch(() => {}); }, [owner]);
 
     return <>
-        <View kind="instruction" id="root" type={RootType} name="IDE">
+        <RootType id="root" name="IDE">
             <section>
                 <h1>AOTUI IDE - Application Instruction</h1>
                 <h2>What it is</h2><p>A text-based Integrated Development Environment for LLM Agents. Work across multiple authorized folders, search source, read and edit loaded files, and inspect language information through LSP.</p>
@@ -65,7 +65,7 @@ export function ScopedIDEApp() {
                     <li>Start in Workspace. Add authorized folders and inspect each directory tree.</li>
                     <li>Locate files with search_files_by_pattern or search_files_by_content. Review matches in SearchResult.</li>
                     <li>Use multi_open_file with absolute paths to load files and open their FileDetail Views.</li>
-                    <li>Read the current FileDetail, then use its editing or language tools. Every IDE Tool takes view_id from the receiving page’s XML id. Workspace commands also accept paths when selecting files or folders.</li>
+                    <li>Read the current FileDetail, then use its editing or language tools with the page’s XML view_id. Workspace tools only take business parameters, including paths for files or folders.</li>
                     <li>Read Tool receipts and the updated Views. If a write outcome is unknown, inspect the actual file before another write. Reopen a file to refresh its loaded content after an external change.</li>
                 </ol>
                 <h2>Views</h2>
@@ -85,24 +85,24 @@ export function ScopedIDEApp() {
                     <li>LSP tools operate on the receiving file. Positions use one-based lines and characters in the complete loaded document.</li>
                     <li>close_file_detail closes its receiving FileDetail. Other open files retain their own tools.</li>
                 </ul>
-                <h3>SearchResult</h3><p>Shows the latest successful search. Use Workspace's multi_open_file to inspect matching paths. close_search_view requires the current SearchResult view_id.</p>
+                <h3>SearchResult</h3><p>Shows the latest successful search. Use Workspace's multi_open_file to inspect matching paths. Call close_search_view with an empty object.</p>
 
                 {config.enableWorkspaceCreate === true && <>
                     <h3>WorkspaceCreate</h3><p>Creates a new file relative to the workspace root shown in the receiving View. Requires an existing parent directory and never overwrites a file.</p>
 
                 </>}
                 <p>The application defines each ordinary Tool once per View Type. A Tool is callable only while the Runtime observes a matching View and the application enables it. Use the receiving View for single-file operations and explicit paths for workspace operations. File contents and query results are presented in Views.</p>
-                <ToolCatalog />
             </section>
             {!owner.ready && <p>{owner.error ? 'Initialization failed: ' + owner.error : 'Restoring the IDE session…'}</p>}
             {owner.warnings.length > 0 && <ul>{owner.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
-        </View>
-        <View kind="state" id="workspace" type={WorkspaceType} context={owner} name="Workspace"><Workspace owner={owner} /></View>
-        {[...owner.files.values()].map(file => <View kind="state" key={file.viewId} id={file.viewId} type={FileDetailType}
-            context={{ owner, file, diagnostics: config.enableDiagnosticsRead !== false }} name={'File: ' + file.observed.path}>
-            <FileDetail file={file} /></View>)}
-        {owner.search && <View kind="state" key={owner.search.incarnation} id="search" type={SearchResultType} context={{ owner, incarnation: owner.search.incarnation }} name="Search Results"><Search owner={owner} /></View>}
-        {config.enableWorkspaceCreate === true && owner.ready && owner.roots.map((root, index) => <WorkspaceCreateView key={root.path + ':' + root.identity}
-            owner={owner} viewId={'create_' + index} workspacePath={root.path} />)}
+        </RootType>
+        <WorkspaceType id="workspace" context={owner} name="Workspace"><Workspace owner={owner} /></WorkspaceType>
+        {[...owner.files.values()].map(file => <FileDetailType key={file.viewId}
+            context={{ owner, file, diagnostics: config.enableDiagnosticsRead !== false }} name={'File: ' + file.observed.path}
+            onClose={() => closeFileDetail(owner, file)}>
+            <FileDetail file={file} /></FileDetailType>)}
+        {owner.search && <SearchResultType key={owner.search.incarnation} id="search" context={{ owner, incarnation: owner.search.incarnation }} name="Search Results"><Search owner={owner} /></SearchResultType>}
+        {config.enableWorkspaceCreate === true && owner.ready && owner.roots.map(root => <WorkspaceCreateView key={root.path + ':' + root.identity}
+            owner={owner} workspacePath={root.path} />)}
     </>;
 }

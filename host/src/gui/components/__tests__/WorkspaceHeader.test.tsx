@@ -14,7 +14,7 @@ vi.mock('../Icons', () => ({
 }));
 
 describe('WorkspaceHeader Component', () => {
-    const mockTopic: Topic = { id: '1', title: 'Test Topic', createdAt: 0, updatedAt: 0, status: 'hot', summary: 'Test Summary' };
+    const mockTopic: Topic = { id: '1', title: 'Test Topic', createdAt: 0, updatedAt: 0, status: 'hot' };
 
     const defaultProps = {
         activeTopic: mockTopic,

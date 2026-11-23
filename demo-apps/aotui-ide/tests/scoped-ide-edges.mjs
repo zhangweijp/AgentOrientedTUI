@@ -386,14 +386,14 @@ try {
             assert.deepEqual(updated.workspaces[root].map(item => item.path), [active, recent]);
         } finally { assert.equal((await x.close()).ok, true); }
     });
-    await run('partial binding failure and stop during initialization cannot deadlock managed flush', async () => {
-        const root = await workspace('init'), x = await session(root, { port: port => ({ ...port, bind(key, ...args) { return key === 'activeFiles' ? { status: 'rejected', issue: { code: 'CAPACITY_EXCEEDED' } } : port.bind(key, ...args); } }) });
-        await assert.rejects(x.owner.start(), code('IDE_PERSISTENCE_UNAVAILABLE')); const closed = await x.close(); assert.equal(closed.unmount, 'completed');
+    await run('explicit read failure and stopping during startup release already admitted storage', async () => {
+        const root = await workspace('init'), x = await session(root, { port: port => ({ ...port, async load(key, ...args) { if (key === 'activeFiles') throw Object.assign(new Error('test read cap'), { code: 'CAPACITY_EXCEEDED' }); return port.load(key, ...args); } }) });
+        await assert.rejects(x.owner.start(), code('IDE_RECOVERY_FAILED')); const closed = await x.close(); assert.equal(closed.unmount, 'completed');
         const entered = gate(), release = gate(), y = await session(root, { storage: base => ({ ...base, async read(address) { entered.resolve(); await release.promise; return base.read(address); } }) });
         const starting = y.owner.start(); void starting.catch(() => {}); await entered.promise;
         assert.equal(y.owner.ready, false); assert.equal(y.owner.error, null);
         y.owner.stop(); const closing = y.managed.close(() => y.owner.close()); release.resolve(); await assert.rejects(starting, code('IDE_STOPPED'));
-        assert.equal((await closing).unmount, 'completed'); assert.equal(y.managed.getStats().pendingInitializations, 0);
+        assert.equal((await closing).unmount, 'completed'); assert.equal(y.managed.getStats().pendingRequests, 0);
     });
     await run('search zero/error/root identity/result capacity and actual regex Worker deadline', async () => {
         const root = await workspace('search'), search = new ScopedSearch(), source = await rootSource(root);

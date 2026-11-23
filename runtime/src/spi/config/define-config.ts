@@ -6,7 +6,7 @@
 
 import { WORKER_DEFAULTS } from './domains/worker.config.js';
 import { LOGGER_DEFAULTS } from './domains/logger.config.js';
-import { AOTUIError } from '../core/errors.js';
+import { AOTUIError } from '@aotui/core';
 import type { RuntimeConfig, RuntimeConfigInput } from './types.js';
 
 function isConfigRecord(value: unknown): value is Record<string, unknown> {

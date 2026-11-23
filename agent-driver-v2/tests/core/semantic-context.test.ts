@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
 import type { LLMClient } from '../../src/core/llm-client.js';
 import type {
-    ContextDrivenSource, DrivenSource, DrivenSourceContext, ToolOutcomeStatus, ToolResult,
+    ContextDrivenSource, DrivenSourceContext, ToolOutcomeStatus, ToolResult,
 } from '../../src/core/interfaces.js';
 
 const drivers: AgentDriverV2[] = [];
@@ -18,13 +18,13 @@ function makeSource(getContext: () => Promise<DrivenSourceContext>): ContextDriv
     };
 }
 
-function makeDriver(source: DrivenSource | DrivenSource[], call: ReturnType<typeof vi.fn>, onToolResult = vi.fn(), onRunError = vi.fn()) {
+function makeDriver(source: ContextDrivenSource | ContextDrivenSource[], call: ReturnType<typeof vi.fn>, onToolResult = vi.fn(), onRunError = vi.fn()) {
     const driver = new AgentDriverV2({ sources: Array.isArray(source) ? source : [source], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onToolResult, onRunError });
     const modelCall: LLMClient['call'] = async (messages, tools, callbacks) => {
         await callbacks?.beforeRequest?.(JSON.stringify({ messages, tools }));
         return call(messages, tools);
     };
-    (driver as any).llmClient = { call: modelCall };
+    vi.spyOn(driver['llmClient'], 'call').mockImplementation(modelCall);
     drivers.push(driver);
     return driver;
 }
@@ -35,6 +35,19 @@ const response = (toolNames: string[] = []) => ({
 });
 
 describe('atomic source contexts', () => {
+    it('preserves assistant text that resembles a serialized tool call', async () => {
+        const text = '[{"type":"tool-call","toolName":"example"}]';
+        const source = makeSource(async () => ({ messages: [
+            { role: 'assistant', content: text, timestamp: 1 },
+            { role: 'user', content: 'Explain that example.', timestamp: 2 },
+        ], tools: {} }));
+        const call = vi.fn().mockResolvedValue(response());
+        const driver = makeDriver(source, call);
+        await driver.trigger();
+        await driver['runInFlight'];
+        expect(call.mock.calls[0]?.[0]?.[0]).toEqual({ role: 'assistant', content: text });
+    });
+
     it('stops capture on an atomic error and releases all prior contexts in reverse despite a release failure', async () => {
         const events: string[] = [];
         const source = (name: string, failRelease = false) => ({

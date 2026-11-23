@@ -26,8 +26,8 @@ if (parentPort) {
                     instanceId: appInstanceId
                 },
                 persistence: {
-                    protocol: 'state-session-v1',
-                    version: 1,
+                    protocol: 'state-session-v2',
+                    version: 2,
                     instanceId: appInstanceId
                 }
             });

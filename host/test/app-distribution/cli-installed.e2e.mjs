@@ -26,15 +26,15 @@ try {
     await mkdir(home);
     await writeFile(join(folder, 'entry.mjs'), `
 import { createApp, createView, defineViewType } from '@aotui/sdk/app';
-const Item = defineViewType({ name: 'Item' });
+const Item = defineViewType({ name: 'Item', multiplicity: 'single', region: 'dynamic' });
 export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ prepareProjection }) {
-    const current = createView(Item, { id: 'current', kind: 'state', render: () => ({ body: 'View from the custom manifest entry' }) });
+    const current = createView(Item, { id: 'current', render: () => ({ body: 'View from the custom manifest entry' }) });
     prepareProjection({ views: [current] });
 }});
 `);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
-        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v6',
-        persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
+        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
+        persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     await runCli('install', '.');
     const first = JSON.parse(await readFile(config, 'utf8')).apps[name];
@@ -51,7 +51,8 @@ export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ 
     }
     assert.equal(await readFile(config, 'utf8'), forced);
     assert.ok((await runCli('list')).stdout.includes(name));
-    assert.match((await runCli('search', 'token')).stdout, /token.monitor/i);
+    assert.match((await runCli('search', 'planning')).stdout, /system-planning/);
+    assert.match((await runCli('search', 'token')).stdout, /No app found for "token"/);
 
     const child = spawn(cli, ['run', name], { cwd: folder, env, stdio: ['pipe', 'pipe', 'pipe'] });
     const finished = once(child, 'close');
@@ -62,7 +63,7 @@ export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ 
         await waitFor(() => output + errors, 'Runtime ready.');
         child.stdin.write('snapshot\n');
         await waitFor(() => output, 'View from the custom manifest entry');
-        assert.match(output, /<view id="current"/);
+        assert.match(output, /<view view_id="current" view_type="Item" app_id="cli_manifest" app_name="cli_manifest">/);
         child.stdin.end('exit\n');
         assert.deepEqual(await finished, [0, null]);
         assert.equal(errors, '');

@@ -1,0 +1,20 @@
+// Implementation contracts used by the matching managed Runtime.
+export * from './index.js';
+export { hasUnsupportedPersistence } from './app/app-factory.interface.js';
+export type { Issue } from './invocation/app-interaction-types.js';
+export { captureBoundedJson } from './invocation/invocation-outcome.js';
+export { DEFAULT_OBSERVATION_REGISTRY_LIMITS, DEFAULT_PROJECTION_LIMITS, hostedObservationCapacityIssue, hostedObservationNamespace, normalizeProjectionLimits, previewCommittedApp, projectCompleteViews } from './invocation/observation-registry.js';
+export { bindRequestSources, forwardRequestSource } from './invocation/request-sources.js';
+export type { IssuedAppClients } from './invocation/request-sources.js';
+export { captureStateAddress, captureStateMutationResult, captureStateReadResult, captureStateReleaseResult, captureStateValue, decodeStateRecord, failedMutation, failedRead, rejectState, requireStateLimits, stateError, stateFields, stateIssue, unknownMutation, validStateOwner } from './persistence/state-storage.js';
+export type { StateStorageBackend } from './persistence/state-storage.js';
+export { commitAppFrame } from './projection/coordinator.js';
+export { canonicalJson, copyJson, utf8Size } from './snapshot/json.js';
+export type { JsonCopyLimits } from './snapshot/json.js';
+export { RAW_TOOL_ARGUMENT_LIMITS, REF_VALUE_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ENVELOPE_LIMITS, TOOL_REQUEST_LIMITS, captureSnapshotPrepareIssue, snapshotId } from './snapshot/snapshot-support.js';
+export type { SnapshotDraftEnvelope, SnapshotHealth, SnapshotPrepareIssue, ToolInvocationDescriptor } from './snapshot/types.js';
+export { captureSnapshotDraftEnvelope } from './snapshot/validate-snapshot.js';
+export { formatRefPath, parseRefAddress, refPath, scopeAllows } from './tool/ref-parameters.js';
+export { checkRefViews, prepareViewTypeParameters, reconstructToolParameters } from './tool/snapshot-value-arguments.js';
+export { viewToolReceiver } from './tool/source-binding.js';
+export { isToolResultData } from './tool/tool-result.js';

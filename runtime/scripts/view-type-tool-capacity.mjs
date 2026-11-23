@@ -6,8 +6,8 @@ import { pathToFileURL } from 'node:url';
 
 const core = await import(process.argv[2]
     ? pathToFileURL(resolve(process.argv[2])).href
-    : new URL('../dist/core/index.js', import.meta.url).href);
-const appId = 'capacity-app';
+    : '@aotui/core');
+const appId = 'capacity_app';
 const instanceId = 'capacity-instance';
 const names = ['read_file', 'edit_file'];
 const inputSchema = { type: 'object', properties: { content: { type: 'string' } }, additionalProperties: false };
@@ -21,18 +21,19 @@ async function runCase(viewCount) {
     let handlerEntries = 0;
     try {
         const start = performance.now();
-        registry.defineTools(names.map(name => ({ name, viewType: 'File', description: name, inputSchema })));
+        registry.defineViewTypes([{ name: 'File', multiplicity: 'multiple',
+            tools: names.map(name => ({ name, description: name, inputSchema })) }]);
         const declarationMs = elapsed(start);
         const begin = performance.now();
         const frame = registry.prepareFrame(Array.from({ length: viewCount }, (_, index) => {
             const id = 'file_' + index;
-            return { id, type: 'File', owner: {}, bindings: names.map(name => ({ name, enabled: true, execute() {
+            return { createId: () => id, type: 'File', owner: {}, bindings: names.map(name => ({ name, enabled: true, execute() {
                 handlerEntries++;
                 return { success: true, data: { receiver: id } };
             } })) };
         }));
         const views = frame.instances.map(({ viewId: id, viewType: type, viewInstanceId, toolBindings }) => ({
-            id, type, viewInstanceId, toolBindings, kind: 'state', name: id,
+            id, type, viewInstanceId, toolBindings, region: 'dynamic', name: id,
             content: { format: 'markdown-v1', value: 'Open file ' + id },
         }));
         const committed = snapshotCore.committer.accept({

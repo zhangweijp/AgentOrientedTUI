@@ -7,22 +7,24 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
-import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 
 describe('Worker accepts only the managed App factory contract', () => {
     let temp: string;
     let workerScript: string;
     const root = resolve(process.cwd());
-    const lifecycleMarkers = "persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',";
-    const managedMarkers = `${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v6',`;
+    const lifecycleMarkers = "persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2',";
+    const managedMarkers = `${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v7',`;
 
     beforeAll(async () => {
         temp = await mkdtemp(join(tmpdir(), 'aotui-worker-factory-contract-'));
         const modules = join(temp, 'node_modules');
         await mkdir(modules, { recursive: true });
-        for (const name of ['linkedom', 'preact']) {
-            await symlink(join(root, 'node_modules', name), join(modules, name), 'dir');
+        for (const [owner, name] of [['../core', 'acorn'], ['../sdk', 'linkedom'], ['.', 'preact']]) {
+            await symlink(join(root, owner, 'node_modules', name), join(modules, name), 'dir');
         }
+        await mkdir(join(modules, '@aotui'), { recursive: true });
+        await symlink(resolve(root, '../core'), join(modules, '@aotui/core'), 'dir');
         workerScript = join(temp, 'worker.mjs');
         await build({
             entryPoints: [join(root, 'src/worker-runtime/index.ts')],
@@ -60,14 +62,14 @@ describe('Worker accepts only the managed App factory contract', () => {
 
     async function launch(appSource: string, workerFields: { protocol?: unknown; toolsEnabled?: unknown } = { protocol: WORKER_PROTOCOL, toolsEnabled: false }, appName?: string,
         config?: Record<string, unknown>, limitFields: { projectionLimits?: unknown } = { projectionLimits: DEFAULT_PROJECTION_LIMITS },
-        offer: 'valid' | 'missing' | 'invalid' = 'valid') {
+        offer: 'valid' | 'missing' | 'invalid' | 'old' = 'valid') {
         const appScript = join(temp, `app-${Math.random().toString(36).slice(2)}.mjs`);
         await writeFile(appScript, appSource, 'utf8');
         const worker = new Worker(workerScript);
         const appInstanceId = `instance-${Math.random().toString(36).slice(2)}`;
         worker.on('message', (message: any) => {
             if (message?.type !== 'STATE_STORAGE_REQUEST' || message.action !== 'release') return;
-            worker.postMessage({ type: 'STATE_STORAGE_RESPONSE', version: 1,
+            worker.postMessage({ type: 'STATE_STORAGE_RESPONSE', version: 2,
                 instanceId: message.instanceId, sequence: message.sequence, action: 'release',
                 result: { status: 'released' } });
         });
@@ -79,7 +81,8 @@ describe('Worker accepts only the managed App factory contract', () => {
             ...limitFields,
             ...(appName === undefined ? {} : { appName }),
             ...(config === undefined ? {} : { config }),
-            ...(offer === 'missing' ? {} : { persistence: { protocol: 'state-session-v1', version: 1,
+            ...(offer === 'missing' ? {} : { persistence: {
+                ...(offer === 'old' ? { protocol: 'state-session-v1', version: 1 } : { protocol: 'state-session-v2', version: 2 }),
                 instanceId: offer === 'invalid' ? 'other' : appInstanceId,
                 limits: DEFAULT_STATE_SESSION_LIMITS, transport: DEFAULT_STATE_TRANSPORT_LIMITS } }),
             appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: appInstanceId },
@@ -102,6 +105,7 @@ describe('Worker accepts only the managed App factory contract', () => {
     it.each([
         { fields: { toolsEnabled: false }, code: 'WORKER_PROTOCOL_UNSUPPORTED' },
         { fields: { protocol: 'app-worker/future', toolsEnabled: true }, code: 'WORKER_PROTOCOL_UNSUPPORTED' },
+        { fields: { protocol: 'app-worker/v5', toolsEnabled: true }, code: 'WORKER_PROTOCOL_UNSUPPORTED' },
         { fields: { protocol: WORKER_PROTOCOL }, code: 'APP_INIT_INVALID' },
         { fields: { protocol: WORKER_PROTOCOL, toolsEnabled: 'false' }, code: 'APP_INIT_INVALID' },
     ])('refuses malformed Worker INIT with $code before importing the App', async ({ fields, code }) => {
@@ -136,13 +140,13 @@ describe('Worker accepts only the managed App factory contract', () => {
         ['factory without kernel appName', `export default { ${managedMarkers} kernelConfig: {}, initialize() {} };`],
         ['factory with empty kernel appName', `export default { ${managedMarkers} kernelConfig: { appName: '' }, initialize() {} };`],
         ['factory with invalid kernel appName', `export default { ${managedMarkers} kernelConfig: { appName: 1 }, initialize() {} };`],
-        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v6', kernelConfig: { appName: 'wrong_persistence' }, initialize() {} };`],
-        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', toolAuthoringProtocol: 'view-type-tools-v6', kernelConfig: { appName: 'missing_lifecycle' }, initialize() {} };`],
-        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v6', kernelConfig: { appName: 'wrong_lifecycle' }, initialize() {} };`],
+        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'wrong_persistence' }, initialize() {} };`],
+        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'missing_lifecycle' }, initialize() {} };`],
+        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'wrong_lifecycle' }, initialize() {} };`],
     ])('rejects %s', async (_name, source) => {
         const { worker, init } = await launch(source);
         try {
-            expect(init).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: 'E_INIT_FAILED' } });
+            expect(init).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: _name === 'factory with wrong persistence marker' ? 'PERSISTENCE_UNAVAILABLE' : 'E_INIT_FAILED' } });
         } finally {
             await worker.terminate();
         }
@@ -151,11 +155,11 @@ describe('Worker accepts only the managed App factory contract', () => {
     it.each(['missing', 'invalid'] as const)('runs a no-storage factory with a %s offer and cleans it up without a session', async offer => {
         const { worker, init, appInstanceId } = await launch(`
             export default {
-                appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v6',
+                appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7',
                 kernelConfig: { appName: 'no_storage' },
                 initialize(context) {
                     if ('persistence' in context) throw Error('UNEXPECTED_STATE_PORT');
-                    context.defineTools([]);
+                    context.defineViewTypes([]);
                     context.publishFrame(() => ({ views: [] }));
                     return { close() {} };
                 }
@@ -173,11 +177,14 @@ describe('Worker accepts only the managed App factory contract', () => {
         } finally { await worker.terminate(); }
     });
 
-    it.each(['missing', 'invalid'] as const)('rejects an opted-in factory with a %s offer', async offer => {
+    it.each(['missing', 'invalid', 'old'] as const)('rejects an opted-in factory with a %s offer before business initialization', async offer => {
         const { worker, init } = await launch(`export default { ${managedMarkers}
-            kernelConfig: { appName: 'needs_storage' }, initialize() {} };`, undefined, undefined, undefined, undefined, offer);
+            kernelConfig: { appName: 'needs_storage' }, initialize() { throw Error('Business initialization must not run'); } };`,
+            undefined, undefined, undefined, undefined, offer);
         try {
             expect(init).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: 'PERSISTENCE_UNAVAILABLE' } });
+            const opened = await request(worker, { type: 'APP_OPEN', requestId: 'open' });
+            expect(opened).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: 'E_NOT_INITIALIZED' } });
         } finally { await worker.terminate(); }
     });
 
@@ -201,9 +208,9 @@ describe('Worker accepts only the managed App factory contract', () => {
         'passes the Host launchConfig to the managed factory as supplied (%j)', async config => {
         const { worker, init, appInstanceId } = await launch(`
             export default {
-                persistenceSupport: 'state-session-v1',
+                persistenceSupport: 'state-session-v2',
                 appLifecycleSupport: 'app-lifecycle-v2',
-                toolAuthoringProtocol: 'view-type-tools-v6',
+                toolAuthoringProtocol: 'view-type-tools-v7',
                 kernelConfig: { appName: 'managed', launchConfig: { projectPath: 'retired-default' }, projectionLimits: { maxViews: 1 } },
                 async initialize(context) {
                     if (JSON.stringify(context.launchConfig) !== ${JSON.stringify(JSON.stringify(config))}) throw new Error('WRONG_LAUNCH_CONFIG');
@@ -219,14 +226,14 @@ describe('Worker accepts only the managed App factory contract', () => {
                 type: 'INIT_RESPONSE', success: true, appInstanceId,
                 projectionLimits: DEFAULT_PROJECTION_LIMITS,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: appInstanceId },
-                persistence: { protocol: 'state-session-v1', version: 1, instanceId: appInstanceId },
+                persistence: { protocol: 'state-session-v2', version: 2, instanceId: appInstanceId },
             });
             const opened = await request(worker, { type: 'APP_OPEN', requestId: 'open' });
             expect(opened).toMatchObject({ type: 'LIFECYCLE_RESPONSE', success: true });
             const closed = await request(worker, { type: 'APP_CLOSE', requestId: 'close' });
             expect(closed).toMatchObject({
                 type: 'LIFECYCLE_RESPONSE', success: true,
-                persistence: { protocol: 'state-session-v1', instanceId: appInstanceId, ok: true,
+                persistence: { protocol: 'state-session-v2', instanceId: appInstanceId, ok: true,
                     unmount: 'completed', dispose: { status: 'disposed', release: { status: 'released' } } },
             });
         } finally {

@@ -1,6 +1,6 @@
-import { isToolResultData } from '../core/tool/tool-result.js';
-import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../core/snapshot/json.js';
-import type { JsonValue } from '../core/snapshot/types.js';
+import { isToolResultData } from '@aotui/core/internal';
+import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '@aotui/core/internal';
+import type { JsonValue } from '@aotui/core';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
 
 /** Shared hard ceiling for bounded Worker IPC JSON envelopes. */
@@ -43,8 +43,9 @@ export function invocationReceiver(value: JsonValue | undefined): boolean {
 }
 
 export function invocationToolDescriptor(value: JsonValue | undefined): boolean {
-    return invocationObject(value) && exact(value, ['id', 'name', 'viewType', 'description', 'inputSchema']) &&
+    return invocationObject(value) && exact(value, ['id', 'name', 'viewType', 'multiplicity', 'description', 'inputSchema']) &&
         ['id', 'name', 'viewType', 'description'].every(key => text(value[key])) &&
+        (value.multiplicity === 'single' || value.multiplicity === 'multiple') &&
         invocationObject(value.inputSchema) && value.inputSchema.type === 'object';
 }
 

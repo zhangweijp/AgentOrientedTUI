@@ -14,7 +14,6 @@ import { mergeWorkspaceFolders } from '../tui/workspace-folders.js';
 
 type Persistence = NonNullable<ReturnType<typeof useAppRuntimeContext>['persistence']>;
 type ProjectionPreparation = Pick<ReturnType<typeof useAppRuntimeContext>, 'prepareProjection' | 'prepareOpeningProjection'>;
-type Binding = Extract<ReturnType<Persistence['bind']>, { status: 'bound' }>['binding'];
 export interface IDEFile { viewId: string; observed: ObservedFile; offset: number; limit: number; page: string;
     diagnostics: LoadedDiagnosticsState; panels: Record<string, unknown> }
 type Root = { path: string; identity: string; creator: WorkspaceFileCreator };
@@ -40,7 +39,7 @@ export function filePage(content: string, offset = 0, limit = 2000): string {
     requireIDE(Buffer.byteLength(page) <= 256 * 1024, 'IDE_PAGE_TOO_LARGE'); return page;
 }
 
-/** Single business owner per App. SDK StateBindings remain the persistence authority. */
+/** Owns workspace choices and decides when to store them. */
 export class IDESession {
     live = true;
     ready = false;
@@ -59,7 +58,7 @@ export class IDESession {
     readonly history: IDEHistory;
     private sequence = 0;
     private searchSequence = 0;
-    private bindings = new Map<string, Binding>();
+    private submitted = new Map<typeof sessionKeys[number], string>();
     private pending = new Set<Promise<unknown>>();
     private startup?: Promise<void>;
     private completion?: Promise<void>;
@@ -83,13 +82,14 @@ export class IDESession {
             else await this.projection.prepareProjection(update);
         } catch (error) {
             if (error instanceof IDEError) throw error;
-            throw new IDEError(error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY'
-                ? 'OBSERVATION_CAPACITY' : 'IDE_PROJECTION_FAILED');
+            throw Object.defineProperty(new IDEError(error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY'
+                ? 'OBSERVATION_CAPACITY' : 'IDE_PROJECTION_FAILED'), 'cause', { value: error });
         }
     }
     private async navigate(change: () => void, revert: () => void): Promise<void> {
-        try { await this.present(change, revert); }
-        catch (error) { revert(); throw error; }
+        let revertStarted = false;
+        try { await this.present(change, () => { revertStarted = true; revert(); }); }
+        catch (error) { if (!revertStarted) revert(); throw error; }
     }
     private async openRecords(records: readonly IDEFile[], guard: () => void): Promise<void> {
         const previous = this.files, candidate = new Map(previous);
@@ -108,8 +108,11 @@ export class IDESession {
     private persist(): void {
         const values = { workspaceFolders: this.workspaceFolders(), activeFiles: [...this.files.keys()], expandedDirs: this.expanded };
         for (const key of sessionKeys) {
-            const result = this.bindings.get(key)?.update(values[key]);
-            if (result?.status !== 'accepted') this.warn('SESSION_UPDATE_FAILED');
+            const serialized = JSON.stringify(values[key]);
+            if (this.submitted.get(key) === serialized) continue;
+            this.submitted.set(key, serialized);
+            const saved = this.persistence.save(key, values[key], { storageKey: this.options.sessionKey });
+            void this.track(saved).catch(() => { this.warn('SESSION_UPDATE_FAILED'); this.publish(); });
         }
     }
     private commitWorkspace(render = true): void {
@@ -181,24 +184,18 @@ export class IDESession {
         if (this.startup) return this.startup;
         this.startup = this.track((async () => {
             this.current();
-            for (const key of sessionKeys) {
-                const result = this.persistence.bind(key, [], { hydrate: true, storageKey: this.options.sessionKey });
-                requireIDE(result.status === 'bound', 'IDE_PERSISTENCE_UNAVAILABLE'); this.bindings.set(key, result.binding);
-            }
-            const recovered = await Promise.all(sessionKeys.map(key => this.bindings.get(key)!.recovery));
-            const values = new Map<string, string[]>();
-            let blocked = false;
-            recovered.forEach((recovery, index) => {
-                const key = sessionKeys[index]!, binding = this.bindings.get(key)!;
-                try {
-                    requireIDE(recovery.status !== 'blocked', 'IDE_RECOVERY_FAILED');
-                    const value = recovery.status === 'found' ? pathList(recovery.value, key === 'workspaceFolders' ? 16 : key === 'activeFiles' ? 64 : 512) : [];
-                    values.set(key, value);
-                } catch { binding.confirmInitialization(recovery, { status: 'failed' }); blocked = true; }
-            });
-            requireIDE(!blocked, 'IDE_RECOVERY_FAILED'); this.current();
+            const recovered = await Promise.all(sessionKeys.map(key =>
+                this.persistence.load(key, { storageKey: this.options.sessionKey })))
+                .catch(() => { throw new IDEError('IDE_RECOVERY_FAILED'); });
+            this.current();
+            let values: string[][];
+            try {
+                values = recovered.map((value, index) => value === undefined ? [] : pathList(value, [16, 64, 512][index]!));
+            } catch { throw new IDEError('IDE_RECOVERY_FAILED'); }
+            const [savedFolders, savedFiles, savedExpansion] = values as [string[], string[], string[]];
+            sessionKeys.forEach((key, index) => this.submitted.set(key, JSON.stringify(values[index])));
             const projectPath = this.options.projectPath ? textPath(this.options.projectPath) : undefined;
-            const folders = [...new Set(mergeWorkspaceFolders(values.get('workspaceFolders')!, projectPath).map(textPath))];
+            const folders = [...new Set(mergeWorkspaceFolders(savedFolders, projectPath).map(textPath))];
             const roots: Root[] = [], unavailable: string[] = [];
             for (const folder of folders) {
                 try {
@@ -215,23 +212,15 @@ export class IDESession {
             requireIDE(new Set([...roots.map(root => root.path), ...unavailable]).size <= 16, 'IDE_ROOT_CAPACITY');
             this.roots = roots; this.setUnavailableRoots(unavailable);
             this.lsp.setRoots(this.roots);
-            this.expanded = recovered[2]?.status === 'missing' ? this.roots.map(root => root.path) : values.get('expandedDirs')!.filter(directory => this.roots.some(root => inside(root.path, directory)));
+            this.expanded = recovered[2] === undefined ? this.roots.map(root => root.path) :
+                savedExpansion.filter(directory => this.roots.some(root => inside(root.path, directory)));
             const restored: IDEFile[] = [];
-            for (const file of values.get('activeFiles')!) {
+            for (const file of savedFiles) {
                 this.current();
                 try { const observed = await this.observe(file, () => this.current()); restored.push(this.record(observed, 0, 2000)); }
                 catch (error: any) { this.current(); if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) throw error; this.warn('RESTORED_FILE_UNAVAILABLE'); }
             }
             this.trees = await this.readTree(this.roots, this.expanded, () => this.current()); this.current();
-            const initial = { workspaceFolders: this.workspaceFolders(), activeFiles: [], expandedDirs: this.expanded };
-            recovered.forEach((recovery, index) => {
-                const key = sessionKeys[index]!, binding = this.bindings.get(key)!;
-                // Prepare missing values before acknowledging initialization.
-                if (recovery.status === 'missing') requireIDE(binding.update(initial[key]).status === 'accepted', 'IDE_RECOVERY_FAILED');
-                const confirmed = binding.confirmInitialization(recovery, recovery.status === 'found' ? { status: 'ready', value: values.get(key)! } : { status: 'ready' });
-                const status = binding.inspect();
-                requireIDE(confirmed.status === 'accepted' && !status.issue, 'IDE_RECOVERY_FAILED');
-            });
             await this.present(() => { this.ready = true; });
             if (restored.length) {
                 const guard = this.workspaceGuard();
@@ -247,14 +236,11 @@ export class IDESession {
                     }
                 }
             }
-            this.persist();
+            if (projectPath) this.persist();
             this.publish();
         })());
         void this.startup.catch(error => {
             if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) this.cleanupFailed = true;
-            // Releasing a partial bind cancels its initialization wait before
-            // Runtime's flush. App cleanup is deliberately later than flush.
-            for (const binding of this.bindings.values()) { const status = binding.inspect(); if (status.phase !== 'released' && !status.initialized) binding.release(); }
             if (this.live) {
                 this.error = error instanceof IDEError ? error.code
                     : ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EIO', 'ELOOP'].includes(error?.code)
@@ -587,7 +573,6 @@ export class IDESession {
         this.completion = (async () => {
             const resources = await Promise.allSettled([this.lsp.close(), this.searchWorker.close(), this.history.close()]);
             await Promise.allSettled([...this.pending]);
-            for (const binding of this.bindings.values()) binding.release(); this.bindings.clear();
             if (this.cleanupFailed || resources.some(result => result.status === 'rejected')) console.error('IDE_CLOSE_FAILURE', JSON.stringify({
                 priorCleanupFailure: this.cleanupFailed,
                 resources: resources.map((result, index) => ({ resource: ['lsp', 'search', 'history'][index], status: result.status,

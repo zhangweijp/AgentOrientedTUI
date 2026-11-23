@@ -14,7 +14,7 @@ it('selects same-name lists and elements by View through SDK, Worker and Source,
     try {
         const desktop = await runtime.createDesktop('viewrefs');
         await runtime.installDynamicWorkerApp(desktop, new URL('../../sdk/test/fixtures/view-qualified-ref-app.mjs', import.meta.url).href,
-            { appId: 'refviews', config: { AOTUI_DATA_DIR: data } });
+            { name: 'refviews', config: { AOTUI_DATA_DIR: data } });
         source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktop), runtime);
         const observe = async () => {
             const context = await source!.getContext(); contexts.push(context); await context.adopt(); return context;
@@ -23,34 +23,38 @@ it('selects same-name lists and elements by View through SDK, Worker and Source,
             context.executeTool(`refviews-${name}`, { view_id: type === 'Guide' ? 'root' : 'plan_a', ...input }, 'viewrefs-' + sequence++);
         let current = await observe(); const original = current;
         const messages = current.messages.map(message => String(message.content)).join('\n');
-        expect(messages).toContain('[Design A](Phase:completed_phases[0])');
-        expect(messages).toContain('[Design B](Phase:completed_phases[0])');
-        expect(messages).toContain('[Completed phases](Phase[]:completed_phases)');
-        expect(String(current.messages[0]!.content)).toContain('plan_b.completed_phases[0]');
-        expect(String(current.messages[0]!.content)).toContain('never its `type` or display `name`');
+        expect(messages).toContain('[Design A](completed_phases[0])');
+        expect(messages).toContain('[Design B](completed_phases[0])');
+        expect(messages).toContain('[Completed phases](protected completed_phases: Phase[])');
+        expect(String(current.messages[0]!.content)).toContain('$app_id.view_id.completed[0]');
         for (const [view, owner] of [['plan_a', 'A'], ['plan_b', 'B']]) {
-            expect(await call(current, 'Phases', 'read_item', { phase: view + '.completed_phases[0]' }))
+            expect(await call(current, 'Phases', 'read_item', { phase: '$refviews.' + view + '.completed_phases[0]' }))
                 .toMatchObject({ outcomeStatus: 'succeeded', result: { owner, readonly: true } });
-            expect(await call(current, 'Phases', 'read_list', { phases: view + '.completed_phases' }))
+            expect(await call(current, 'Phases', 'read_list', { phases: '$refviews.' + view + '.completed_phases' }))
                 .toMatchObject({ outcomeStatus: 'succeeded', result: { owners: [owner], readonly: true } });
         }
-        for (const phase of ['completed_phases[0]', 'missing.completed_phases[0]', 'Phases.completed_phases[0]',
-            'plan_b.Phase:completed_phases[0]', 'plan_b.completed_phases[0].owner']) {
+        for (const phase of ['completed_phases[0]', '$refviews.plan_b.Phase:completed_phases[0]']) {
+            expect(await call(current, 'Phases', 'read_item', { phase }))
+                .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'TOOL_INVALID_ARGS' } });
+        }
+        expect(await call(current, 'Phases', 'read_item', { phase: '$refviews.plan_b.completed_phases[0].owner' }))
+            .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'REF_TYPE_MISMATCH' } });
+        for (const phase of ['$refviews.missing.completed_phases[0]', '$refviews.Phases.completed_phases[0]']) {
             expect(await call(current, 'Phases', 'read_item', { phase }))
                 .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'REF_NOT_VISIBLE' } });
         }
         expect(await call(current, 'Guide', 'update_b', {})).toMatchObject({ outcomeStatus: 'succeeded' });
         current = await observe();
-        expect(await call(original, 'Phases', 'read_item', { phase: 'plan_b.completed_phases[0]' }))
+        expect(await call(original, 'Phases', 'read_item', { phase: '$refviews.plan_b.completed_phases[0]' }))
             .toMatchObject({ outcomeStatus: 'rejected' });
-        expect(await call(current, 'Phases', 'read_item', { phase: 'plan_b.completed_phases[0]' }))
+        expect(await call(current, 'Phases', 'read_item', { phase: '$refviews.plan_b.completed_phases[0]' }))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { owner: 'B updated' } });
         expect(await call(current, 'Guide', 'close_b', {})).toMatchObject({ outcomeStatus: 'succeeded' });
         current = await observe();
         expect(current.tools['refviews-read_item']).toBeDefined();
-        expect(await call(current, 'Phases', 'read_item', { phase: 'plan_b.completed_phases[0]' }))
+        expect(await call(current, 'Phases', 'read_item', { phase: '$refviews.plan_b.completed_phases[0]' }))
             .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'REF_NOT_VISIBLE' } });
-        expect(await call(current, 'Phases', 'read_item', { phase: 'plan_a.completed_phases[0]' }))
+        expect(await call(current, 'Phases', 'read_item', { phase: '$refviews.plan_a.completed_phases[0]' }))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { owner: 'A' } });
     } finally {
         for (const context of contexts) await context.release();

@@ -1,6 +1,3 @@
-import { ToolCatalog } from '@aotui/sdk';
-import { browserViewTypes } from './BrowserTools.js';
-
 export function RootView() {
     return <section>
         <h1>Lite Browser - Application Instruction</h1>
@@ -20,9 +17,8 @@ export function RootView() {
         <h3>Page</h3><p>Shows fetched content and extracted attachments. close_page is available while this Page is open and removes its View and tools.</p>
 
         <h4>Tool Preconditions</h4><p>Use a non-empty search query, a valid URL for fetching, and a URL from the current results for open_result. Result and Page actions require their respective Views to remain open.</p>
-        <p>Available Tools is a static catalog by View Type. Only tools attached to the current context are callable; ResultList and Page tools require their Views to be open.</p>
+        <p>Open a ResultList or Page to make its tools available in the current request.</p>
         <p>Tool receipts describe each call. Read search results and page content from their current Views.</p>
-        <p>Choose the current page’s XML id as view_id in each operation.</p>
-        <ToolCatalog viewTypes={browserViewTypes} />
+        <p>Browser tools operate on their single current View. Pass the business parameters listed in each tool's schema.</p>
     </section>;
 }

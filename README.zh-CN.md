@@ -102,7 +102,7 @@ cat file.txt
 例如，在 `t1`，Runtime 可以把以下视图作为一条 User Message 加入上下文。
 
 ```xml
-<view id="file_index" type="FileDetail" kind="state" name="src/index.ts" app_id="ide_demo" app_name="system_ide">
+<view view_id="file_index" view_type="FileDetail" app_id="ide_demo" app_name="system_ide">
   path: src/index.ts
   language: typescript
   dirty: false
@@ -112,7 +112,7 @@ cat file.txt
 </view>
 ```
 
-该视图呈现当前文件状态。原生 `Tools` 另行提供当前可用的 `system_ide-edit_file` 等工具及其参数 Schema。
+该视图呈现当前文件状态。原生 `Tools` 提供当前可用的 `ide_demo-edit_file` 等工具及其参数 Schema。
 
 这也意味着，它不需要每次都暴露整份文件快照。按任务不同，一个文件视图可以按行寻址、按片段暴露、带 diff 语义，也可以天然支持 partial edits，而不是默认整文件替换。
 
@@ -167,7 +167,7 @@ cat file.txt
 先看 `View`。系统要先给 Agent 一个当前状态的 `View`：
 
 ```xml
-<view id="contacts" type="ContactList" kind="state" name="联系人列表" app_id="wechat" app_name="wechat">
+<view view_id="contacts" view_type="ContactList" app_id="wechat" app_name="wechat">
   ## 联系人
 
   - [Wills Guo](Contact:contacts[0]) — 在线
@@ -215,7 +215,7 @@ Runtime 从调用绑定的观察中解析联系人 Ref，App 打开对应会话�
 这次转移之后，runtime 再暴露一个新的当前视图：
 
 ```xml
-<view id="chat_jy" type="ChatDetail" kind="state" name="与 JY Chen 的对话" app_id="wechat" app_name="wechat">
+<view view_id="chat_jy" view_type="ChatDetail" app_id="wechat" app_name="wechat">
   ## 与 JY Chen 的对话
 
   - [当前会话](Chat:current_chat)

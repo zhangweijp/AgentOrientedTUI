@@ -1,17 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import { invokeViewTool } from './tool-invocation.js';
-import { compileToolParameters } from '../core/tool/tool-parameters.js';
-import { createViewOwnedTools } from '../core/tool/view-owned-tools.js';
-import { viewToolReceiver } from '../core/tool/source-binding.js';
+import { compileToolParameters } from '@aotui/core';
+import { createViewOwnedTools } from '@aotui/core';
+import { viewToolReceiver } from '@aotui/core/internal';
 
 function setup() {
   const compiled = compileToolParameters({ type: 'object', properties: { e: { type: 'string', enum: ['1'] } }, required: ['e'], additionalProperties: false });
   if (!compiled.ok) throw Error('Fixture');
   const registry = createViewOwnedTools('app', 'run');
   const handler = vi.fn(async (args: Readonly<Record<string, unknown>>) => ({ success: true, data: { value: args.e } }));
-  registry.defineTools([{ viewType: 'File', name: 'find', description: 'Find', inputSchema: compiled.contract.schema }]);
+  registry.defineViewTypes([{ name: "File", multiplicity: 'multiple', tools: [{ name: 'find', description: 'Find', inputSchema: compiled.contract.schema }] }]);
   const mount = () => {
-    const plan = registry.prepareFrame([{ id: 'aa', type: 'File', owner: {},
+    const plan = registry.prepareFrame([{ createId: () => 'aa', type: 'File', owner: {},
       bindings: [{ name: 'find', execute: handler, enabled: true }] }]);
     plan.accept();
     return plan;
@@ -20,8 +20,8 @@ function setup() {
   const { nameSharedAcrossViewTypes: _sharedName, ...tool } = plan.tools[0]!;
   const receiver = viewToolReceiver({ id: 'aa', toolBindings: plan.instances[0]!.toolBindings,
     viewInstanceId: plan.instances[0]!.viewInstanceId } as any, tool.id)!;
-  const message = { type: 'VIEW_TOOL_INVOKE', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 's',
-    tool, receiver, rawArgs: { e: '1' }, effectiveArgs: { e: '1' }, refSources: [] };
+  const message = { type: 'VIEW_TOOL_INVOKE', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 's', observationId: 'obs',
+    tool, receiver, rawArgs: { e: '1' }, refSources: [] };
   const context = { appId: 'app', instanceId: 'run', toolsEnabled: true,
     validateBinding: (t: any, execution: any) => registry.validateTypeToolBinding(t, execution),
     getParameterContract: (t: any, execution: any) => registry.getTypeToolContract(t, execution),

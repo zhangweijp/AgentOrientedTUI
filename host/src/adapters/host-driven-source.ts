@@ -11,8 +11,9 @@
 
 import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
 import EventEmitter from 'events';
-import type { MessageServiceV2 } from '../core/message-service-v2.js';
+import type { MessageService } from '../core/message-service.js';
 import { jsonSchema } from '@aotui/agent-driver-v2';
+import { COMPACTION_TOOL_NAME } from '../core/compaction-receipt.js';
 type SessionMessageWithTimestamp = MessageWithTimestamp & {
     region?: 'session';
 };
@@ -30,7 +31,6 @@ interface CompactionPolicyInput {
  */
 export class HostDrivenSourceV2 implements ContextDrivenSource {
     readonly name = 'Host';
-    private static readonly COMPACTION_TOOL_NAME = 'context_compact';
     private static readonly COMPACTION_TOOL_DESCRIPTION = [
         'Compact conversation context for long sessions while preserving continuity in GUI history.',
         '',
@@ -69,7 +69,7 @@ export class HostDrivenSourceV2 implements ContextDrivenSource {
     private topicId: string;
 
     constructor(
-        private messageService: MessageServiceV2,
+        private messageService: MessageService,
         topicId: string
     ) {
         this.topicId = topicId;
@@ -78,17 +78,12 @@ export class HostDrivenSourceV2 implements ContextDrivenSource {
     /** Capture messages and the compaction route for the current topic. */
     async getContext(): Promise<DrivenSourceContext> {
         const topicId = this.topicId;
-        try {
-            const messages = await this.messageService.getMessagesForLLM(topicId);
-            return {
-                messages: messages.map(message => ({ ...message, region: message.region ?? 'session' } as SessionMessageWithTimestamp)),
-                tools: this.createTools(),
-                executeTool: (name, args, id) => this.executeCompaction(topicId, name, args, id),
-            };
-        } catch (error) {
-            console.error('Failed to capture context from Host:', error);
-            return { messages: [], tools: {} };
-        }
+        const messages = await this.messageService.getMessagesForLLM(topicId);
+        return {
+            messages: messages.map(message => ({ ...message, region: message.region ?? 'session' } as SessionMessageWithTimestamp)),
+            tools: this.createTools(),
+            executeTool: (name, args, id) => this.executeCompaction(topicId, name, args, id),
+        };
     }
 
     private createTools(): DrivenSourceContext['tools'] {
@@ -128,7 +123,7 @@ export class HostDrivenSourceV2 implements ContextDrivenSource {
         };
 
         return {
-            [HostDrivenSourceV2.COMPACTION_TOOL_NAME]: compactTool,
+            [COMPACTION_TOOL_NAME]: compactTool,
         };
     }
 
@@ -138,7 +133,7 @@ export class HostDrivenSourceV2 implements ContextDrivenSource {
      * Execute the captured topic compaction after its identity guard.
      */
     private async executeCompaction(topicId: string, toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
-        if (toolName !== HostDrivenSourceV2.COMPACTION_TOOL_NAME) {
+        if (toolName !== COMPACTION_TOOL_NAME) {
             return undefined;
         }
         if (this.topicId !== topicId) {
@@ -203,24 +198,6 @@ export class HostDrivenSourceV2 implements ContextDrivenSource {
         };
     }
 
-    public getCompactionToolName(): string {
-        return HostDrivenSourceV2.COMPACTION_TOOL_NAME;
-    }
-
-    public runHardFallbackCompaction(reason?: string): {
-        compacted: boolean;
-        syntheticMessages: MessageWithTimestamp[];
-        summary: string;
-        compactedMessageCount: number;
-        cleanedToolResultCount: number;
-    };
-    public runHardFallbackCompaction(reason: string | undefined, options: Pick<CompactionPolicyInput, 'minMessages' | 'keepRecentMessages'>): {
-        compacted: boolean;
-        syntheticMessages: MessageWithTimestamp[];
-        summary: string;
-        compactedMessageCount: number;
-        cleanedToolResultCount: number;
-    };
     public runHardFallbackCompaction(reason?: string, options?: Pick<CompactionPolicyInput, 'minMessages' | 'keepRecentMessages'>): {
         compacted: boolean;
         syntheticMessages: MessageWithTimestamp[];
@@ -307,9 +284,6 @@ export class HostDrivenSourceV2 implements ContextDrivenSource {
         };
     }
 
-    public markToolCompactionAnchor(messageId: string, summary?: string): void {
-        this.messageService.markCompactionAnchor(this.topicId, messageId, summary);
-    }
 
     /**
      * 订阅更新事件

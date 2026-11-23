@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DesktopLogger, type LogEntry } from './desktop-logger.js';
-import type { DesktopID } from '../../spi/index.js';
+import type { DesktopID } from '@aotui/core';
 
 describe('DesktopLogger', () => {
     let logger: DesktopLogger;

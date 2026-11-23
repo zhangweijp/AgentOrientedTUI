@@ -1,7 +1,7 @@
 import Type from 'typebox';
-import { compileToolParameters, modelToolSchema, SnapshotDataError } from '@aotui/runtime/core';
-import type { JsonValue } from '@aotui/runtime/core';
-import { VIEW_TYPE_TOOL_PROTOCOL, type AppFrameBinding, type ToolResult } from '@aotui/runtime/spi';
+import { compileToolParameters, isInstanceName, modelToolSchema, SnapshotDataError, type ViewMultiplicity, type ViewRegion } from '@aotui/core';
+import type { JsonValue } from '@aotui/core';
+import { VIEW_TYPE_TOOL_PROTOCOL, type AppFrameBinding, type AppFrameView, type ToolResult } from '@aotui/core';
 import { exportTypeBoxSchema, schemaDeclarationError, TypeBoxSchemaExportError } from './typebox-schema.js';
 
 export type JsonSchemaObject = Readonly<Record<string, JsonValue>>;
@@ -18,9 +18,9 @@ type ToolDeclaration = {
 };
 type ToolDeclarations = Readonly<Record<string, ToolDeclaration>>;
 // An omitted schema leaves an unknown entry during inference without widening the other tools.
-type ToolSchemas = Readonly<Record<string, unknown>>;
+export type ToolSchemas = Readonly<Record<string, unknown>>;
 type ContextInvocation<Input, Context> = { readonly input: Input; readonly context: Context };
-type ContextToolDeclarations<Context, Schemas extends ToolSchemas> = {
+export type ContextToolDeclarations<Context, Schemas extends ToolSchemas> = {
     readonly [Key in keyof Schemas]: {
         readonly description: string;
         readonly inputSchema?: Schemas[Key] & ObjectSchema;
@@ -28,7 +28,7 @@ type ContextToolDeclarations<Context, Schemas extends ToolSchemas> = {
         readonly enabled?: (context: Context) => boolean;
     };
 };
-type ContextToolMetadata<Schemas extends ToolSchemas> = {
+export type ContextToolMetadata<Schemas extends ToolSchemas> = {
     readonly [Key in keyof Schemas]: { readonly description: string; readonly inputSchema: InputSchema<Schemas[Key]> };
 };
 declare const schemaType: unique symbol;
@@ -40,13 +40,17 @@ type ToolDefinition<Schema extends ObjectSchema> = {
 };
 
 /** Shared immutable metadata. The schema witness is used only for author types. */
-export interface ViewType<Tools extends ToolDeclarations = ToolDeclarations> {
+export interface ViewType<Tools extends ToolDeclarations = ToolDeclarations, Multiplicity extends ViewMultiplicity = ViewMultiplicity,
+    Region extends ViewRegion | undefined = ViewRegion | undefined> {
     readonly name: string;
+    readonly multiplicity: Multiplicity;
+    readonly region: Region;
     readonly tools: { readonly [Key in keyof Tools]: ToolDefinition<InputSchema<Tools[Key]['inputSchema']>> };
 }
 
 /** A ViewType whose instances supply their own context for the declared tools. */
-export interface ContextualViewType<Tools extends ToolDeclarations, Context extends object> extends ViewType<Tools> {
+export interface ContextualViewType<Tools extends ToolDeclarations, Context extends object, Multiplicity extends ViewMultiplicity = ViewMultiplicity,
+    Region extends ViewRegion | undefined = ViewRegion | undefined> extends ViewType<Tools, Multiplicity, Region> {
     readonly [contextType]: Context;
 }
 
@@ -61,19 +65,14 @@ export type ViewContextProps<Definition extends ViewType> = Definition extends {
     ? { readonly context: Context }
     : { readonly context?: never };
 
-export interface ToolCatalogEntry {
-    readonly viewType: string;
-    readonly name: string;
-    readonly description: string;
-    readonly inputSchema: JsonSchemaObject;
-}
-
 const viewTypeWitness = Symbol.for('@aotui/sdk/view-type');
 const contextToolsWitness = Symbol.for('@aotui/sdk/view-type/context-tools');
-const descriptorSymbols = [viewTypeWitness, contextToolsWitness];
+const createIdWitness = Symbol.for('@aotui/sdk/view-type/create-id');
+export const preactViewDefinition = Symbol.for('@aotui/sdk/preact-view-definition');
+const descriptorSymbols = [viewTypeWitness, contextToolsWitness, createIdWitness];
 const definedTypes = new WeakMap<object, ViewType>();
-const emptyTypeFields = new Set(['name']);
-const typeFields = new Set(['name', 'tools']);
+const typeFields = new Set(['name', 'multiplicity', 'region', 'tools']);
+const authorTypeFields = new Set([...typeFields, 'createId']);
 const toolFields = new Set(['description', 'inputSchema']);
 const bindingFields = new Set(['execute', 'enabled']);
 const contextToolFields = new Set([...toolFields, ...bindingFields]);
@@ -111,12 +110,31 @@ export function refParam<Schema extends Type.TSchema>(refType: string, valueSche
     }));
 }
 
+export type ViewTypeDeclaration<M extends ViewMultiplicity, R extends ViewRegion | undefined, C> = {
+    readonly name: string;
+    readonly multiplicity: M;
+    readonly region?: R;
+    readonly createId?: M extends 'multiple' ? (input: { prefix: string; sequence: number; context: C }) => string : never;
+};
+
+export type ViewNamingProps<Definition extends ViewType> = Definition['multiplicity'] extends 'single'
+    ? { readonly id?: string; readonly idPrefix?: never }
+    : Definition['multiplicity'] extends 'multiple'
+        ? { readonly idPrefix?: string; readonly id?: never }
+        : { readonly id?: string; readonly idPrefix?: string };
+export type ViewRegionProps<Definition extends ViewType> = Definition['region'] extends ViewRegion
+    ? { readonly region?: ViewRegion }
+    : { readonly region: ViewRegion };
+
 /** Declare tools that receive the context of the View that committed their binding. */
-export function defineViewType<Context extends object>(): <const Schemas extends ToolSchemas>(
-    declaration: { readonly name: string; readonly tools: ContextToolDeclarations<Context, Schemas> },
-) => ContextualViewType<ContextToolMetadata<Schemas>, Context>;
+export function defineViewType<Context extends object>(): <const M extends ViewMultiplicity,
+    const Schemas extends ToolSchemas, const R extends ViewRegion | undefined = undefined>(
+    declaration: ViewTypeDeclaration<M, R, Context> & { readonly tools?: ContextToolDeclarations<Context, Schemas> },
+) => ContextualViewType<ContextToolMetadata<Schemas>, Context, M, R>;
 /** Declare a ViewType without tools. */
-export function defineViewType(declaration: { readonly name: string; readonly tools?: never }): ViewType<{}>;
+export function defineViewType<const M extends ViewMultiplicity, const R extends ViewRegion | undefined = undefined>(
+    declaration: ViewTypeDeclaration<M, R, undefined> & { readonly tools?: never },
+): ViewType<{}, M, R>;
 export function defineViewType(declaration?: unknown): unknown {
     return arguments.length === 0 ? (input: unknown) => captureType(input, 'context') : captureType(declaration, 'empty');
 }
@@ -125,19 +143,29 @@ function captureType(declaration: unknown, source: 'empty' | 'context' | 'descri
     const code = 'TOOL_DEFINITION_INVALID';
     const fromTypeBox = source !== 'descriptor';
     const fields = dataProperties(declaration, 'ViewType', code,
-        source === 'empty' ? emptyTypeFields : typeFields, fromTypeBox ? undefined : descriptorSymbols);
+        fromTypeBox ? authorTypeFields : typeFields, fromTypeBox ? undefined : descriptorSymbols);
     const name = fields.get('name');
-    if (typeof name !== 'string' || !name.trim()) fail(code, 'ViewType.name must be a non-empty string');
+    const multiplicity = fields.get('multiplicity'), region = fields.get('region');
+    if (!isInstanceName(name)) fail(code, 'ViewType.name must use ASCII letters, digits or underscores and contain a nondigit', 'ViewType.name');
+    if (multiplicity !== 'single' && multiplicity !== 'multiple') fail(code, 'ViewType.multiplicity must be single or multiple', name + '.multiplicity');
+    if (region !== undefined && region !== 'static' && region !== 'dynamic') fail(code, 'ViewType.region must be static or dynamic', name + '.region');
+    const createIdStamp = fromTypeBox ? undefined : Object.getOwnPropertyDescriptor(declaration, createIdWitness);
+    if (createIdStamp && (createIdStamp.enumerable || !('value' in createIdStamp))) fail(code, name + ' has invalid createId');
+    const createId = fromTypeBox ? fields.get('createId') : createIdStamp?.value;
+    if (createId !== undefined && (multiplicity !== 'multiple' || typeof createId !== 'function' ||
+        Object.getPrototypeOf(createId) === Object.getPrototypeOf(async function () {})))
+        fail(code, name + '.createId must be a synchronous function on a multiple ViewType', name + '.createId');
     const contextStamp = fromTypeBox ? undefined : Object.getOwnPropertyDescriptor(declaration, contextToolsWitness);
     if (contextStamp && (contextStamp.enumerable || !('value' in contextStamp)))
         fail(code, name + ' has invalid context tools');
     const imported = contextStamp && dataProperties(contextStamp.value, name + ' context tools', code);
     const contextTools: Record<string, ContextTool> | undefined = source === 'context' || imported ? Object.create(null) : undefined;
     const tools = Object.create(null);
-    const declared = source === 'empty' ? undefined : dataProperties(fields.get('tools'), 'ViewType.tools', code);
-    if (source === 'descriptor' && (imported?.size ?? 0) !== declared!.size)
+    if (source === 'empty' && fields.has('tools')) fail(code, 'Use defineViewType<Context>() to declare tools', name + '.tools');
+    const declared = fields.has('tools') ? dataProperties(fields.get('tools'), 'ViewType.tools', code) : new Map<string, unknown>();
+    if (source === 'descriptor' && (imported?.size ?? 0) !== declared.size)
         fail(code, name + ' has mismatched context tools');
-    for (const [key, input] of declared ?? []) {
+    for (const [key, input] of declared) {
         const label = name + '.' + key;
         const tool = dataProperties(input, label, code, source === 'context' ? contextToolFields : toolFields);
         const description = tool.get('description');
@@ -161,7 +189,7 @@ function captureType(declaration: unknown, source: 'empty' | 'context' | 'descri
         const compiled = compileToolParameters(fromTypeBox ? exportTypeBoxSchema(schema) : schema);
         if (!compiled.ok) throw schemaDeclarationError(compiled.issue);
         try {
-            modelToolSchema(compiled.contract.schema, name);
+            modelToolSchema(compiled.contract.schema, name, multiplicity);
         } catch (error) {
             if (error instanceof SnapshotDataError && error.code === 'TOOL_SCHEMA_CAPACITY')
                 throw new TypeBoxSchemaExportError(error.code, error.path, error.message);
@@ -169,16 +197,24 @@ function captureType(declaration: unknown, source: 'empty' | 'context' | 'descri
         }
         tools[key] = Object.freeze({ description, inputSchema: compiled.contract.schema });
     }
-    const result = { name, tools: Object.freeze(tools) };
+    const result: ViewType = { name, region, multiplicity, tools: Object.freeze(tools) };
     Object.defineProperty(result, viewTypeWitness, { value: VIEW_TYPE_TOOL_PROTOCOL });
     // Same-version SDK copies can re-capture this local behavior alongside the static metadata.
     if (contextTools) Object.defineProperty(result, contextToolsWitness, { value: Object.freeze(contextTools) });
+    if (createId) Object.defineProperty(result, createIdWitness, { value: createId });
     const type = Object.freeze(result);
     definedTypes.set(type, type);
     return type;
 }
 
 function readViewType(type: ViewType): ViewType {
+    if (typeof type === 'function') {
+        const definition = Object.getOwnPropertyDescriptor(type, preactViewDefinition);
+        if (!definition || definition.enumerable || !('value' in definition) ||
+            typeof definition.value !== 'object' || definition.value === null)
+            fail('VIEW_TYPE_INVALID', 'Use an SDK ViewType or its declared component');
+        type = definition.value;
+    }
     const own = type && definedTypes.get(type);
     if (own) return own;
     // An App can import a descriptor produced by another copy of this SDK.
@@ -207,26 +243,35 @@ export function requireViewType(types: ReadonlyMap<string, ViewType>, input: Vie
     return type;
 }
 
-export function toolDefinitions(types: ReadonlyMap<string, ViewType>) {
-    return [...types.values()].flatMap(({ name: viewType, tools }) =>
-        Object.entries(tools).map(([name, { description, inputSchema }]) => ({ viewType, name, description, inputSchema })));
+export function viewTypeDefinitions(types: ReadonlyMap<string, ViewType>) {
+    return [...types.values()].map(({ name, multiplicity, tools }) => ({
+        name, multiplicity, tools: Object.entries(tools).map(([name, { description, inputSchema }]) => ({ name, description, inputSchema })),
+    }));
 }
 
-/** Static catalog. Dynamic receiver choices are added only to tools in a model request. */
-export function getToolCatalog(viewTypes: readonly ViewType[]): readonly ToolCatalogEntry[] {
-    return Object.freeze(toolDefinitions(captureViewTypes(viewTypes))
-        .sort((a, b) => a.viewType === b.viewType ? compare(a.name, b.name) : compare(a.viewType, b.viewType))
-        .map(tool => Object.freeze({ ...tool, inputSchema: modelToolSchema(tool.inputSchema, tool.viewType) })));
-}
-
-function compare(a: string, b: string): number {
-    return a < b ? -1 : a > b ? 1 : 0;
+export function captureViewPlacement(type: ViewType, options: {
+    id?: string | undefined; idPrefix?: string | undefined; region?: ViewRegion | undefined; name?: string | undefined;
+}, context?: unknown):
+    Pick<AppFrameView, 'id' | 'idPrefix' | 'createId' | 'region' | 'name'> {
+    const { id, idPrefix, name } = options;
+    const region = options.region === undefined ? type.region : options.region;
+    const path = 'ViewType ' + type.name;
+    if (region !== 'static' && region !== 'dynamic') fail('SNAPSHOT_INVALID', 'Set View region to static or dynamic', path + '.region');
+    if (id !== undefined && (type.multiplicity !== 'single' || !isInstanceName(id)))
+        fail('SNAPSHOT_INVALID', 'Only a single ViewType accepts an explicit valid id', path + '.id');
+    if (idPrefix !== undefined && (type.multiplicity !== 'multiple' || !isInstanceName(idPrefix)))
+        fail('SNAPSHOT_INVALID', 'Only a multiple ViewType accepts a valid idPrefix', path + '.idPrefix');
+    const createId = Object.getOwnPropertyDescriptor(type, createIdWitness)?.value as
+        ((input: { prefix: string; sequence: number; context: unknown }) => string) | undefined;
+    return { region, ...(id === undefined ? {} : { id }), ...(idPrefix === undefined ? {} : { idPrefix }),
+        ...(name === undefined ? {} : { name }),
+        ...(createId ? { createId: (prefix, sequence) => createId({ prefix, sequence, context }) } : {}) };
 }
 
 export function captureViewBindings(type: ViewType, id: string, context?: unknown): readonly AppFrameBinding[] {
     const code = 'TOOL_BINDING_INVALID';
     const contextTools: Record<string, ContextTool> | undefined = Object.getOwnPropertyDescriptor(type, contextToolsWitness)?.value;
-    if (!contextTools) return [];
+    if (!contextTools || Object.keys(contextTools).length === 0) return [];
     if ((typeof context !== 'object' || context === null) && typeof context !== 'function')
         fail(code, 'Supply the instance context object for this ViewType', 'View ' + id + '.context');
     return Object.entries(contextTools).map(([name, { execute, enabled }]) => {

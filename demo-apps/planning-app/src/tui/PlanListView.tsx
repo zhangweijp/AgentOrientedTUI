@@ -9,13 +9,13 @@ type PlanListViewProps = {
 const isPlanCompleted = (plan: Plan) => plan.phases.length > 0 && plan.phases.every(phase => phase.status === 'completed');
 
 function ActivePlan({ plan }: { plan: Plan }) {
-    const planRef = useDataRef('active_plan', plan, { refType: 'Plan' });
+    const planRef = useDataRef('active_plan', plan, { scope: 'private', refType: 'Plan' });
     return <><h2>Active Plan</h2><p>{planRef(plan.title)}</p></>;
 }
 
 export function PlanListView({ plans, activePlan }: PlanListViewProps) {
     const unfinishedPlans = plans.filter(plan => !isPlanCompleted(plan));
-    const [, unfinishedPlanRef] = useArrayRef('unfinished_plans', unfinishedPlans, { itemType: 'Plan' });
+    const [, unfinishedPlanRef] = useArrayRef('unfinished_plans', unfinishedPlans, { scope: 'private', itemType: 'Plan' });
 
     return (
         <>

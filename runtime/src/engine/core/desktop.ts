@@ -1,9 +1,10 @@
-import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import type { StateStorageBackend } from '../app/state-storage-host.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
-import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
-import { createDesktopId } from '../../spi/index.js';
-import { AOTUIError } from '../../spi/core/errors.js';
+import type { AppLaunchConfig, DesktopID, AppID } from '@aotui/core';
+import type { UpdateSignal } from '../../spi/core/signals.js';
+import type { IDesktop, AppDiscoveryInfo, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/runtime/kernel.interface.js';
+import { createDesktopId } from '../../spi/core/id-factory.js';
+import { AOTUIError } from '@aotui/core';
 import { SignalBus, type SignalListener } from './signal-bus.js';
 import type { AppManagerCloseHandle, AppManagerCloseReport, DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
@@ -11,8 +12,11 @@ import { DesktopLogger, type LogEntry } from './desktop-logger.js';
 import { AppManager } from '../app/manager.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { appInstallFields, captureOptions } from '../app/interaction-config.js';
+import type { AppInteractionPolicy, RequestSourceSelection } from '@aotui/core';
+import type { ViewWindowTarget } from '../../spi/runtime/windows.js';
+import { bindRequestSources, type IssuedAppClients } from '@aotui/core/internal';
+import { appInstallFields, appInteractionFields, captureOptions } from '../app/interaction-config.js';
+import { readAppManifest } from '../app/manifest.js';
 
 
 /**
@@ -23,6 +27,7 @@ import { appInstallFields, captureOptions } from '../app/interaction-config.js';
 export interface DesktopOptions {
     workerCapacity?: WorkerCapacity;
     storageBackend?: StateStorageBackend;
+    onResourcesReleased?: (desktop: Desktop) => void;
     /** 使用外部 SignalBus (默认创建内部实例) */
     signalBus?: SignalBus;
     /** 使用外部 DesktopLogger (默认创建内部实例) */
@@ -33,18 +38,17 @@ export interface DesktopOptions {
     runtimeConfig?: RuntimeConfig;
 
     // [RFC-026] Runtime Context Injection
-    context?: IRuntimeContext;
 }
 
 export class Desktop implements IDesktop {
     public readonly id: DesktopID;
 
     // [RFC-026] Runtime Context
-    public readonly context?: IRuntimeContext;
 
     private _disposed = false;
     private _isDraining = false;  // [RFC-014] Draining 状态标志
     private closeHandle?: DesktopCloseHandle;
+    private onResourcesReleased?: (desktop: Desktop) => void;
     private closePromise?: Promise<void>;
     private drainPromise?: Promise<void>;
     private appClose?: AppManagerCloseHandle;
@@ -63,13 +67,14 @@ export class Desktop implements IDesktop {
 
     // Use injected AppManager or create internal instance
     private appManager: AppManager;
+    private readonly issuedAppClients: IssuedAppClients = new WeakMap();
 
     private config: RuntimeConfig;
 
     constructor(id?: DesktopID, options?: DesktopOptions) {
         this.id = id ?? createDesktopId();
         this.config = options?.runtimeConfig ?? RUNTIME_DEFAULTS;
-        this.context = options?.context;
+        this.onResourcesReleased = options?.onResourcesReleased;
 
         // Desktop is Headless (No Mirror DOM)
 
@@ -82,9 +87,6 @@ export class Desktop implements IDesktop {
         this.appManager = options?.appManager || new AppManager(this, { workerCapacity: options?.workerCapacity, runtimeConfig: this.config, storageBackend: options?.storageBackend });
 
         this.logSystem('Desktop initialized.');
-        if (this.context) {
-            this.logSystem(`Context injected: ${JSON.stringify(Object.keys(this.context.env))}`);
-        }
     }
 
     get isClosing(): boolean { return this._isDraining || this._disposed; }
@@ -109,16 +111,11 @@ export class Desktop implements IDesktop {
 
     private assertActive(): void { if (this._isDraining || this._disposed) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: this.id }); }
 
-    broadcastLLMUsage(event: LLMUsageEvent): void {
-        this.assertActive();
-        this.appManager.broadcastLLMUsage(event);
-    }
-
     // --- System Commands (App) ---
 
-    async openApp(appId: AppID): Promise<void> {
+    async openApp(installationId: string): Promise<AppID> {
         this.assertActive();
-        return this.appManager.openApp(appId);
+        return this.appManager.openApp(installationId);
     }
 
     async closeApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
@@ -136,20 +133,40 @@ export class Desktop implements IDesktop {
             ...result,
         };
 
-        this.logSystem(`Reinitialized desktop apps: ${desktopResult.reinitializedAppIds.length} restarted, ${desktopResult.skippedAppIds.length} skipped, ${desktopResult.failedAppIds.length} failed.`);
+        this.logSystem(`Reinitialized desktop apps: ${desktopResult.reinitializedAppIds.length} restarted, ${desktopResult.skippedInstallationIds.length} skipped, ${desktopResult.failedAppIds.length} failed.`);
         this.emitSignal('manual_refresh');
 
         return desktopResult;
     }
 
-    async collapseApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
+    getAppWindows(appId: AppID, expectedInstanceId: string) {
         this.assertActive();
-        return this.appManager.collapseApp(appId, expectedInstanceId);
+        return this.appManager.getAppWindows(appId, expectedInstanceId);
     }
 
-    async showApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
+    async collapseApp(appId: AppID, expectedInstanceId?: string, note?: string): Promise<void> {
         this.assertActive();
-        return this.appManager.showApp(appId, expectedInstanceId);
+        return this.appManager.collapseApp(appId, expectedInstanceId, note);
+    }
+
+    async expandApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
+        this.assertActive();
+        return this.appManager.expandApp(appId, expectedInstanceId);
+    }
+
+    async collapseView(target: ViewWindowTarget, note = ''): Promise<void> {
+        this.assertActive();
+        return this.appManager.setViewWindow(target, note);
+    }
+
+    async expandView(target: ViewWindowTarget): Promise<void> {
+        this.assertActive();
+        return this.appManager.setViewWindow(target, undefined);
+    }
+
+    async closeView(target: ViewWindowTarget) {
+        this.assertActive();
+        return this.appManager.closeView(target);
     }
 
     // --- Core Methods ---
@@ -162,7 +179,7 @@ export class Desktop implements IDesktop {
     async installDynamicWorkerApp(
         appModulePath: string,
         options?: AppInteractionOptions & {
-            appId?: string;
+            installationId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */
             description?: string;
@@ -170,35 +187,21 @@ export class Desktop implements IDesktop {
             whatItIs?: string;
             /** 什么时候用 */
             whenToUse?: string;
-            config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
+            config?: AppLaunchConfig;
 
         }
     ): Promise<string> {
         options = captureOptions(options, appInstallFields);
         this.assertActive();
-        // [RFC-026] Merge Runtime Context into AppLaunchConfig
-        // Priority: App Specific Config > Runtime Context
-        // Note: We inject env vars from context into config.env if not present
-        let mergedConfig = options?.config;
-        if (this.context?.env) {
-            mergedConfig = mergedConfig || {};
-            // Inject all env vars from context
-            for (const [key, value] of Object.entries(this.context.env)) {
-                if (mergedConfig[key] === undefined) {
-                    mergedConfig[key] = value;
-                }
-            }
-        }
-
         return this.appManager.install(
             appModulePath,
             {
-                appId: options?.appId as any,
+                installationId: options?.installationId,
                 name: options?.name,
                 description: options?.description,  // [RFC-013]
                 whatItIs: options?.whatItIs,
                 whenToUse: options?.whenToUse,
-                config: mergedConfig, // [RFC-026] Injected Config
+                config: { ...options?.config },
                 runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
                 toolsEnabled: options?.toolsEnabled,
                 projectionLimits: options?.projectionLimits,
@@ -206,33 +209,26 @@ export class Desktop implements IDesktop {
         );
     }
 
-    /**
-     * [RFC-014] 注册待启动 App (懒加载)
-     */
-    async registerPendingApp(options: AppInteractionOptions & {
-        appId?: string;
-        name?: string;
-        description?: string;
-        whatItIs?: string;
-        whenToUse?: string;
-        modulePath: string;
-        config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
-    }): Promise<string> {
-        const captured = captureOptions(options, { ...appInstallFields, modulePath: 'string' });
-        if (!captured?.modulePath) throw new AOTUIError('CONFIG_INVALID', { path: 'options.modulePath', reason: 'Provide the App module path' });
-        options = captured;
+    /** Discover and register a local package without starting a Worker. */
+    async registerPendingApp(options: Parameters<IDesktop['registerPendingApp']>[0]): Promise<string> {
+        const captured = captureOptions(options, { ...appInteractionFields, installationId: 'string', localPath: 'string', config: 'object' });
+        if (!captured?.installationId || captured.installationId.trim() !== captured.installationId)
+            throw new AOTUIError('CONFIG_INVALID', { path: 'options.installationId', reason: 'Provide a stable installation key' });
+        if (!captured.localPath?.trim()) throw new AOTUIError('CONFIG_INVALID', { path: 'options.localPath', reason: 'Provide the local App path' });
         this.assertActive();
+        const config = { ...captured.config };
+        const { metadata, modulePath } = await readAppManifest(captured.localPath);
         return this.appManager.registerPendingApp({
-            appId: options.appId as any,
-            name: options.name,
-            description: options.description,
-            whatItIs: options.whatItIs,
-            whenToUse: options.whenToUse,
-            modulePath: options.modulePath,
-            config: { ...this.context?.env, ...options.config },
+            installationId: captured.installationId,
+            name: metadata.app_name,
+            description: metadata.description,
+            whatItIs: metadata.whatItIs,
+            whenToUse: metadata.whenToUse,
+            modulePath,
+            config,
             runtimeConfig: this.config,
-            toolsEnabled: options.toolsEnabled,
-            projectionLimits: options.projectionLimits,
+            toolsEnabled: captured.toolsEnabled,
+            projectionLimits: captured.projectionLimits,
         });
     }
     // --- Lifecycle Methods ---
@@ -252,9 +248,15 @@ export class Desktop implements IDesktop {
         if (!current()) return appInteractionUnavailable();
         const result = create.call(manager, appId, expectedInstanceId, policy);
         if (!current()) return appInteractionUnavailable();
+        if (result.status === 'ready') this.issuedAppClients.set(result.interaction,
+            () => current() && manager.isRunningApp(appId, expectedInstanceId));
         return result;
     }
 
+    bindRequestSources(input: RequestSourceSelection) {
+        this.assertActive();
+        return bindRequestSources(input, this.issuedAppClients);
+    }
     /**
      * Get System Logs (for <desktop> area)
      */
@@ -309,6 +311,17 @@ export class Desktop implements IDesktop {
         return freezeClose({ ...snapshotClose(state), scope: 'desktop' as const, intent: this.closeIntent, desktopId: displayCloseId(this.id), found: true });
     }
 
+    private completeClose(): DesktopCloseReport {
+        this.closeState.state = 'settled';
+        const report = this.report();
+        if (report.resourcesReleased) {
+            const notify = this.onResourcesReleased;
+            this.onResourcesReleased = undefined;
+            notify?.(this);
+        }
+        return report;
+    }
+
     beginClose(options?: DesktopCloseOptions): DesktopCloseHandle {
         const timeout = closeTimeout(options), intent = options?.intent ?? 'close', callback = options?.beforeClose;
         if (intent !== 'close' && intent !== 'delete' || callback !== undefined && typeof callback !== 'function') throw closeError('CLOSE_OPTIONS_INVALID');
@@ -316,11 +329,11 @@ export class Desktop implements IDesktop {
             if (this.closeIntent === 'close' && intent === 'delete' || callback && callback !== this.selectedBeforeClose?.deref()) throw closeError('LIFECYCLE_CONFLICT');
             if (this.closeState.state === 'settled' && this.appReport?.resources.retainedStorageOwners) {
                 this.closeState.state = 'closing';
+                this.closePromise = undefined;
                 const retry = Promise.resolve().then(async () => {
                     try { this.appReport = await this.appManager.retryResourceRelease(); }
                     catch { addCloseFailure(this.closeState, 'persistence', ['RESOURCE_RELEASE_FAILED'], { desktopId: this.id }); }
-                    this.closeState.state = 'settled';
-                    return this.report();
+                    return this.completeClose();
                 });
                 this.closeHandle = createCloseHandle(() => this.report(), retry);
             }
@@ -370,7 +383,10 @@ export class Desktop implements IDesktop {
                     catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id }); }
                 })()
             ];
-            await Promise.allSettled(cleanups);this._disposed = true;this.closeState.state = 'settled';clearEligibility();complete(this.report());
+            await Promise.allSettled(cleanups);
+            this._disposed = true;
+            clearEligibility();
+            complete(this.completeClose());
         })();
         return this.closeHandle;
     }
@@ -379,7 +395,10 @@ export class Desktop implements IDesktop {
         try { const handle = this.beginClose({ intent: 'delete' });return this.closePromise ??= closeVoid(handle.completion, 'DESKTOP_CLOSE_FAILED'); }
         catch (error) { return Promise.reject(error); }
     }
-    dispose(): Promise<void> { return this.closePromise ??= closeVoid(this.beginClose().completion, 'DESKTOP_CLOSE_FAILED'); }
+    dispose(): Promise<void> {
+        try { const handle = this.beginClose();return this.closePromise ??= closeVoid(handle.completion, 'DESKTOP_CLOSE_FAILED'); }
+        catch (error) { return Promise.reject(error); }
+    }
 
     // --- Internals ---
 

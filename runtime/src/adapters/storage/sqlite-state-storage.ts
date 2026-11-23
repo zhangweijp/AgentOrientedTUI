@@ -4,8 +4,8 @@ import { Worker } from 'node:worker_threads';
 import {
     captureStateAddress, captureStateMutationResult, captureStateReadResult, captureStateReleaseResult,
     failedMutation, failedRead, rejectState, requireStateLimits, stateFields, stateIssue, unknownMutation, validStateOwner,
-} from '../../core/persistence/state-storage.js';
-import type { StateAddress, StateIssue, StateIssueCode, StateReleaseResult, StateStorage, StateStorageBackend } from '../../core/persistence/state-storage.js';
+} from '@aotui/core/internal';
+import type { StateAddress, StateIssue, StateIssueCode, StateReleaseResult, StateStorage, StateStorageBackend } from '@aotui/core/internal';
 
 export interface SqliteStateStorageLimits {
     readonly maxActiveOwners: number;
