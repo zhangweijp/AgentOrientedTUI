@@ -20,7 +20,7 @@ async function fixture(persistent = true) {
     const body = `import { h } from 'preact';import Type from 'typebox';import { createTUIApp, useAppLifecycle, useAppRuntimeContext, useState, defineViewType, StaticView } from ${JSON.stringify(url(path.join(repo, 'sdk/dist/index.js')))};
 let setter, port, value, draft;
 const noArgs = Type.Object({}, {additionalProperties:false});
-const RootType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root', tools: {
+const RootType = defineViewType()({ multiplicity: 'multiple', name: 'Root', tools: {
   set: {
     description: 'Set persisted value', inputSchema: Type.Object({ value: Type.Number() }, { additionalProperties: false }),
     async execute({ input }) { draft = input.value; setter(draft); return { success: true }; },
@@ -63,7 +63,7 @@ const host = (f: Awaited<ReturnType<typeof fixture>>, extra: object = {}) => {
     config: { AOTUI_DATA_DIR: f.data, AOTUI_APP_KEY: 'test' }, ...extra });
 };
 const invokeTool = async (h: AppWorkerHost, op: string, args = {}, timeoutMs?: number) => {
-    const result = await invokeObservedTool(h, op, args, 'root', timeoutMs);
+    const result = await invokeObservedTool(h, op, args, 'root_1', timeoutMs);
     if (result?.kind === 'receipt' && result.receipt.outcome.status === 'succeeded') return result.receipt.outcome.value;
     throw new Error(result?.kind === 'receipt' ? result.receipt.outcome.status : result?.code ?? 'Tool invocation failed');
 };
@@ -75,7 +75,7 @@ function facts(name: string, value: object) {
 it('B02/B06/B17/B19 fresh Workers restore state across two independent managed rounds', async () => {
     const f = await fixture();const first = host(f);let second: AppWorkerHost | undefined;
     try {
-        await first.start();await first.open();expect(first.getPersistenceReport().support).toBe('managed');
+        await first.start();await first.open();expect(first.getPersistenceReport()).toBeDefined();
         expect((await invokeTool(first, 'set', { value: 1 })).success).toBe(true);
         const firstWorker = (first as any).worker as Worker;
         const close = first.close();expect(first.close()).toBe(close);await close;
@@ -87,15 +87,15 @@ it('B02/B06/B17/B19 fresh Workers restore state across two independent managed r
         expect((await invokeTool(second, 'set', { value: 2 })).success).toBe(true);await second.close();
         expect(JSON.parse(f.read()!).value).toBe(2);
         expect(secondWorker.threadId).toBe(-1);
-        expect(first.appInstanceId).not.toBe(second.appInstanceId);expect(second.getPersistenceReport()).toMatchObject({ support: 'managed', unsafe: false, actualIO: 0, ownerRetained: false, release: { status: 'released' }, lifecycle: { ok: true } });
+        expect(first.appInstanceId).not.toBe(second.appInstanceId);expect(second.getPersistenceReport()).toMatchObject({ unsafe: false, actualIO: 0, ownerRetained: false, release: { status: 'released' }, lifecycle: { ok: true } });
         await facts('two-rounds', { fixture: f.body, first: first.getPersistenceReport(), second: second.getPersistenceReport(), freshWorker: true, value: 2 });
     } finally { await stop(first);if (second) await stop(second);await rm(f.root, { recursive: true, force: true }); }
 }, 30000);
-it.each([false, true])('starts, reinitializes and closes with zero storage I/O (persistence: %s)', async persistent => {
+it.each([false, true])('starts and closes with zero storage I/O (persistence: %s)', async persistent => {
     const f = await fixture(persistent);let opens = 0;
     const h = host(f, { persistenceBackend: { async open() { opens++;throw Error('storage must not open'); } } });
     try {
-        await h.start();await h.open();await h.reinitialize('Test a new projection without storing it');await h.close();
+        await h.start();await h.open();await h.close();
         expect((await h.waitForResourceRelease()).worker).toBe('exited');expect(opens).toBe(0);
         await facts(persistent ? 'enabled-unused' : 'disabled', { opens, report: h.getPersistenceReport() });
     }
@@ -110,7 +110,7 @@ it('B17/B18 a closed Host rejects ordinary business before dispatch after physic
         await h.close();sent = 0;
         await expect(invokeTool(h, 'inspect')).rejects.toThrow('APP_INTERACTION_UNAVAILABLE');
         expect(sent).toBe(0);physical.postMessage = post;
-        expect(h.getPersistenceReport()).toMatchObject({ support: 'managed', lifecycle: { ok: true }, actualIO: 0, ownerRetained: false });
+        expect(h.getPersistenceReport()).toMatchObject({ lifecycle: { ok: true }, actualIO: 0, ownerRetained: false });
         expect(physical.threadId).toBe(-1);
         await facts('closed-business-admission', { report: h.getPersistenceReport(), businessRejectedBeforeDispatch: true });
     } finally { await stop(h);await rm(f.root, { recursive: true, force: true }); }

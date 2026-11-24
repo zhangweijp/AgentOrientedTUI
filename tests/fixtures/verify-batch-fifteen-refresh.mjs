@@ -32,13 +32,13 @@ async function install(name, dependencies, overrides = {}) {
 const sdk = packages(['sdk', 'core']);
 const author = await install('author', { ...sdk, typebox: '1.4.3', preact: '10.29.1', typescript: '7.0.2', '@types/node': '24.19.2' });
 await assert.rejects(readFile(join(author, 'node_modules/@aotui/runtime/package.json')), { code: 'ENOENT' });
-async function authorApp(name, source, jsx) {
+async function authorApp(name, source, jsx, appName) {
     const cwd = join(author, name);
     await mkdir(cwd);
     const deps = { '@aotui/sdk': manifest.packages.sdk.version, typebox: '1.4.3', ...(jsx ? { preact: '10.29.1' } : {}) };
     const entry = 'dist/' + source.replace(/\.tsx?$/, '.js');
     await writeFile(join(cwd, 'package.json'), JSON.stringify({
-        name, type: 'module', version: '0.1.0', main: './' + entry, files: ['dist', 'aoapp.json'], dependencies: deps,
+        name, type: 'module', version: '0.1.0', main: './' + entry, aotui: { app_name: appName }, files: ['dist', 'aoapp.json'], dependencies: deps,
     }));
     await copyFile(join(repository, 'sdk/tests/fixtures', source), join(cwd, source));
     command(cwd, join(author, 'node_modules/.bin/tsc'), ['--strict', '--exactOptionalPropertyTypes', '--skipLibCheck', 'false',
@@ -49,8 +49,8 @@ async function authorApp(name, source, jsx) {
     const tar = join(output, pack.filename);
     return { name, entry, tar, sha256: await sha(tar), entrySha256: await sha(join(cwd, entry)) };
 }
-const files = await authorApp('aotui-refresh-files', 'batch-fifteen-files.ts', false);
-const todo = await authorApp('aotui-todo-prepare', 'batch-twelve-todo.tsx', true);
+const files = await authorApp('aotui-refresh-files', 'batch-fifteen-files.ts', false, 'refresh_files');
+const todo = await authorApp('aotui-todo-prepare', 'batch-twelve-todo.tsx', true, 'tasks');
 const apps = { [files.name]: 'file:' + files.tar, [todo.name]: 'file:' + todo.tar };
 const publicHost = await install('independent', { ...sdk, ...packages(['runtime', 'agent-driver-v2', 'agent-driver-adapter']), ...apps }, sdk);
 const topicApps = await install('topic-apps', apps, sdk);

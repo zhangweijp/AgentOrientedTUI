@@ -21,7 +21,7 @@ const browserPackage = join(repo, 'demo-apps/lite-browser-app');
 const file = join(project, 'a.ts');
 const greet = 'export function greet(name: string): string {\n  return `A-v2 你好 <A> & ${name}`;\n}\n';
 type Schema = { type?: string; required?: string[]; items?: Schema; properties?: Record<string, Schema>; anyOf?: Schema[];
-    pattern?: string; additionalProperties?: boolean };
+    description?: string; additionalProperties?: boolean };
 type Request = { model: string; messages: Array<{ role: string; content: string }>; tools?: { function: { name: string; description: string; parameters: Schema } }[] };
 const requests: Request[] = [];
 const errors: string[] = [];
@@ -76,7 +76,7 @@ class FixtureLLMConfig extends LLMConfigService {
     override async resolveLLMConfig() { return llm; }
     override withModelInputBudget(config: LLMConfig) { return config; }
 }
-const manager = new SessionManagerV3(runtime, installation, new FixtureLLMConfig(new ModelRegistry()), new MessageService());
+const manager = new SessionManagerV3(installation, new FixtureLLMConfig(new ModelRegistry()), new MessageService());
 const topicId = 'semantic-app-acceptance';
 manager.on('message', ({ type, message }) => {
     if (type === 'assistant' && typeof message?.content === 'string' && message.content !== 'Captured test request.') {
@@ -142,7 +142,7 @@ try {
     assert.equal(session.sources.aotui.constructor.name, 'SemanticAOTUIDrivenSource');
     const source = session.sources.aotui;
     const installed = (installationId: string) => {
-        const app = session.desktop.getInstalledApps().find(app => app.installationId === installationId);
+        const app = session.desktop.listApps().find(app => app.installationId === installationId);
         assert.ok(app, `${installationId} is installed`);
         return app;
     };
@@ -298,7 +298,7 @@ try {
     const planAddress = (current: DrivenSourceContext, name: string) => {
         const detail = views(current, planAppId).find(page => page.type === 'PlanDetail');
         assert.ok(detail);
-        return `$${detail.appId}.${detail.id}.${name}`;
+        return `$ref.${detail.appId}.${detail.id}.${name}`;
     };
     const planningFacts: Record<string, unknown> = cases.planning = {};
     const unchanged = await waitFor(async () => database().catch(error => {
@@ -311,7 +311,7 @@ try {
         assert.ok(!createSchema.required?.includes('view_id'));
         const phases = createSchema.properties?.phases;
         const phase = literal(literal(phases, 'array').items, 'object');
-        assert.equal(literal(phases, 'string').pattern, '^[$][^$]');
+        assert.match(literal(phases, 'string').description ?? '', /\$ref\.app_id\.view_id\.ref_id/);
         planningFacts.createSchema = phases;
         assert.deepEqual(phase.required, ['title']);
         assert.equal(phase.properties?.description?.type, 'string');
@@ -448,10 +448,10 @@ try {
     throw error;
 } finally {
     manager.stopCleanupTask();
-    const shutdown = await runtime.beginShutdown().completion;
+    const shutdown = await runtime.beginClose().completion;
     facts.shutdown = shutdown;
     await manager.shutdownSession(topicId);
-    await desktopManager.getKernel().beginShutdown().completion;
+    await desktopManager.getKernel().beginClose().completion;
     db.closeDatabase();
     if (reportPath) await writeFile(resolve(reportPath), JSON.stringify(facts, null, 2) + '\n');
     globalThis.fetch = previousFetch;

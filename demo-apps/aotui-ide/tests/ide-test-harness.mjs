@@ -10,7 +10,7 @@ const facts = { profile: 'scoped-ide-view-type-parameters-v1', startedAt: new Da
 const working = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-full-ide-')));
 const consumer = process.env.AOTUI_IDE_CONSUMER ?? path.join(working, 'consumer'), modules = path.join(consumer, 'node_modules');
 const apps = [];
-let Host, entry, sequence = 0;
+let Host, createTurnCoordinator, entry, sequence = 0;
 async function setup() {
     if (!process.env.AOTUI_IDE_CONSUMER) {
     await fs.mkdir(path.join(modules, '@aotui'), { recursive: true });
@@ -49,6 +49,7 @@ async function setup() {
     const coreManifest = pathToFileURL(path.join(modules, '@aotui/core/package.json'));
     const { exports: coreExports } = JSON.parse(await fs.readFile(coreManifest, 'utf8'));
     const { isTUIAppFactory, hasViewTypeToolAuthoringProtocol } = await import(new URL(coreExports['.'].import, coreManifest).href);
+    ({ createTurnCoordinator } = await import(new URL(coreExports['./host'].import, coreManifest).href));
     const factory = ideModule.default;
     if (!isTUIAppFactory(factory) || !hasViewTypeToolAuthoringProtocol(factory) ||
         Object.hasOwn(ideModule, 'ideEntryForRoute')) {
@@ -58,10 +59,17 @@ async function setup() {
 async function eventually(read, label, ms = 15000) {
     const end = Date.now() + ms;
     while (true) {
-        const value = read(); if (value) return value;
+        const value = await read(); if (value) return value;
         if (Date.now() >= end) throw Error('Barrier expired: ' + label);
         await new Promise(resolve => setTimeout(resolve, 20));
     }
+}
+function eventuallyProjected(x, read, label) {
+    const client = scope(x);
+    return eventually(async () => {
+        await client.preview();
+        return read();
+    }, label);
 }
 const snapshot = x => x.host.snapshotReceiver?.core.store.readLatest(x.id)?.snapshot;
 const toolNames = x => Object.values(snapshot(x)?.tools ?? {}).map(tool => tool.name);
@@ -81,36 +89,52 @@ async function start(root, id, options = {}) {
             ideHistoryPath: options.historyPath ?? path.join(working, 'history', id + '.json'),
             enableDiagnosticsRead: options.slices !== false, enableWorkspaceCreate: options.slices !== false, AOTUI_DATA_DIR: data },
     });
-    const x = { id: appId, host, worker, logs, messages, data, closed: false }; apps.push(x);
+    const x = { id: appId, host, worker, logs, messages, data, turns: createTurnCoordinator(), closed: false }; apps.push(x);
     await host.start(); await host.open();
-    try { await eventually(() => toolNames(x).includes('multi_open_file'), id + ' ready'); }
+    try { await eventuallyProjected(x, () => toolNames(x).includes('multi_open_file'), id + ' ready'); }
     catch (error) { console.error('APP DEBUG', logs, host.getSemanticSnapshotReport()); throw error; }
     return x;
 }
 function scope(x) {
     const opened = x.host.getAppInteraction();
     assert.equal(opened.status, 'ready', JSON.stringify(opened));
-    return opened.interaction;
+    const client = opened.interaction;
+    return {
+        preview: client.preview,
+        prepare: () => x.turns.prepareObservation(client, () => x.host.getAppInteraction().status === 'ready'),
+        adopt(candidate) {
+            const result = x.turns.adoptTurn({ apps: [{ candidate }] });
+            if (result.status !== 'adopted') {
+                candidate.discard();
+                throw Error(JSON.stringify(result.issue));
+            }
+            return result.turn;
+        },
+    };
 }
-async function invoke(x, name, args, { view = 'workspace', status = 'succeeded', changes = true, observation, client } = {}) {
-    const owned = !client, c = client ?? scope(x);
-    const observed = observation ?? (await c.observe({ all: true })).observation;
-    assert.ok(observed, 'Observation exists for ' + name);
-    if (!observation) assert.equal(c.adoptObservation(observed.observationId).status, 'adopted');
-    const tool = observed.tools.find(tool => tool.name === name); assert.ok(tool, 'Tool exists: ' + name);
-    const beforeRevision = snapshot(x).revision;
-    const started = performance.now();
+async function invoke(x, name, args, { view = 'workspace', status = 'succeeded', changes = true, observation, turn } = {}) {
+    const ownsTurn = !turn;
+    if (ownsTurn) {
+        const client = scope(x), prepared = await client.prepare();
+        assert.equal(prepared.status, 'prepared', JSON.stringify(prepared.issue));
+        observation = prepared.candidate.observation;
+        turn = client.adopt(prepared.candidate);
+    }
     try {
-        const reply = await c.invoke({ invocationId: 'ide-' + ++sequence, observationId: observed.observationId, toolId: tool.id, input: { ...args, ...(tool.multiplicity === 'multiple' ? { view_id: view } : {}) } });
+        const tool = observation.tools.find(tool => tool.name === name); assert.ok(tool, 'Tool exists: ' + name);
+        const beforeRevision = snapshot(x).revision, started = performance.now();
+        const reply = await turn.invoke(x.id, { invocationId: 'ide-' + ++sequence, observationId: observation.observationId, toolId: tool.id,
+            ...(tool.multiplicity === 'multiple' ? { viewId: view } : {}), input: args });
         assert.equal(reply.kind, 'receipt', name + ': ' + JSON.stringify(reply));
         const outcome = reply.receipt.outcome;
         facts.calls.push({ name, view, status: outcome.status, elapsedMs: performance.now() - started, outcome });
         assert.equal(outcome.status, status, name + ': ' + JSON.stringify(outcome));
         // Callers disable this for tool calls whose displayed state is unchanged.
         // A Tool receipt completes its handler; rendering may publish afterwards.
-        if (changes && status === 'succeeded') await eventually(() => snapshot(x).revision > beforeRevision, name + ' published snapshot');
+        if (changes && status === 'succeeded')
+            await eventuallyProjected(x, () => snapshot(x).revision > beforeRevision, name + ' published snapshot');
         return outcome;
-    } finally { if (owned) c.releaseObservation(observed.observationId); }
+    } finally { if (ownsTurn) turn.release(); }
 }
 async function close(x) {
     await x.host.close();
@@ -124,4 +148,4 @@ async function close(x) {
 }
 async function runCase(name, run) { const started = performance.now(); await run(); facts.cases.push({ name, elapsedMs: performance.now() - started, passed: true }); console.log('PASS', name); }
 await setup();
-export { repo, factsFile, facts, working, consumer, modules, apps, start, scope, snapshot, toolNames, viewText, fileView, invoke, close, eventually, runCase };
+export { repo, factsFile, facts, working, consumer, modules, apps, start, scope, snapshot, toolNames, viewText, fileView, invoke, close, eventuallyProjected, runCase };

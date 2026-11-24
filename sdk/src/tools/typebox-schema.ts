@@ -18,6 +18,7 @@ export type TypeBoxSchemaExportErrorCode =
 export class TypeBoxSchemaExportError extends Error {
     readonly code: TypeBoxSchemaExportErrorCode;
     readonly path: string;
+    declare readonly reason: string;
 
     constructor(code: TypeBoxSchemaExportErrorCode, path: string, detail: string) {
         const boundedPath = path.length <= MAX_DIAGNOSTIC_PATH ? path : `…${path.slice(-(MAX_DIAGNOSTIC_PATH - 1))}`;
@@ -201,8 +202,8 @@ function copyArray(input: unknown[], position: Position, path: string, depth: nu
 function copyObject(input: object, position: Position, path: string, depth: number, budget: Budget): Readonly<Record<string, unknown>> {
     const descriptors = Object.getOwnPropertyDescriptors(input);
     const refSchema = position === 'schema' && descriptors['x-aotui-ref-value'] !== undefined;
-    const refWitness = refSchema && descriptors.type?.value === 'string' &&
-        descriptors['~unsafe']?.value === null && descriptors['~unsafe']?.enumerable === false;
+    const refUnsafe = descriptors['~unsafe']?.value === null && descriptors['~unsafe']?.enumerable === false;
+    const refWitness = refSchema && typeof descriptors['x-aotui-ref-kind']?.value === 'string' && refUnsafe;
     const keys = Reflect.ownKeys(descriptors);
     if (keys.some(key => typeof key === 'symbol')) fail('TOOL_SCHEMA_INVALID', path, 'Symbol properties are not supported');
 
@@ -224,7 +225,7 @@ function copyObject(input: object, position: Position, path: string, depth: numb
                     fail('TOOL_SCHEMA_INVALID', fieldPath, 'Malformed TypeBox metadata');
                 continue;
             }
-            if (key === '~unsafe' && descriptor.value === null && refWitness && IsUnsafe(input)) continue;
+            if (key === '~unsafe' && descriptor.value === null && refSchema && refUnsafe && IsUnsafe(input)) continue;
             if (key.startsWith('~')) fail('TOOL_SCHEMA_UNSUPPORTED', fieldPath, 'TypeBox metadata has runtime semantics and cannot be exported');
             fail('TOOL_SCHEMA_INVALID', fieldPath, 'Hidden properties are not supported');
         }
@@ -294,21 +295,34 @@ function copyObject(input: object, position: Position, path: string, depth: numb
     return Object.freeze(output);
 }
 
-/** Export a fresh deeply frozen JSON Schema node. */
-export function exportTypeBoxValueSchema(schema: unknown): Readonly<Record<string, JsonValue>> {
+function exportRootValue(schema: unknown, rootClosedDefault: boolean): Readonly<Record<string, JsonValue>> {
     const budget: Budget = { nodes: 0, bytes: 0, active: new WeakSet() };
     const exported = copyValue(schema, 'schema', '$', 0, budget);
     if (!exported || typeof exported !== 'object' || Array.isArray(exported)) {
         fail('TOOL_SCHEMA_INVALID', '$', 'Expected a TypeBox Schema object');
     }
+    if (rootClosedDefault) {
+        const record = exported as Record<string, JsonValue>;
+        if (record.type !== 'object' || !record.properties || typeof record.properties !== 'object' ||
+            Array.isArray(record.properties)) {
+            fail('TOOL_SCHEMA_INVALID', '$', 'Tool inputSchema must be an object Schema with a properties map');
+        }
+        if (!Object.hasOwn(record, 'additionalProperties')) {
+            const keyPath = propertyPath('$', 'additionalProperties');
+            addNode(budget, 1, keyPath);
+            // Accounts for leading comma separator, colon, and literal false alongside the key string.
+            addBytes(budget, encodedStringBytes('additionalProperties', budget, keyPath) + 7, keyPath);
+            return Object.freeze({ ...record, additionalProperties: false });
+        }
+    }
     return exported as Readonly<Record<string, JsonValue>>;
 }
 
+/** Export a fresh deeply frozen JSON Schema node. */
+export function exportTypeBoxValueSchema(schema: unknown): Readonly<Record<string, JsonValue>> {
+    return exportRootValue(schema, false);
+}
+
 export function exportTypeBoxSchema(schema: unknown): Readonly<Record<string, JsonValue>> {
-    const exported = exportTypeBoxValueSchema(schema);
-    if (exported.type !== 'object' || !exported.properties || typeof exported.properties !== 'object' ||
-        Array.isArray(exported.properties)) {
-        fail('TOOL_SCHEMA_INVALID', '$', 'Tool inputSchema must be an object Schema with a properties map');
-    }
-    return exported;
+    return exportRootValue(schema, true);
 }

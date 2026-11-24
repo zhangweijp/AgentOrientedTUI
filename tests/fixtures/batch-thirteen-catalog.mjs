@@ -79,7 +79,7 @@ export async function exerciseCatalog(turn, runtime, desktop, workerEvents, next
     ]);
     const save = workerEvents.find(event => event.type === 'invoke' && event.name === 'save');
     assert.equal(save?.appId, appName);
-    const { client } = appClient(runtime, desktop, appName);
+    const { client } = appClient(desktop, appName);
     const query = { observationId: save.observationId, invocationId: 'save-one' };
     const original = await client.readReceipt(query);
     assert.equal(original.kind, 'receipt', JSON.stringify(original));

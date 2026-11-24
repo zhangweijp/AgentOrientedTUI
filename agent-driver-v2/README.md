@@ -128,9 +128,11 @@ OpenAI 的官方地址走 Responses API，明确配置的兼容地址走 Chat Co
 
 `apiKey` 可以直接提供，或使用对应 Provider 的环境变量。OpenAI、Anthropic、Google、DeepSeek、xAI 和 OpenRouter 分别读取 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`（也支持 `GOOGLE_GENERATIVE_AI_API_KEY`）、`DEEPSEEK_API_KEY`、`XAI_API_KEY` 和 `OPENROUTER_API_KEY`。通用 Provider 使用其大写 ID 对应的 `<ID>_API_KEY`。
 
-OpenAI 与 DeepSeek 可设 `provider.toolSchemaMode: 'strict'`。默认 `'non-strict'`，Driver 在两种模式都显式发送实际的 `strict` 值。DeepSeek strict 需要 `baseURL` 以 `/beta` 结尾。Agentina 可在 `config.json` 的 `toolSchemaModes` 按实际路由设置，例如 `{ "deepseek:deepseek-chat@https://api.deepseek.com/beta": "strict" }`，默认地址也可用 `provider:model` 作键。自定义地址只识别带地址的键。Provider 端的兼容性随所用服务和模型而定。 [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode) · [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/#strict-mode-beta)
+OpenAI、DeepSeek 与 Anthropic（Claude Messages）可设 `provider.toolSchemaMode: 'strict'`。OpenAI 和 DeepSeek 在两种模式都显式发送对应的 `strict` 值。DeepSeek strict 需要 `baseURL` 以 `/beta` 结尾。Claude strict 在采用前检查数组长度约束，已安装的适配器对可发送的工具保留原 Schema 和 `strict: true`。Agentina 可在 `config.json` 的 `toolSchemaModes` 按实际路由设置，例如 `{ "deepseek:deepseek-chat@https://api.deepseek.com/beta": "strict" }`，默认地址也可用 `provider:model` 作键。自定义地址只识别带地址的键。服务端按自己的模型和 Schema 支持范围处理请求。 [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode) · [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/#strict-mode-beta) · [Claude Schema limits](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations)
 
 Driver 将当前 `ProviderToolSchemaPolicy` 交给 `getContext(policy?)`，Source 可在预算、采用和发送之前用它检查实际原生 Schema。独立宿主也可调用 `createProviderToolSchemaPolicy(config)`。不兼容的可选 Source 工具会带原因退出请求，无法发送必需工具时报 `MODEL_TOOL_SCHEMA_UNSUPPORTED`。整次请求被服务拒绝时，原错误交给 `onRunError`。部分 Google SDK 版本会把 Schema 转换成 OpenAPI `parameters`，Driver 会根据本地编码判断，该编码丢失的约束会在采用前报告。
+
+AOTUI 的业务字段可以声明为任意有界 JSON。OpenAI 和 DeepSeek 的普通模式将无约束节点按原形编码。启用对应 strict 模式时，Driver 会在发送前指出此类字段的 Schema 路径。Google 的参数外壳由实际安装的适配器决定，能力检查也采用该版本的本地编码结果。
 
 OpenAI strict 按每个工具单独检查整份 Schema。各处 `enum` 合计最多 1000 项，嵌套最多 10 层。超过 250 项的字符串枚举还检查 15000 字符的总长度。诊断包含对应路径、使用量和上限。 [OpenAI Schema 上限](https://developers.openai.com/api/docs/guides/structured-outputs#limitations-on-enum-size)
 

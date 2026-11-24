@@ -20,7 +20,7 @@ const draft = (inputSchema: JsonValue, seq: number) => ({
   schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
   views: [{ toolBindings: [{ toolId, activationId: 'active' }], id: 'note', viewInstanceId: 'mount', type: 'Note', name: 'Note', region: 'dynamic',
     content: { format: 'markdown-v1', value: String(seq) } }], refs: {},
-  tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Note', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema } },
+  tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Note',  description: 'Read', inputSchema } },
 });
 
 function compile(schema: unknown) {
@@ -84,32 +84,5 @@ describe('Tool parameter Schema', () => {
       core.lifecycle.dispose();
       restricted.lifecycle.dispose();
     }
-  });
-
-  it('rejects business and model schema capacity before registering or allocating an activation', () => {
-    const registry = createViewOwnedTools('app', 'run');
-    const before = registry.inspect();
-    const execute = vi.fn(() => ({ success: true }));
-    const register = (inputSchema: Readonly<Record<string, unknown>>, description = 'Read') =>
-      registry.defineViewTypes([{ name: "Note", multiplicity: 'multiple', tools: [{ name: 'read', description, inputSchema }] }]);
-    const expensive = { type: 'object', properties: { xs: { type: 'array', items: { type: 'number' }, default: Array(3_000).fill(0) } } };
-    for (const schema of [boundarySchema(limit + 1), expensive]) {
-      expect(() => register(schema)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY' }));
-    }
-    expect(() => register({ type: 'object', properties: { value: { type: 'string', minLength: -1 } } }))
-      .toThrow(expect.objectContaining({ code: 'PARAMETER_DECLARATION_INVALID' }));
-    expect(() => register({ type: 'object', properties: { value: { type: 'string', format: 'email' } } }))
-      .toThrow(expect.objectContaining({ code: 'PARAMETER_DECLARATION_UNSUPPORTED' }));
-    expect(() => register(boundarySchema(limit), 'x'.repeat(128 * 1024 + 1)))
-      .toThrow(expect.objectContaining({ name: 'SnapshotDataError', code: 'SNAPSHOT_SERIALIZATION_ERROR' }));
-    expect(execute).not.toHaveBeenCalled();
-    expect(registry.inspect()).toEqual(before);
-    expect(() => register(boundarySchema(limit))).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY' }));
-    register({ type: 'object', properties: {} });
-    const frame = registry.prepareFrame([{ createId: () => 'note', type: 'Note', owner: {}, bindings: [{ name: 'read', execute, enabled: true }] }]);
-    frame.accept();
-    expect(frame.instances[0]!.toolBindings).toEqual([{ toolId: frame.tools[0]!.id, activationId: 'ta:v2:1' }]);
-    expect(execute).not.toHaveBeenCalled();
-    registry.dispose();
   });
 });

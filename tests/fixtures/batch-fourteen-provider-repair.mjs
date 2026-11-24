@@ -5,8 +5,8 @@ import { functions, healthyLog, views } from './batch-fourteen-schema.mjs';
 import { journal, modelCall } from './batch-two-support.mjs';
 import { savedParts } from './batch-ten-delivery.mjs';
 
-const programme = '$theatre.programme.when';
-const ticket = '$theatre.form.ticket';
+const programme = '$ref.theatre.programme.when';
+const ticket = '$ref.theatre.form_1.ticket';
 const program = (id, code, imports = null, reset = false) => modelCall(id, 'run_code', { code, imports, reset });
 const effects = manifest => journal(dirname(manifest.modulePath), 'policy-effects');
 const text = body => body.messages.filter(item => item.role === 'user').map(item => item.content).join('\n');
@@ -60,19 +60,19 @@ export async function exerciseEmptyConsole(turn, scoped = true) {
     return facts;
 }
 
-export async function exercisePolicyWindows(turn, desktop, captured, manifest, twins = false) {
+export async function exercisePolicyWindows(turn, source, captured, manifest, twins = false) {
     const admissions = captured.events.length, writes = (await effects(manifest)).length;
     const collapse = (id, view_id, note) => modelCall(id, 'system-collapse_view', { app_id: 'theatre', view_id, note });
     const expand = (id, view_id) => modelCall(id, 'system-expand_view', { app_id: 'theatre', view_id });
     const read = modelCall('read-programme', 'theatre-read_program', {});
-    const fold = [collapse('fold-form', 'form', 'Get tickets later')];
+    const fold = [collapse('fold-form', 'form_1', 'Get tickets later')];
     const called = await turn('policy-fold', fold);
     assert.ok(!functions(called.body)['theatre-pick'] && functions(called.body)['healthy-confirm']);
     assert.deepEqual(captured.events.slice(admissions).map(item => item.appId), ['healthy']);
     assert.equal(savedParts(called.message, fold)[0].output.value.success, true);
     if (twins) {
         const start = captured.events.length;
-        const more = [modelCall('healthy-while-annex-open', 'healthy-confirm', { text: 'Annex still open' }), collapse('fold-annex', 'annex', 'Later')];
+        const more = [modelCall('healthy-while-annex-open', 'healthy-confirm', { text: 'Annex still open' }), collapse('fold-annex', 'annex_1', 'Later')];
         const active = await turn('policy-annex-open', more);
         assert.ok(text(active.body).includes('cannot encode theatre-pick'));
         assert.ok(views(active.body).every(view => !view.includes('app_id="theatre"')));
@@ -84,22 +84,20 @@ export async function exercisePolicyWindows(turn, desktop, captured, manifest, t
     const allowed = await turn('policy-readable', [read]);
     const tools = functions(allowed.body), content = views(allowed.body);
     assert.ok(tools['theatre-read_program'] && !tools['theatre-pick']);
-    assert.ok(content.some(view => view.includes('view_id="form"') && view.includes('Get tickets later')));
+    assert.ok(content.some(view => view.includes('view_id="form_1"') && view.includes('Get tickets later')));
     assert.ok(content.some(view => view.includes('view_id="programme"') && view.includes('Tonight at 20:00')));
     assert.ok(!content.some(view => view.includes(ticket)));
     assert.ok(!assertStrictConsole(allowed.body).description.includes('"theatre-pick"'));
     assert.equal(savedParts(allowed.message, [read])[0].output.value.ok, true);
-    const attempt = [expand('try-unencodable-window', 'form')];
+    const attempt = [expand('try-unencodable-window', 'form_1')];
     const refused = await turn('policy-expand-form', attempt);
     const denied = savedParts(refused.message, attempt)[0].output.value;
     assert.equal(denied.code, 'MODEL_TOOL_SCHEMA_UNSUPPORTED');
     assert.ok(denied.message.includes('theatre-pick') && denied.message.includes('prefixItems'));
-    const app = desktop.getInstalledApps().find(item => item.appId === 'theatre');
-    const windows = () => desktop.getAppWindows(app.appId, app.appInstanceId).views;
-    assert.equal(windows().find(view => view.viewId === 'form').note, 'Get tickets later');
     const defaults = [program('with-default', 'inspect(refs.theatre.programme.when); await tools["theatre-read_program"]({});'),
         program('with-empty', 'inspect(Object.keys(refs).length)', [])];
     const input = await turn('policy-console-inputs', defaults);
+    assert.ok(views(input.body).some(view => view.includes('view_id="form_1"') && view.includes('Get tickets later')));
     const [keep, empty] = savedParts(input.message, defaults).map(part => part.output.value);
     assert.ok(keep.output[0].includes('Tonight at 20:00'));
     assert.equal(keep.subcalls.length, 1);
@@ -119,14 +117,17 @@ export async function exercisePolicyWindows(turn, desktop, captured, manifest, t
     const resume = [expand('restore-programme', 'programme')];
     const expanded = await turn('policy-expand-programme', resume);
     assert.equal(savedParts(expanded.message, resume)[0].output.value.success, true);
-    assert.equal(windows().find(view => view.viewId === 'programme').note, undefined);
     const latest = await turn('policy-restored', []);
     assert.ok(views(latest.body).some(view => view.includes('Tonight at 20:00')));
     assert.ok(functions(latest.body)['theatre-read_program']);
     for (const call of [...defaults, ...revoked])
         assert.equal(latest.body.messages.filter(part => part.role === 'tool' && part.tool_call_id === call.id).length, 1);
-    const form = windows().find(view => view.viewId === 'form');
-    await desktop.expandView({ appId: app.appId, instanceId: app.appInstanceId, viewId: form.viewId, viewInstanceId: form.viewInstanceId });
+    const local = await source.getContext();
+    try {
+        await local.adopt();
+        const unfolded = await local.executeTool('system-expand_view', { app_id: 'theatre', view_id: 'form_1' }, 'host-expand-form');
+        assert.equal(unfolded.outcomeStatus, 'succeeded');
+    } finally { await local.release(); }
     const alone = [modelCall('healthy-after-unfold', 'healthy-confirm', { text: 'The form was expanded outside the request' })];
     const start = captured.events.length;
     const reopened = await turn('policy-host-unfold', alone);
@@ -136,7 +137,7 @@ export async function exercisePolicyWindows(turn, desktop, captured, manifest, t
     assert.equal(savedParts(reopened.message, alone)[0].output.value.confirmed, true);
     const after = (await effects(manifest)).slice(writes);
     assert.deepEqual(after.map(item => item.tool), ['read_program', 'read_program']);
-    return { twins, effects: after, notes: windows(), inputs: [keep.output, empty.output], rejected: output.slice(1, 3) };
+    return { twins, effects: after, notes: views(latest.body), inputs: [keep.output, empty.output], rejected: output.slice(1, 3) };
 }
 
 export async function exerciseStationBudget(turn, mode, manifest, healthy, captured, strict = true) {
@@ -152,11 +153,11 @@ export async function exerciseStationBudget(turn, mode, manifest, healthy, captu
     const admitted = captured.events.slice(before).map(event => event.appId).sort();
     assert.deepEqual(admitted, works ? ['healthy', 'theatre'] : ['healthy']);
     const counts = Object.entries(tools).filter(([name]) => name.startsWith('theatre-')).map(([, tool]) =>
-        Object.values(tool.parameters.properties).reduce((total, param) => total + (param.anyOf?.[0]?.enum?.length ?? 0), 0));
+        Object.values(tool.parameters.properties).reduce((total, param) => total + (param.enum?.length ?? 0), 0));
     assert.deepEqual(counts, mode === 'at' ? [1000, 1000] : works ? [1001] : []);
     if (!works) {
         const issue = text(received.body), field = mode === 'over' ? 'station' : 'to';
-        assert.ok(issue.includes(`$.properties.${field}.anyOf[0].enum`) && issue.includes('1001') && issue.includes('1000'), issue);
+        assert.ok(issue.includes(`$.properties.${field}.enum`) && issue.includes('1001') && issue.includes('1000'), issue);
         assert.ok(!views(received.body).some(view => view.includes('app_id="theatre"')));
         assert.ok(!tools.run_code.description.includes('"theatre-'));
     }

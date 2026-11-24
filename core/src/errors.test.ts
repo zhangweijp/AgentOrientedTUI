@@ -1,7 +1,6 @@
 /**
  * AOTUIError Unit Tests
  * 
- * @module @aotui/runtime/spi/core/errors.test
  */
 
 import { describe, it, expect } from 'vitest';

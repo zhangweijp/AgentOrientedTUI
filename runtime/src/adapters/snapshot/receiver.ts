@@ -1,10 +1,10 @@
 import { performance } from 'node:perf_hooks';
-import { createSnapshotCore } from '@aotui/core';
-import { createAppInteraction } from '@aotui/core';
-import { hostedObservationNamespace, previewCommittedApp } from '@aotui/core/internal';
+import {
+    createAppInteraction, createSnapshotCore, hostedObservationNamespace, previewCommittedApp,
+    type SnapshotHealth,
+} from '@aotui/core/host';
 import type { ExecutionResolver, InstanceInteraction, AppInteractionPolicy } from '@aotui/core';
-import type { ProjectionLimits, ViewWindowAccess } from '@aotui/core';
-import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '@aotui/core/internal';
+import type { CommitResult, PreparedSnapshotFailure, SnapshotIssueCode } from '@aotui/core';
 
 export interface SemanticSnapshotReport {
     readonly appId: string;
@@ -52,13 +52,12 @@ export class SemanticSnapshotReceiver {
         this.core = createSnapshotCore({ appId, instanceId, now });
     }
 
-    interaction(policy: AppInteractionPolicy, execution: ExecutionResolver, projectionLimits?: ProjectionLimits,
-        windowAccess?: ViewWindowAccess): InstanceInteraction {
+    interaction(policy: AppInteractionPolicy, execution: ExecutionResolver,
+        options?: Pick<Parameters<typeof createAppInteraction>[1], 'observationLimits' | 'refreshProjection' | 'canExposeTools'>): InstanceInteraction {
         if (this.interactionsClosed || this.stopped) throw new Error('App interaction is unavailable');
         return this.interactions ??= createAppInteraction(this.core.store, {
             appId: this.appId, instanceId: this.instanceId, namespace: hostedObservationNamespace(this.instanceId), now: this.now, policy, execution,
-            observationLimits: projectionLimits,
-            ...(windowAccess ? { windowAccess } : {}),
+            ...options,
         });
     }
 

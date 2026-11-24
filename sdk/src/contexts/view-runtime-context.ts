@@ -18,9 +18,8 @@ export function useRefRegistry(hook: 'useDataRef' | 'useArrayRef', refId: string
     if (!context) {
         const location = typeof refId === 'string' && refId.length <= 80 && /^[\p{L}\p{N}\p{M}_-]+$/u.test(refId)
             ? ' for Ref ' + JSON.stringify(refId) : '';
-        throw new Error('[AOTUI SDK] ' + hook + location + ' needs a parent <View>. ' +
-            'Move the hook into a content component rendered as a child of <View>. ' +
-            'A component that returns <View> cannot use the provider it returns.');
+        throw new Error('[AOTUI SDK] ' + hook + location + ' must run in a child component of ' +
+            '<StaticView>, <DynamicView>, or a ViewType component returned by defineViewType.');
     }
     return context;
 }

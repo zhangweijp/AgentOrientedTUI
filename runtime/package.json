@@ -4,6 +4,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "aotui-stdio": "dist/stdio.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -19,11 +22,11 @@
     }
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && node scripts/build-file-example.mjs",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "npm run build"
+    "prepack": "npm run build 1>&2"
   },
   "keywords": [
     "aotui",
@@ -39,7 +42,8 @@
     "access": "public"
   },
   "files": [
-    "dist"
+    "dist",
+    "examples"
   ],
   "devDependencies": {
     "@types/node": "^24.10.2",

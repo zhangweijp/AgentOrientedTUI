@@ -1,4 +1,5 @@
-import { projectCompleteViews } from '@aotui/core/internal';
+import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
+import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
 import { mkdtemp, mkdir, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
-import type { AppInteractionPolicy, AppInteraction } from '@aotui/core';
+import type { AppInteractionPolicy, AppInvocation, ObservationCandidate } from '@aotui/core';
 
 let directory: string, workerPath: string, appPath: string;
 const hosts: AppWorkerHost[] = [];
@@ -31,7 +32,7 @@ beforeAll(async () => {
         import { useState, useLayoutEffect, useMemo } from 'preact/hooks';
         import Type from 'typebox';
         import { createTUIApp, useDataRef, refParam, defineViewType, DynamicView } from '@aotui/sdk';
-        const WorkspaceType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
+        const WorkspaceType = defineViewType()({ multiplicity: 'multiple', name: 'Workspace', tools: {
             change: {
                 description: 'Change the fixture',
                 inputSchema: Type.Object({ value: Type.Number(), invalid: Type.Optional(Type.Boolean()) },
@@ -47,7 +48,7 @@ beforeAll(async () => {
                 execute: () => ({ success: true, data: { calls } }),
             },
         } });
-        const FileType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'File', tools: {
+        const FileType = defineViewType()({ multiplicity: 'multiple', name: 'File', tools: {
             edit: {
                 description: 'Edit the current file', inputSchema: Type.Object({}),
                 enabled: ({ value }) => value > 0,
@@ -59,7 +60,7 @@ beforeAll(async () => {
                 execute: ({ input }) => ({ success: true, data: { value: input.record.value } }),
             },
         } });
-        const OtherType = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Other' });
+        const OtherType = defineViewType({ multiplicity: 'multiple', name: 'Other' });
 
         const queued = []; options.debounceRendering = cb => queued.push(cb);
         let calls = 0;
@@ -68,7 +69,7 @@ beforeAll(async () => {
         function File({state}) {
             const data=useMemo(()=>state.invalid ? {value:()=>state.value} : {value:state.value},[state.value,state.invalid]);
             const [, tick] = useState(0); redrawFile = () => tick(n => n + 1); currentRecord = data;
-            const ref=useDataRef('selected',data,{scope: 'protected', refType:'Record'});
+            const ref=useDataRef('selected',data, { schema: { type: 'object' }, scope: 'protected', refType:'Record'});
             return h('p',{},'file:'+(state.invalid ? state.value : data.value)+ref('Selection'));
         }
         function Other() {
@@ -96,7 +97,7 @@ beforeAll(async () => {
                 h(Other, { key: 'other' }),
             ]);
         }
-        export default createTUIApp({viewTypes:[WorkspaceType,FileType,OtherType], app_name:'refresh_fixture',component:App,signalPolicy:'never'});
+        export default createTUIApp({viewTypes:[WorkspaceType,FileType,OtherType], app_name:'refresh_fixture',component:App});
     ` }, outfile: appPath, platform: 'node', format: 'esm', bundle: true, packages: 'external',
         alias: { '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts') }, logLevel: 'silent' });
 });
@@ -106,89 +107,94 @@ afterEach(async () => {
 afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
 
 async function start() {
-    const host = new AppWorkerHost({ appId: 'refresh_app' as any, desktopId: 'desktop' as any,
+    const host = new AppWorkerHost({ policy: policy, appId: 'refresh_app' as any, desktopId: 'desktop' as any,
         appModulePath: appPath, workerScriptPath: workerPath, existingWorker: new Worker(workerPath),
         config: { AOTUI_DATA_DIR: directory } });
-    hosts.push(host); host.onUpdateRequest = vi.fn(); await host.start(); await host.open();
-    const opened = host.getAppInteraction(policy); if (opened.status !== 'ready') throw new Error(opened.issue.code);
-    return { host, client: opened.interaction };
+    hosts.push(host); host.onUpdate = vi.fn(); await host.start(); await host.open();
+    const opened = host.getAppInteraction(); if (opened.status !== 'ready') throw new Error(opened.issue.code);
+    return { host, client: opened.interaction, turns: workerTurns(host) };
 }
-async function observe(client: AppInteraction) {
-    const observed = await client.observe({ all: true });
-    if (observed.status !== 'observed') throw new Error(observed.issue.code);
-    expect(client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
-    return observed.observation;
+type WorkerTurns = ReturnType<typeof workerTurns>;
+function adopt(turns: WorkerTurns, candidate: ObservationCandidate) {
+    return { observation: candidate.observation, turn: turns.adopt(candidate) };
+}
+async function observe(turns: WorkerTurns) {
+    const prepared = await turns.prepare();
+    if (prepared.status !== 'prepared') throw new Error(prepared.issue.code);
+    return adopt(turns, prepared.candidate);
 }
 let invocation = 0;
-function invoke(client: AppInteraction, observed: Awaited<ReturnType<typeof observe>>, name: string, input: Record<string, unknown>) {
-    const tool = observed.tools.find(t => t.name === name)!;
-    const view = observed.views.find(view => view.type === tool.viewType)!;
-    return client.invoke({ invocationId: 'refresh-' + ++invocation, observationId: observed.observationId, toolId: tool.id, input: { view_id: view.id, ...input } });
+function invoke({ observation, turn }: ReturnType<typeof adopt>, name: string, input: AppInvocation['input']) {
+    const tool = observation.tools.find(t => t.name === name)!;
+    const view = observation.views.find(view => view.type === tool.viewType)!;
+    return turn.invoke(observation.source.appId, { invocationId: 'refresh-' + ++invocation, observationId: observation.observationId,
+        toolId: tool.id, viewId: view.id, input });
 }
 
 describe('real SDK Worker observation refresh', () => {
     it('adopts a new observation without retargeting old Refs or retaining retired source data', async () => {
-        const { host, client } = await start(); const initial = await observe(client);
-        await invoke(client, initial, 'change', { value: 1 });
-        const waiting = observe(client); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' }); const first = await waiting;
-        await invoke(client, first, 'change', { value: 2 });
-        const preparing = client.observe({ all: true }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
-        const next = await preparing; if (next.status !== 'observed') throw Error(next.issue.code);
+        const { host, client, turns } = await start(); const initial = await observe(turns);
+        await invoke(initial, 'change', { value: 1 });
+        const waiting = observe(turns); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' }); const first = await waiting;
+        await invoke(first, 'change', { value: 2 });
+        const preparing = turns.prepare(); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
+        const prepared = await preparing; if (prepared.status !== 'prepared') throw Error(prepared.issue.code);
         expect((await client.preview()).status).toBe('previewed');
-        expect(await invoke(client, next.observation, 'read', { record: '$refresh_app.file.selected' }))
-            .toMatchObject({ kind: 'refused', code: 'OBSERVATION_NOT_ADOPTED' });
-        expect(await invoke(client, first, 'read', { record: '$refresh_app.file.selected' }))
+        expect(await invoke({ observation: prepared.candidate.observation, turn: first.turn }, 'read', { record: '$ref.refresh_app.file_1.selected' }))
+            .toMatchObject({ kind: 'refused', code: 'TURN_SELECTION_INVALID' });
+        expect(await invoke(first, 'read', { record: '$ref.refresh_app.file_1.selected' }))
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 1 } } } } });
-        expect(client.adoptObservation(next.observation.observationId)).toEqual({ status: 'adopted' });
-        expect(await invoke(client, first, 'read', { record: '$refresh_app.file.selected' }))
-            .toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
-        expect(await invoke(client, next.observation, 'read', { record: '$refresh_app.file.selected' }))
+        const next = adopt(turns, prepared.candidate);
+        expect(await invoke(first, 'read', { record: '$ref.refresh_app.file_1.selected' }))
+            .toMatchObject({ kind: 'refused', code: 'TURN_NOT_ACTIVE' });
+        expect(await invoke(next, 'read', { record: '$ref.refresh_app.file_1.selected' }))
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 2 } } } } });
         const store = (host as any).snapshotReceiver.core.store;
-        expect(store.getById(first.source.snapshotId).status).toBe('rejected');
+        expect(store.getById(first.observation.source.snapshotId).status).toBe('rejected');
         expect(store.inspect()).toMatchObject({ heldSnapshots: 0, heldSnapshotBytes: 0 });
         expect(store.getById(next.observation.source.snapshotId).status).toBe('found');
     });
     it('observes queued commits and compatible View/Ref/Tool without a prior notification or fixed sleep', async () => {
-        const { host, client } = await start(); const initial = await observe(client);
+        const { host, turns } = await start(); const initial = await observe(turns);
         const messages: Array<{ type: string; requestId?: string }> = [];
         host['worker']!.on('message', message => messages.push(message));
-        const business = await invoke(client, initial, 'change', { value: 1 });
+        const business = await invoke(initial, 'change', { value: 1 });
         expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
-        const observing = observe(client);
+        const observing = observe(turns);
         host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         const next = await observing;
-        expect(JSON.stringify(next)).toContain('file:1'); expect(next.tools.map(t => t.name)).toContain('edit');
+        expect(JSON.stringify(next)).toContain('file:1'); expect(next.observation.tools.map(t => t.name)).toContain('edit');
         const snapshot = (host as any).snapshotReceiver.core.store.readLatest(host.appId).snapshot;
         expect(snapshot.views.map((v: any) => v.content.value).join(' ')).toContain('workspace:1');
         expect(Object.values(snapshot.refs)).toMatchObject([{ target: { payload: { value: 1 } } }]);
-        expect(host.onUpdateRequest).not.toHaveBeenCalled();
+        expect(host.onUpdate).not.toHaveBeenCalledWith('attention_requested');
         expect(messages.filter(message => message.type === 'SNAPSHOT_PREPARED')).toEqual([
             expect.objectContaining({ requestId: expect.any(String) }),
         ]);
         const received = host.getSemanticSnapshotReport()!.prepared;
-        expect(await invoke(client, next, 'read', { record: '$refresh_app.file.selected' }))
+        expect(await invoke(next, 'read', { record: '$ref.refresh_app.file_1.selected' }))
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 1 } } } } });
         expect(host.getSemanticSnapshotReport()!.prepared).toBe(received);
-        const confirmed = await observe(client);
+        const messagesBeforeConfirmation = messages.length;
+        const confirmed = await observe(turns);
         expect(host.getSemanticSnapshotReport()!.prepared).toBe(received);
-        expect(messages.filter(message => message.type === 'PROJECTION_CURRENT')).toEqual([
+        expect(messages.slice(messagesBeforeConfirmation).filter(message => message.type === 'PROJECTION_CURRENT')).toEqual([
             expect.objectContaining({ requestId: expect.any(String) }),
         ]);
-        expect(confirmed.source).toEqual(next.source);
-        client.releaseObservation(confirmed.observationId);
-        expect(host.getInteractionReport()!.core.observations.observations).toBe(0);
+        expect(confirmed.observation.source).toEqual(next.observation.source);
+        confirmed.turn.release();
+        expect(host.getResourceReport().interactions.retainedOperations).toBe(0);
     });
 
     it('reuses confirmed content when nothing changes', async () => {
-        const { host, client } = await start(); await observe(client); const id = host.getSemanticSnapshotReport()!.snapshotId;
-        await observe(client); expect(host.getSemanticSnapshotReport()!.snapshotId).toBe(id);
-        expect(host.onUpdateRequest).not.toHaveBeenCalled();
+        const { host, turns } = await start(); await observe(turns); const id = host.getSemanticSnapshotReport()!.snapshotId;
+        await observe(turns); expect(host.getSemanticSnapshotReport()!.snapshotId).toBe(id);
+        expect(host.onUpdate).not.toHaveBeenCalled();
     });
 
     it('answers raw requests without a valid known identity with a complete frame', async () => {
-        const { host, client } = await start();
-        await observe(client);
+        const { host, client, turns } = await start();
+        await observe(turns);
         const worker = host['worker']!;
         const known = host['snapshotReceiver'].currentPublication()!;
         for (const [index, invalid] of [undefined, { ...known, producerSeq: '2' }, { ...known, extra: true }].entries()) {
@@ -208,58 +214,58 @@ describe('real SDK Worker observation refresh', () => {
     });
 
     it('observes cached values after a live mutation and only changes a Ref when its owner commits', async () => {
-        const { host, client } = await start();
-        const initial = await observe(client);
-        await invoke(client, initial, 'change', { value: 1 });
+        const { host, turns } = await start();
+        const initial = await observe(turns);
+        await invoke(initial, 'change', { value: 1 });
         host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
-        const first = await observe(client);
+        const first = await observe(turns);
         const event = (name: string) => host['worker']!.postMessage({ type: 'TEST_COMMAND', command: name });
         const resultFor = (value: number) => ({ kind: 'receipt', receipt: {
             outcome: { status: 'succeeded', value: { data: { value } } },
         } });
         await event('mutate-live');
-        const cached = await observe(client);
-        expect(cached.source.snapshotId).toBe(first.source.snapshotId);
-        expect(await invoke(client, cached, 'read', { record: '$refresh_app.file.selected' })).toMatchObject(resultFor(1));
+        const cached = await observe(turns);
+        expect(cached.observation.source.snapshotId).toBe(first.observation.source.snapshotId);
+        expect(await invoke(cached, 'read', { record: '$ref.refresh_app.file_1.selected' })).toMatchObject(resultFor(1));
 
         await event('redraw-other'); await event('release');
-        const unrelated = await observe(client);
-        expect(unrelated.source.snapshotId).not.toBe(first.source.snapshotId);
+        const unrelated = await observe(turns);
+        expect(unrelated.observation.source.snapshotId).not.toBe(first.observation.source.snapshotId);
         expect(JSON.stringify(unrelated)).toContain('other:1');
         expect(JSON.stringify(unrelated)).toContain('file:1');
-        expect(await invoke(client, unrelated, 'read', { record: '$refresh_app.file.selected' })).toMatchObject(resultFor(1));
+        expect(await invoke(unrelated, 'read', { record: '$ref.refresh_app.file_1.selected' })).toMatchObject(resultFor(1));
 
         await event('redraw-file'); await event('release');
-        const updated = await observe(client);
+        const updated = await observe(turns);
         expect(JSON.stringify(updated)).toContain('file:9');
-        expect(await invoke(client, updated, 'read', { record: '$refresh_app.file.selected' })).toMatchObject(resultFor(9));
+        expect(await invoke(updated, 'read', { record: '$ref.refresh_app.file_1.selected' })).toMatchObject(resultFor(9));
 
     });
 
     it('keeps the known business result on projection failure and recovers by observing, without repeating the operation', async () => {
-        const { host, client } = await start(); const initial = await observe(client);
-        const receipt = await invoke(client, initial, 'change', { value: 1, invalid: true });
+        const { host, turns } = await start(); const initial = await observe(turns);
+        const receipt = await invoke(initial, 'change', { value: 1, invalid: true });
         expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
-        const failed = client.observe({ all: true }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
+        const failed = turns.prepare(); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         expect(await failed).toMatchObject({ status: 'rejected', issue: {
             code: 'SNAPSHOT_SERIALIZATION_ERROR', path: 'Ref file.selected $["value"]',
             message: expect.stringContaining('Expected finite JSON data'),
         } });
         expect(host.getSemanticSnapshotReport()!.health).toBe('degraded');
         host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'redraw-other' }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
-        expect(await client.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
+        expect(await turns.prepare()).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
         const source = (host as any).snapshotReceiver.core.store.readLatest(host.appId);
-        expect(source).toMatchObject({ status: 'degraded', lastGood: { id: initial.source.snapshotId } });
+        expect(source).toMatchObject({ status: 'degraded', lastGood: { id: initial.observation.source.snapshotId } });
         host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
-        const recovered = await observe(client);
-        expect(await invoke(client, recovered, 'stats', {})).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
+        const recovered = await observe(turns);
+        expect(await invoke(recovered, 'stats', {})).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
         expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
     });
 
     it('closes the pending render/Worker/Scope wait and releases resources without running the scheduler', async () => {
-        const { host, client } = await start(); const initial = await observe(client);
-        await invoke(client, initial, 'change', { value: 1 });
-        const pending = client.observe({ all: true });
+        const { host, turns } = await start(); const initial = await observe(turns);
+        await invoke(initial, 'change', { value: 1 });
+        const pending = turns.prepare();
         await host.close(); expect((await pending).status).toBe('rejected');
         host.terminate(); const resources = await host.waitForResourceRelease(); expect(resources.resourcesReleased).toBe(true);
         expect((host as any).pendingRequests.size).toBe(0); expect((host as any).projectionRefresh).toBeUndefined();

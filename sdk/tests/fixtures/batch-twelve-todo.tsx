@@ -26,7 +26,7 @@ const Todo = defineViewType<Actions>()({
 });
 
 function Priority({ value }: { value: number }) {
-    const ref = useDataRef('priority', value, { scope: 'protected' });
+    const ref = useDataRef('priority', value, { schema: Type.Number(), scope: 'protected' });
     return <p>{ref('Task priority')}</p>;
 }
 

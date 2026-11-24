@@ -8,6 +8,6 @@ describe('planning app factory', () => {
     });
 
     it('exposes canonical app_name metadata', () => {
-        expect(PlanningAppFactory.kernelConfig.appName).toBe('planning_app');
+        expect(PlanningAppFactory.app_name).toBe('planning_app');
     });
 });

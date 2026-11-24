@@ -246,10 +246,9 @@ async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
 
     console.log('[TUI] Starting Runtime...');
     const runtime = createRuntime();
-    const desktopId = await runtime.createDesktop();
-    const desktop = runtime.getDesktop(desktopId);
+    const desktop = await runtime.createDesktop();
 
-    console.log(`[TUI] Desktop created: ${desktopId}`);
+    console.log(`[TUI] Desktop created: ${desktop.id}`);
 
     // [Fix] Move rl creation before signal subscription so callback can use it
     const rl = readline.createInterface({
@@ -259,12 +258,13 @@ async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
     });
 
     let isInteractive = false;
+    let previewTimer: ReturnType<typeof setTimeout> | undefined;
     async function printCurrentViews(): Promise<void> {
-        for (const app of desktop.getInstalledApps()) {
+        for (const app of desktop.listApps()) {
             if (app.status !== 'running' || !app.appId || !app.appInstanceId) continue;
             const appId = app.appId;
-            const access = runtime.getAppInteraction(desktopId, appId, app.appInstanceId);
-            const result = access.status === 'ready' ? await access.interaction.preview() : access;
+            const access = desktop.getRunningApp(appId, app.appInstanceId);
+            const result = access.status === 'ready' ? await access.app.preview() : access;
             if (result.status !== 'previewed') {
                 console.error(`[TUI] Could not preview ${appId}: ${result.issue.code} ${result.issue.message}`);
                 continue;
@@ -282,7 +282,9 @@ async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
     let stopping: Promise<void> | undefined;
     function stop(): Promise<void> {
         if (!stopping) {
-            stopping = runtime.beginShutdown().completion.then(report => {
+            isInteractive = false;
+            clearTimeout(previewTimer);
+            stopping = runtime.beginClose().completion.then(report => {
                 if (!report.ok || !report.resourcesReleased) process.exitCode = 1;
             });
             rl.close();
@@ -291,9 +293,12 @@ async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
     }
     rl.on('close', () => { void stop().catch(error => { process.exitCode = 1;console.error('[TUI] Shutdown failed:', error); }); });
 
-    desktop.output.subscribe(() => {
-        if (!isInteractive) return;
-        void printCurrentViews().then(() => rl.prompt(true)).catch(error => console.error('[TUI] Observation failed:', error));
+    desktop.output.subscribe(signal => {
+        if (!isInteractive || !process.stdout.isTTY || previewTimer || signal.reason === 'attention_requested') return;
+        previewTimer = setTimeout(() => {
+            previewTimer = undefined;
+            void printCurrentViews().then(() => rl.prompt(true)).catch(error => console.error('[TUI] Observation failed:', error));
+        }, 150);
     });
 
     const results = await catalog.installAll(desktop, { name: targetApp, startAll: true }).catch(async error => {

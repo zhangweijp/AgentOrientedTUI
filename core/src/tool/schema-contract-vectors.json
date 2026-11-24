@@ -1,0 +1,281 @@
+{
+  "toolSchemas": [
+    {
+      "name": "unconstrained-empty-field",
+      "schema": { "type": "object", "properties": { "any": {} }, "required": ["any"], "additionalProperties": false },
+      "expect": "valid",
+      "validInputs": [{ "any": "text" }, { "any": 1.25 }, { "any": false }, { "any": null },
+        { "any": [1, "x", null, { "item": true }] }, { "any": { "arbitrary": { "keys": [null, false] } } }],
+      "invalidInputs": [{}, { "any": 1, "extra": 2 }, [1]],
+      "preserveExact": { "any": { "arbitrary": { "keys": [null, false] } } }
+    },
+    {
+      "name": "unconstrained-nested-fields-and-items",
+      "schema": { "type": "object", "properties": {
+        "items": { "type": "array", "items": {} },
+        "nested": { "type": "object", "properties": { "payload": {} }, "required": ["payload"], "additionalProperties": false }
+      }, "required": ["items", "nested"], "additionalProperties": false },
+      "expect": "valid",
+      "validInputs": [{ "items": [null, "x", false, { "arbitrary": [1] }], "nested": { "payload": 5 } },
+        { "items": [], "nested": { "payload": { "unknown": [1, false, null] } } }],
+      "invalidInputs": [{ "items": 1, "nested": { "payload": 0 } }, { "items": [], "nested": { "other": 0 } }]
+    },
+    {
+      "name": "ordinary-value-union-allows-wildcard",
+      "schema": { "type": "object", "properties": { "body": { "anyOf": [{ "type": "object" }, {}] } },
+        "required": ["body"] },
+      "expect": "valid",
+      "validInputs": [{ "body": {} }, { "body": 17 }, { "body": null }],
+      "invalidInputs": [{}]
+    },
+    {
+      "name": "explicit-empty-closed-object",
+      "schema": {
+        "type": "object",
+        "properties": { "empty": { "type": "object", "properties": {}, "additionalProperties": false } },
+        "additionalProperties": false
+      },
+      "expect": "valid",
+      "validInputs": [{ "empty": {} }],
+      "invalidInputs": [{ "empty": { "extra": 1 } }]
+    },
+    {
+      "name": "opaque-object",
+      "schema": {
+        "type": "object",
+        "properties": { "meta": { "type": "object" } },
+        "additionalProperties": false
+      },
+      "expect": "valid",
+      "validInputs": [{ "meta": {} }, { "meta": { "any": [1, "x"] } }],
+      "invalidInputs": [{ "meta": [] }, { "meta": "text" }]
+    },
+    {
+      "name": "parameterless-tool",
+      "schema": { "type": "object", "properties": {} },
+      "expect": "valid",
+      "validInputs": [{}],
+      "invalidInputs": [],
+      "coreExtraOk": true,
+      "sdkExtraOk": false
+    },
+    {
+      "name": "unsupported-pattern-keyword",
+      "schema": {
+        "type": "object",
+        "properties": { "code": { "type": "string", "pattern": "^[a-z]+$" } }
+      },
+      "expect": "unsupported"
+    },
+    {
+      "name": "business-property-named-pattern",
+      "schema": {
+        "type": "object",
+        "properties": { "pattern": { "type": "string" } },
+        "required": ["pattern"],
+        "additionalProperties": false
+      },
+      "expect": "valid",
+      "validInputs": [{ "pattern": "*.ts" }],
+      "invalidInputs": [{}]
+    },
+    {
+      "name": "default-without-backfill",
+      "schema": {
+        "type": "object",
+        "properties": { "title": { "type": "string", "default": "untitled" } },
+        "additionalProperties": false
+      },
+      "expect": "valid",
+      "validInputs": [{}, { "title": "custom" }],
+      "invalidInputs": [{ "title": 123 }],
+      "preserveExact": {}
+    },
+    {
+      "name": "invalid-default-value",
+      "schema": {
+        "type": "object",
+        "properties": { "count": { "type": "integer", "default": "wrong" } }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "fixed-tuple",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "pair": {
+            "type": "array",
+            "minItems": 2,
+            "items": false,
+            "prefixItems": [{ "type": "string" }, { "type": "integer", "minimum": 0 }]
+          }
+        },
+        "required": ["pair"],
+        "additionalProperties": false
+      },
+      "expect": "valid",
+      "validInputs": [{ "pair": ["row", 1] }],
+      "invalidInputs": [{ "pair": ["row"] }, { "pair": ["row", 1, true] }, { "pair": ["row", -1] }]
+    },
+    {
+      "name": "tuple-without-closed-items",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "pair": {
+            "type": "array",
+            "minItems": 1,
+            "prefixItems": [{ "type": "string" }],
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "nested-object-stays-open",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "nested": {
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+          }
+        }
+      },
+      "expect": "valid",
+      "validInputs": [{ "nested": { "name": "ok", "extra": 1 } }],
+      "invalidInputs": [{ "nested": { "name": 42 } }]
+    },
+    {
+      "name": "root-explicit-additional-properties-true",
+      "schema": {
+        "type": "object",
+        "properties": { "a": { "type": "string" } },
+        "additionalProperties": true
+      },
+      "expect": "valid",
+      "validInputs": [{ "a": "ok", "extra": 1 }],
+      "invalidInputs": [{ "a": 1 }],
+      "coreExtraOk": true,
+      "sdkExtraOk": true
+    },
+    {
+      "name": "root-omitted-additional-properties",
+      "schema": {
+        "type": "object",
+        "properties": { "a": { "type": "string" } }
+      },
+      "expect": "valid",
+      "validInputs": [{ "a": "ok" }],
+      "invalidInputs": [{ "a": 1 }],
+      "coreExtraOk": true,
+      "sdkExtraOk": false
+    }
+  ],
+  "valueSchemas": [
+    {
+      "name": "unconstrained-empty-value",
+      "schema": {},
+      "expect": "invalid"
+    },
+    {
+      "name": "ref-union-with-unconstrained-branch",
+      "schema": { "anyOf": [{ "type": "object" }, {}] },
+      "expect": "invalid",
+      "issuePath": "$.anyOf[1]"
+    },
+    {
+      "name": "ref-union-with-unconstrained-nested-branch",
+      "schema": { "anyOf": [{ "type": "object" }, { "anyOf": [{ "type": "string" }, { "description": "Any", "default": 17 }] }] },
+      "expect": "invalid",
+      "issuePath": "$.anyOf[1].anyOf[1]"
+    },
+    {
+      "name": "ref-union-with-constrained-nested-branches",
+      "schema": { "anyOf": [{ "type": "object", "anyOf": [{}] }, { "anyOf": [{ "type": "string" }, { "type": "null" }] }] },
+      "expect": "valid",
+      "validValues": [{}, "contact", null],
+      "invalidValues": [17, false, []]
+    },
+    {
+      "name": "ref-with-type-and-wildcard-union",
+      "schema": { "type": "object", "anyOf": [{}] },
+      "expect": "valid",
+      "validValues": [{}, { "any": [1] }],
+      "invalidValues": [17, null, []]
+    },
+    {
+      "name": "ref-with-const-and-wildcard-union",
+      "schema": { "const": 17, "anyOf": [{}, { "type": "string" }] },
+      "expect": "valid",
+      "validValues": [17],
+      "invalidValues": ["contact", 18, {}]
+    },
+    {
+      "name": "ref-with-enum-and-wildcard-union",
+      "schema": { "enum": [17, null], "anyOf": [{}] },
+      "expect": "valid",
+      "validValues": [17, null],
+      "invalidValues": ["contact", 18, {}]
+    },
+    {
+      "name": "explicit-empty-closed-object-value",
+      "schema": { "type": "object", "properties": {}, "additionalProperties": false },
+      "expect": "valid",
+      "validValues": [{}],
+      "invalidValues": [{ "extra": 1 }, []]
+    },
+    {
+      "name": "opaque-object-value",
+      "schema": { "type": "object" },
+      "expect": "valid",
+      "validValues": [{}, { "a": [1, "x"] }],
+      "invalidValues": [[], "str", 123]
+    },
+    {
+      "name": "structured-ref-with-unconstrained-nested-value",
+      "schema": { "type": "object", "properties": { "payload": {} }, "required": ["payload"], "additionalProperties": false },
+      "expect": "valid",
+      "validValues": [{ "payload": null }, { "payload": [1, { "more": false }] }],
+      "invalidValues": [{}, null, { "payload": {}, "other": true }]
+    },
+    {
+      "name": "array-ref-with-unconstrained-items",
+      "schema": { "type": "array", "items": {} },
+      "expect": "valid",
+      "validValues": [[], [1, "text", null, { "payload": false }]],
+      "invalidValues": [null, {}]
+    },
+    {
+      "name": "unsupported-pattern-value",
+      "schema": { "type": "string", "pattern": "^a" },
+      "expect": "unsupported"
+    },
+    {
+      "name": "business-pattern-property-value",
+      "schema": {
+        "type": "object",
+        "properties": { "pattern": { "type": "string" } },
+        "required": ["pattern"],
+        "additionalProperties": false
+      },
+      "expect": "valid",
+      "validValues": [{ "pattern": "*.ts" }],
+      "invalidValues": [{}]
+    },
+    {
+      "name": "fixed-tuple-value",
+      "schema": {
+        "type": "array",
+        "minItems": 2,
+        "items": false,
+        "prefixItems": [{ "type": "string" }, { "type": "boolean" }]
+      },
+      "expect": "valid",
+      "validValues": [["ok", true]],
+      "invalidValues": [["ok"], ["ok", true, 1], [1, true]]
+    }
+  ]
+}

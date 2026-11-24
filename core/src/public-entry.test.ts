@@ -1,5 +1,8 @@
 import { expect, expectTypeOf, it } from 'vitest';
 import * as core from './index.js';
+import * as producer from './producer.js';
+import * as host from './host.js';
+import * as persistence from './persistence.js';
 // @ts-expect-error AppSnapshot is the only supported committed snapshot name.
 import type { AppSnapshotV4 } from './index.js';
 // @ts-expect-error The V2 DTOs are also retired.
@@ -15,12 +18,36 @@ import type { StateSession } from './index.js';
 // @ts-expect-error Ref is a parameter source, not a separate callable category.
 import type { SafeRefInvoker } from './index.js';
 
-it('exports the portable factories and semantic contracts', () => {
-    expect(Object.keys(core).sort()).toEqual(['MARKDOWN_VIEW_FORMAT', 'SNAPSHOT_SCHEMA_VERSION', 'createSnapshotCore', 'refKey', 'createViewOwnedTools',
-        'ViewToolContractError', 'SnapshotDataError', 'SemanticProjectionCoordinator', 'createAppInteraction', 'createStateSession',
-        'compileToolParameters', 'compileValueSchema', 'modelToolSchema', 'isInstanceName', 'ViewRegion', 'ViewMultiplicity',
-        'AOTUIError', 'captureAppMetadata', 'isTUIAppFactory', 'hasViewTypeToolAuthoringProtocol', 'VIEW_TYPE_TOOL_PROTOCOL',
-        'APP_LIFECYCLE_PROTOCOL', 'STATE_SESSION_PROTOCOL', 'createRefCapture', 'DEFAULT_SNAPSHOT_LIMITS'].sort());
+it('exports the portable thin root and three specialized sub-entries', () => {
+    expect(Object.keys(core).sort()).toEqual([
+        'AOTUIError', 'APP_LIFECYCLE_PROTOCOL', 'DEFAULT_PROJECTION_LIMITS', 'DEFAULT_SNAPSHOT_LIMITS',
+        'MARKDOWN_VIEW_FORMAT', 'SNAPSHOT_SCHEMA_VERSION', 'STATE_SESSION_PROTOCOL', 'SnapshotDataError',
+        'VIEW_TYPE_TOOL_PROTOCOL', 'ViewMultiplicity', 'ViewRegion', 'canonicalJson', 'captureAppMetadata',
+        'compileToolParameters', 'compileValueSchema', 'checkWireJson', 'copyWireJson', 'copyJson', 'createRefCapture',
+        'hasViewTypeToolAuthoringProtocol', 'isInstanceName', 'isTUIAppFactory',
+        'isToolResultData', 'isViewTypeName', 'normalizeProjectionLimits', 'readAppFactory', 'refKey', 'utf8Size',
+    ].sort());
+    expect(Object.keys(producer).sort()).toEqual([
+        'SemanticProjectionCoordinator', 'ViewToolContractError', 'captureSnapshotDraftEnvelope',
+        'captureSnapshotPrepareIssue', 'commitAppFrame', 'createViewOwnedTools', 'viewToolReceiver', 'hostedObservationCapacityIssue',
+        'checkRefViews', 'refPath', 'scopeAllows', 'TOOL_REQUEST_LIMITS',
+    ].sort());
+    expect(Object.keys(host).sort()).toEqual([
+        'RAW_TOOL_ARGUMENT_LIMITS', 'REF_VALUE_LIMITS',
+        'RESOLVED_TOOL_ARGUMENT_LIMITS', 'TOOL_REQUEST_LIMITS',
+        'captureSnapshotDraftEnvelope', 'captureSnapshotPrepareIssue',
+        'createAppInteraction', 'createSnapshotCore', 'createTurnCoordinator', 'formatRefPath',
+        'forwardRequestSource', 'hostedObservationCapacityIssue', 'hostedObservationNamespace',
+        'normalizeProjectionLimits', 'parseRefAddress', 'prepareViewTypeParameters', 'previewCommittedApp',
+        'projectCompleteViews', 'refPath', 'refConsumerAllowed', 'scopeAllows',
+        'snapshotId', 'viewToolReceiver',
+    ].sort());
+    expect(Object.keys(persistence).sort()).toEqual([
+        'captureStateAddress', 'captureStateMutationResult', 'captureStateReadResult', 'captureStateReleaseResult',
+        'captureStateValue', 'createStateSession', 'decodeStateRecord', 'failedMutation', 'failedRead',
+        'rejectState', 'requireStateLimits', 'stateError', 'stateFields', 'stateIssue', 'unknownMutation',
+        'validStateOwner',
+    ].sort());
 });
 
 it('keeps the mutable terminal result contract', () => {
@@ -36,32 +63,32 @@ it('exports the execution port used by the current observation', () => {
     expectTypeOf<keyof core.ExecutionBinding>().toEqualTypeOf<'identity' | 'isLive' | 'execute'>();
 });
 
-it('C18 runs actual Core, Registry and instance dispatch through the explicit entry', async () => {
-    const registry = core.createViewOwnedTools('app', 'instance');
+it('C18 runs actual Core, Registry and instance dispatch through the explicit entries', async () => {
+    const registry = producer.createViewOwnedTools('app', 'instance');
     const inputSchema = { type: 'object', properties: {}, additionalProperties: false };
     let calls = 0;
     const execute = async () => { calls++; return { success: true, data: { value: 19 } }; };
     registry.defineViewTypes([{ name: "Detail", multiplicity: 'multiple', tools: [{ name: 'read', description: 'Read', inputSchema }] }]);
-    const frame = registry.prepareFrame([{ createId: () => 'v', type: 'Detail', owner: {}, bindings: [{ name: 'read', enabled: true, execute }] }]);
+    const frame = registry.prepareFrame([{ idPrefix: 'v', type: 'Detail', owner: {}, bindings: [{ name: 'read', enabled: true, execute }] }]);
     frame.accept();
     const tool = frame.tools[0]!, view = frame.instances[0]!;
-    const snapshots = core.createSnapshotCore({ appId: 'app', instanceId: 'instance', now: () => 0 });
-    expect(snapshots.committer.accept({ schemaVersion: 7, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
-        views: [{ toolBindings: view.toolBindings, id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', region: 'dynamic', content: { format: 'markdown-v1', value: 'state' } }],
+    const snapshots = host.createSnapshotCore({ appId: 'app', instanceId: 'instance', now: () => 0 });
+    expect(snapshots.committer.accept({ schemaVersion: 8, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+        views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', region: 'dynamic', content: { format: 'markdown-v1', value: 'state' } }],
         refs: {}, tools: { [tool.id]: tool } }).status).toBe('published');
     const binding: core.ExecutionBinding = { identity: {},
-        isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.receiver).success }), execute: async context => {
+        isLive: source => registry.validateTypeToolBinding(tool, source.receiver).success, execute: async context => {
             const terminal = await registry.invokeTypeTool(tool, context.source.receiver, context.effectiveInput);
             if (terminal.phase !== 'entered-returned' || !terminal.result.success || terminal.result.data?.value !== 19) throw Error('Unexpected business result');
             return { kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 19 } } };
         } };
-    const interaction = core.createAppInteraction(snapshots.store, { namespace: 'public:instance', now: () => 0, appId: 'app', instanceId: 'instance', policy: {
+    const interaction = host.createAppInteraction(snapshots.store, { namespace: 'public:instance', now: () => 0, appId: 'app', instanceId: 'instance', policy: {
         project: () => ({ refs: [], toolIds: [tool.id] }),
         authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => binding } });
-    const observed = await interaction.observe({ all: true }); expect(observed.status).toBe('observed'); if (observed.status !== 'observed') throw Error();
+    const observed = await interaction.observe(); expect(observed.status).toBe('observed'); if (observed.status !== 'observed') throw Error();
     expect(interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
     const request = { invocationId: 'call', observationId: observed.observation.observationId,
-        toolId: observed.observation.tools[0]!.id, input: { view_id: 'v' } };
+        toolId: observed.observation.tools[0]!.id, viewId: view.viewId, input: {  } };
     const result = await interaction.invoke(request);
     expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true, data: { value: 19 } } } } });
     interaction.releaseObservation(observed.observation.observationId);

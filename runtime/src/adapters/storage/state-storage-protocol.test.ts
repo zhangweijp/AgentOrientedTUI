@@ -1,24 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { capturePersistenceAck, capturePersistenceOffer, captureStorageRequest, captureStorageResponse,
-    captureManagedPersistenceReport, DEFAULT_STATE_SESSION_LIMITS as core, DEFAULT_STATE_TRANSPORT_LIMITS as limits } from './state-storage-protocol.js';
+import { capturePersistenceAck, captureStorageRequest, captureStorageResponse,
+    captureManagedPersistenceReport, DEFAULT_STATE_TRANSPORT_LIMITS as limits } from './state-storage-protocol.js';
 const request = () => ({ type: 'STATE_STORAGE_REQUEST', version: 2, instanceId: 'i', sequence: 1, action: 'replace',
     address: { namespace: '["d","a"]', key: 'k' }, text: '{}' });
 describe('B02/B13/B14/B16 pure persistence protocol', () => {
-    it('captures only an exact versioned offer and instance ACK', () => {
+    it('captures only an exact versioned storage request with the expected instance', () => {
         const ack = { protocol: 'state-session-v2', version: 2, instanceId: 'i' };
         expect(capturePersistenceAck(ack, 'i')).toEqual(ack);
         for (const value of [undefined, { ...ack, instanceId: 'j' }, { ...ack, extra: true }, { ...ack, protocol: 'state-session-v1' }, { ...ack, version: 1 }]) expect(capturePersistenceAck(value, 'i')).toBeNull();
-        const offer = { ...ack, limits: core, transport: limits };
-        expect(capturePersistenceOffer(offer, 'i')).toEqual(offer);
-        expect(capturePersistenceOffer({ ...offer, protocol: 'state-session-v1' }, 'i')).toBeNull();
         let getters = 0;
-        for (const input of [ack, offer]) {
-            const accessor = Object.defineProperty({ ...input }, 'protocol', { enumerable: true, get() { getters++;return 'state-session-v2'; } });
-            expect(capturePersistenceAck(accessor, 'i')).toBeNull();
-            expect(capturePersistenceOffer(accessor, 'i')).toBeNull();
-        }
+        const accessor = Object.defineProperty({ ...ack }, 'protocol', { enumerable: true, get() { getters++;return 'state-session-v2'; } });
+        expect(capturePersistenceAck(accessor, 'i')).toBeNull();
         expect(getters).toBe(0);
-        for (const timeoutMs of [0, -1, Infinity, 300001, 1.5, 2147483648]) expect(capturePersistenceOffer({ ...offer, transport: { ...limits, timeoutMs } }, 'i')).toBeNull();
     });
     it('rejects accessor, inherited, extra, bad address/action and release bodies before evaluating getters', () => {
         let getters = 0;const bad = { ...request() };Object.defineProperty(bad, 'text', { enumerable: true, get() { getters++;return '{}'; } });

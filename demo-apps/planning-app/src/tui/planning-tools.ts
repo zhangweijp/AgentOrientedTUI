@@ -1,7 +1,7 @@
 import { defineViewType, refParam } from '@aotui/sdk';
 import Type from 'typebox';
 import { PlanSchema, PhaseSchema, TaskSchema } from './ref-schemas.js';
-import type { PhaseInput, Plan, TaskInput } from '../types.js';
+import type { PhaseCompletion, PhaseInput, Plan, TaskInput } from '../types.js';
 
 const taskInput = Type.Object({
     title: Type.String(),
@@ -72,11 +72,11 @@ type PlanDetailActions = {
     activePlan: Plan | null;
     addPhase: (title: string, description?: string, tasks?: TaskInput[]) => Promise<string | null>;
     deletePhase: (phaseId: string) => Promise<boolean>;
-    completePhase: (phaseId: string) => Promise<boolean>;
+    completePhase: (phaseId: string) => Promise<(PhaseCompletion & { projectionWarning?: string }) | null>;
     addTask: (phaseId: string, title: string, description?: string) => Promise<string | null>;
     updateTask: (taskId: string, updates: { title?: string; description?: string }) => Promise<boolean>;
     deleteTask: (taskId: string) => Promise<boolean>;
-    completeTask: (taskId: string) => Promise<boolean>;
+    completeTask: (taskId: string) => Promise<{ projectionWarning?: string } | null>;
 };
 
 function findActivePlan(plan: Plan | null, requestedPlanId: string): Plan | null {
@@ -178,14 +178,21 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 return { success: true, data: { message: 'Phase deleted.' } };
             },
         },
-        complete_phase: { description: 'Complete the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
+        complete_phase: { description: 'Complete the selected Phase and all its remaining pending Tasks. Select a Phase Ref from the active PlanDetail.',
             inputSchema: planDetailPhaseInput,
             async execute({ input: args, context: actions }) {
                 const { plan, phase } = phaseFor(actions.activePlan, args.phase.id);
                 if (!plan) return inactivePlan();
                 if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Phase Ref from that Plan.' } };
-                if (!await actions.completePhase(phase.id)) return { success: false, error: { code: 'PHASE_COMPLETE_FAILED', message: 'Complete phase failed' } };
-                return { success: true, data: { message: 'Phase completed.' } };
+                const completed = await actions.completePhase(phase.id).catch(() => undefined);
+                if (completed === undefined) return { success: false, error: { code: 'PHASE_COMPLETE_FAILED', message: `Could not save completion for phase "${phase.title}".` } };
+                if (!completed) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'The selected Phase is no longer in the active Plan.' } };
+                const { title, phaseChanged, tasksCompleted, ...projection } = completed;
+                const phaseResult = phaseChanged ? `Phase "${title}" completed.` : `Phase "${title}" was already complete.`;
+                const taskResult = phaseChanged || tasksCompleted > 0
+                    ? `Completed ${tasksCompleted} remaining ${tasksCompleted === 1 ? 'task' : 'tasks'}.`
+                    : 'No changes were made.';
+                return { success: true, data: { message: `${phaseResult} ${taskResult}`, tasksCompleted, ...projection } };
             },
         },
         add_task: { description: 'Add a task to the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
@@ -224,8 +231,9 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 const { plan, task } = taskFor(actions.activePlan, args.task.id);
                 if (!plan) return inactivePlan();
                 if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Task Ref from that Plan.' } };
-                if (!await actions.completeTask(task.id)) return { success: false, error: { code: 'TASK_COMPLETE_FAILED', message: 'Complete task failed' } };
-                return { success: true, data: { message: 'Task completed.' } };
+                const completed = await actions.completeTask(task.id).catch(() => null);
+                if (!completed) return { success: false, error: { code: 'TASK_COMPLETE_FAILED', message: `Could not complete task "${task.title}".` } };
+                return { success: true, data: { message: `Task "${task.title}" completed.`, ...completed } };
             },
         },
 } });

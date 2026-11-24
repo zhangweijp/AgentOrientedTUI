@@ -7,7 +7,7 @@
 import { describe, it } from 'vitest';
 import * as fc from 'fast-check';
 import { sortModels } from '../../../src/gui/hooks/useModels.js';
-import type { ModelsDevModel } from '@aotui/agent-driver-v2';
+import type { ModelsDevModel } from '../../../src/services/model-registry.js';
 
 /**
  * Arbitrary generator for ModelsDevModel

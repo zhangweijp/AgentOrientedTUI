@@ -46,14 +46,6 @@ export class IMGatewayManager extends EventEmitter {
     return this.channels.get(channelId)
   }
 
-  getRegisteredChannelIds(): string[] {
-    return Array.from(this.channels.keys())
-  }
-
-  getActiveChannelIds(): string[] {
-    return Array.from(this.activeChannelIds.values()).sort((a, b) => a.localeCompare(b))
-  }
-
   listChannels(): RegisteredChannelRuntime[] {
     return Array.from(this.channels.values())
       .map((channel) => ({

@@ -1,4 +1,4 @@
-import { projectCompleteViews } from '@aotui/core/internal';
+import { createTurnCoordinator, projectCompleteViews } from '@aotui/core/host';
 import { expect, it, vi } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -7,10 +7,9 @@ import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 import { SemanticSnapshotReceiver } from '../../runtime/src/adapters/snapshot/receiver.js';
 import { Desktop } from '../../runtime/src/engine/core/desktop.js';
 import type { AppManager } from '../../runtime/src/engine/app/manager.js';
-import { commitAppFrame, SemanticProjectionCoordinator } from '@aotui/core/internal';
-import { createViewOwnedTools } from '@aotui/core';
+import { commitAppFrame, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core/producer';
 import { compileToolParameters } from '@aotui/core';
-import type { AppDiscoveryInfo, IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
+import type { AppDiscoveryInfo, IDesktop } from '../../runtime/src/spi/runtime/kernel.interface.js';
 import type { ExecutionBinding, InvocationContext, AppInteractionPolicy } from '@aotui/core';
 import type { ViewToolInvocationTerminal } from '@aotui/core';
 import type { SnapshotCore } from '@aotui/core';
@@ -44,8 +43,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     const receiver = new SemanticSnapshotReceiver(appId, instanceId, () => 100);
     const binding: ExecutionBinding = {
         identity: {},
-        isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success
-            ? { ok: true } : { ok: false },
+        isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success,
         execute: async (context: InvocationContext) => {
             const terminal: ViewToolInvocationTerminal = await registry.invokeTypeTool(
                 context.source.tool, context.source.receiver, context.effectiveInput);
@@ -57,12 +55,12 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     };
 
     const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId, instanceId }) });
-    const publish = (nextBody = body) => {
-        commitAppFrame(projection, registry, () => ({ views: [{
-            createId: () => 'workspace', type, name: viewName, region: 'dynamic', owner,
+    const publish = (nextBody = body, visible = true) => {
+        commitAppFrame(projection, registry, () => ({ views: visible ? [{
+            idPrefix: 'workspace', type, name: viewName, region: 'dynamic', owner,
             content: { format: 'markdown-v1', value: nextBody }, refs: [],
             bindings: [{ name: toolName(), enabled: true, execute }],
-        }] }));
+        }] : [] }));
         const publication = projection.nextPublication();
         const accepted = 'draft' in publication
             ? receiver.acceptPrepared(publication.draft)
@@ -75,7 +73,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
 
     return {
         app: { installationId: appId + ':install', appId: appId as AppDiscoveryInfo['appId'], appInstanceId: instanceId, name, status: 'running' as const },
-        registry, receiver, projection, execution, invoked,
+        registry, receiver, projection, execution, invoked, publish,
         repairViewType(next: string) {
             type = next;
             owner = {};
@@ -92,34 +90,33 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     const healthy = createApp('healthy_app', 'healthy_app', 'healthy-instance', 'Workspace', healthyBody, 'foo>bar');
     const assemblies = [bad, collidingB, collidingA, healthy];
     const subscriptions = new Set<() => void>();
+    const turns = createTurnCoordinator();
+    const policy = { project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true };
     const desktop = {
         id: 'real-core-test-desktop',
-        bindRequestSources: () => undefined,
-        getInstalledApps: () => assemblies.map(assembly => assembly.app),
+        adoptTurn: turns.adoptTurn,
+        getRunningApp: (appId: string, instanceId: string) => {
+            const assembly = assemblies.find(item => item.app.appId === appId && item.app.appInstanceId === instanceId);
+            if (!assembly) return { status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE', message: 'App not found.' } };
+            const interaction = assembly.receiver.interaction(policy, assembly.execution);
+            return { status: 'ready', app: { observe: () =>
+                turns.prepareObservation(interaction, () => assemblies.includes(assembly)) } };
+        },
+        listApps: () => assemblies.map(assembly => assembly.app),
         getAppWindows: () => undefined,
         getSystemLogs: () => [],
-        openApp: async () => {}, closeApp: async () => {}, collapseApp: async () => {}, expandApp: async () => {},
+        openApp: async () => {}, collapseApp: async () => {}, expandApp: async () => {},
         output: { subscribe: (listener: () => void) => subscriptions.add(listener),
             unsubscribe: (listener: () => void) => subscriptions.delete(listener) },
     } as unknown as IDesktop;
-    const kernel = {
-        getAppInteraction: (_desktopId: string, appId: string, instanceId: string, policy?: AppInteractionPolicy) => {
-            const assembly = assemblies.find(item => item.app.appId === appId);
-            return assembly && assembly.app.appInstanceId === instanceId
-                ? { status: 'ready' as const, interaction: assembly.receiver.interaction(policy ?? {
-                    project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true,
-                }, assembly.execution) }
-                : { status: 'rejected' as const, issue: { code: 'APP_INTERACTION_UNAVAILABLE', message: 'App not found.' } };
-        },
-    } as unknown as IKernel;
-    const source = new SemanticAOTUIDrivenSource(desktop, kernel, { includeInstruction: false });
+    const source = new SemanticAOTUIDrivenSource(desktop, { includeInstruction: false });
     const contexts: Awaited<ReturnType<typeof source.getContext>>[] = [];
 
     try {
         // The Core accepts this Tool name. The stricter native alias rule belongs
         // to Semantic Source, which must isolate only this App at projection time.
         expect(bad.receiver.report()).toMatchObject({ health: 'ready', published: 1 });
-        expect(bad.registry.getView('workspace')?.viewType).toBe('InvalidAlias');
+        expect(bad.registry.getView('workspace_1')?.viewType).toBe('InvalidAlias');
         expect(JSON.stringify(bad.receiver.report())).not.toContain('AOTUI_TOOL_NAME_INVALID');
 
         const first = await source.getContext();
@@ -134,26 +131,24 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         expect(firstText).toContain('COLLISION_A_BODY');
         expect(firstText).toContain('HEALTHY_APP_BODY');
         const healthyMessage = String(first.messages.find(message => String(message.content).includes('HEALTHY_APP_BODY'))?.content);
-        expect(healthyMessage).toContain('view_id="workspace" view_type="Workspace" app_id="healthy_app" app_name="healthy_app"');
+        expect(healthyMessage).toContain('view_id="workspace_1" view_type="Workspace" app_id="healthy_app" app_name="healthy_app"');
         expect(healthyMessage).toContain('\n&lt;view id="literal"&gt;HEALTHY_APP_BODY&lt;/view&gt;\n</view>');
         expect(firstText).toContain('AOTUI_TOOL_NAME_INVALID: toolName');
         expect(first.tools['collision_b-run']).toBeDefined();
 
-        expect(await first.executeTool!('collision_a-run', { view_id: 'workspace', value: 'winner' }, 'collision-winner'))
+        expect(await first.executeTool!('collision_a-run', { view_id: 'workspace_1', value: 'winner' }, 'collision-winner'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'collision_a', value: 'winner' } });
-        expect(await first.executeTool!('healthy_app-run', { view_id: 'workspace', value: 'usable' }, 'healthy-call'))
+        expect(await first.executeTool!('healthy_app-run', { view_id: 'workspace_1', value: 'usable' }, 'healthy-call'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'healthy_app', value: 'usable' } });
         expect(collidingA.invoked).toEqual(['winner']);
         expect(collidingB.invoked).toEqual([]);
         expect(healthy.invoked).toEqual(['usable']);
         expect(bad.invoked).toEqual([]);
-        expect(bad.receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0,
-            observations: { observations: 0, reservations: 0, totalBytes: 0 } });
+        expect(bad.receiver.getInteractionStats()).toMatchObject({ observations: { observations: 0, reservations: 0, } });
 
         await first.release!();
         for (const assembly of assemblies) {
-            expect(assembly.receiver.getInteractionStats()).toMatchObject({ sourceBytes: 0, workBytes: 0,
-                observations: { observations: 0, reservations: 0, totalBytes: 0 } });
+            expect(assembly.receiver.getInteractionStats()).toMatchObject({ observations: { observations: 0, reservations: 0, } });
             expect(inspectCore(assembly.receiver).activeHolds).toBe(0);
         }
 
@@ -166,7 +161,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         await recovered.adopt!();
         expect(recovered.tools['bad_app-run']).toBeDefined();
         expect(JSON.stringify(recovered.messages)).toContain('bad_app repaired View content.');
-        expect(await recovered.executeTool!('bad_app-run', { view_id: 'workspace', value: 'recovered' }, 'bad-recovered'))
+        expect(await recovered.executeTool!('bad_app-run', { view_id: 'workspace_2', value: 'recovered' }, 'bad-recovered'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'bad_app', value: 'recovered' } });
         expect(bad.invoked).toEqual(['recovered']);
 
@@ -176,12 +171,11 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
             await assembly.receiver.close();
             assembly.projection.close();
             assembly.registry.dispose();
-            expect(assembly.receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0,
-                observations: { observations: 0, reservations: 0, totalBytes: 0 } });
+            expect(assembly.receiver.getInteractionStats()).toMatchObject({ closed: true, observations: { observations: 0, reservations: 0, } });
             expect(inspectCore(assembly.receiver)).toMatchObject({
                 state: 'disposed', activeHolds: 0, currentBytes: 0,
             });
-            expect(assembly.registry.inspect()).toMatchObject({ state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
+            expect(assembly.registry.inspect()).toMatchObject({ state: 'disposed', views: 0, bindings: 0 });
         }
     } finally {
         for (const context of contexts) await context.release?.();
@@ -194,6 +188,89 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     }
 });
 
+it('sends no candidate HTTP when A closes or remounts inside B verification', async () => {
+    const facts = [];
+    for (const change of ['close', 'remount', 'text']) {
+        const a = createApp('first_app', 'first_app', 'first-instance', 'Workspace', 'original A body');
+        const b = createApp('second_app', 'second_app', 'second-instance', 'Workspace', 'original B body');
+        const receivers = [a, b], turns = createTurnCoordinator();
+        const receiver = b.receiver as unknown as ReceiverCoreInspection;
+        const original = receiver.core;
+        let atRead: (() => void) | undefined;
+        receiver.core = { ...original, store: { ...original.store, readLatest(appId) {
+            const changeNow = atRead;
+            atRead = undefined;
+            changeNow?.();
+            return original.store.readLatest(appId);
+        } } };
+        let duringNextAdoption = false;
+        let failures = 0;
+        const policy = { project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true };
+        const desktop = {
+            adoptTurn: (input: Parameters<typeof turns.adoptTurn>[0]) => {
+                if (duringNextAdoption) atRead = () => {
+                    failures++;
+                    if (change === 'close') a.publish('', false);
+                    else if (change === 'remount') a.repairViewType('Workspace');
+                    else a.publish('new A body');
+                };
+                return turns.adoptTurn(input);
+            },
+            listApps: () => receivers.map(item => item.app),
+            getAppWindows: () => undefined,
+            getRunningApp(appId: string) {
+                const found = receivers.find(item => item.app.appId === appId)!;
+                return { status: 'ready', app: { observe: () =>
+                    turns.prepareObservation(found.receiver.interaction(policy, found.execution), () => true) } };
+            },
+            output: { subscribe() {}, unsubscribe() {} },
+        } as unknown as IDesktop;
+        const provider = await fixtureProvider();
+        const source = new SemanticAOTUIDrivenSource(desktop);
+        const errors: Array<Error & { code?: string; cause?: { code?: string } }> = [];
+        const driver = new AgentDriverV2({ sources: [source], llm: {
+            model: 'atomic-fixture', provider: { id: 'atomic-fixture', baseURL: provider.url }, apiKey: 'test-only',
+        }, onRunError: error => errors.push(error) });
+        try {
+            const prior = await source.getContext();
+            await prior.adopt!();
+            duringNextAdoption = true;
+            await driver.trigger();
+            await (driver as unknown as { runInFlight?: Promise<void> }).runInFlight;
+            expect(failures).toBe(1);
+            expect(provider.failures).toEqual([]);
+            if (change === 'text') {
+                expect(errors).toEqual([]);
+                expect(provider.requests).toHaveLength(1);
+                expect(JSON.stringify(provider.requests[0].body.messages)).toContain('original A body');
+            } else {
+                expect(provider.requests).toHaveLength(0);
+                expect(errors).toMatchObject([{ code: 'SEMANTIC_ADOPTION_FAILED', cause: { code: 'OBSERVATION_WINDOW_CHANGED' } }]);
+                expect(await prior.executeTool!('first_app-run', { view_id: 'workspace_1', value: 'rejected' }, 'old-a'))
+                    .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'VIEW_INSTANCE_REVOKED' } });
+                expect(await prior.executeTool!('second_app-run', { view_id: 'workspace_1', value: 'retained' }, 'old-b'))
+                    .toMatchObject({ outcomeStatus: 'succeeded' });
+                expect(a.invoked).toEqual([]);
+                expect(b.invoked).toEqual(['retained']);
+            }
+            facts.push({ change, requests: provider.requests, errors: errors.map(error => [error.code, error.cause?.code]),
+                firstCalls: a.invoked, secondCalls: b.invoked });
+        } finally {
+            driver.dispose(); await source.dispose(); await provider.close();
+            for (const { receiver, projection, registry } of receivers) {
+                await receiver.close();
+                projection.close();
+                registry.dispose();
+            }
+        }
+    }
+    const evidence = process.env.AOTUI_BATCH_TWO_EVIDENCE;
+    if (evidence) {
+        await mkdir(evidence, { recursive: true });
+        await writeFile(join(evidence, 'atomic-driver.json'), JSON.stringify(facts, null, 2));
+    }
+});
+
 it('uses the Host App limit even when an adopted request contains more than 128 sources', async () => {
     const maxApps = 150;
     const assemblies = Array.from({ length: maxApps + 1 }, (_, index) => {
@@ -201,28 +278,30 @@ it('uses the Host App limit even when an adopted request contains more than 128 
         return createApp(id, id, id + '_run', 'Workspace', 'Short page.');
     });
     const byId = new Map(assemblies.map(assembly => [assembly.app.appId, assembly]));
-    const desktop = new Desktop();
+    const desktop = new Desktop('capacity');
     const manager = (desktop as unknown as { appManager: AppManager }).appManager;
     let directorySize = 0;
     const policy: AppInteractionPolicy = {
         project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true,
     };
-    vi.spyOn(manager, 'getInstalledApps').mockImplementation(() => assemblies.slice(0, directorySize).map(item => item.app));
+    vi.spyOn(manager, 'listApps').mockImplementation(() => assemblies.slice(0, directorySize).map(item => item.app));
     vi.spyOn(manager, 'isRunningApp').mockImplementation((id, instance) => byId.get(id)?.app.appInstanceId === instance);
+    vi.spyOn(manager, 'getManagedApp').mockImplementation(id => {
+        const app = byId.get(id)?.app;
+        return app ? { appInstanceId: app.appInstanceId } as ReturnType<AppManager['getManagedApp']> : undefined;
+    });
     const issueClient = vi.spyOn(manager, 'getAppInteraction').mockImplementation((id, instance) => {
         const assembly = byId.get(id);
         if (!assembly || assembly.app.appInstanceId !== instance) throw new Error('Unexpected capacity fixture identity');
         return { status: 'ready', interaction: assembly.receiver.interaction(policy, assembly.execution) };
     });
-    const bind = vi.spyOn(desktop, 'bindRequestSources');
-    const kernel = { getAppInteraction: (_desktopId: string, id: string, instanceId: string) =>
-        desktop.getAppInteraction(id, instanceId) } as IKernel;
+    const bind = vi.spyOn(desktop, 'adoptTurn');
     const provider = await fixtureProvider();
     const facts = [];
     try {
         for (directorySize of [128, 129, 151]) {
             const errors: Error[] = [];
-            const source = new SemanticAOTUIDrivenSource(desktop, kernel, { maxApps, includeInstruction: false });
+            const source = new SemanticAOTUIDrivenSource(desktop, { maxApps, includeInstruction: false });
             const driver = new AgentDriverV2({ sources: [source], llm: {
                 model: 'capacity-fixture', provider: { id: 'capacity-fixture', baseURL: provider.url }, apiKey: 'test-only',
                 inputBudget: () => ({ contextWindow: 100_000, maxOutputTokens: 2048 }),
@@ -267,7 +346,7 @@ it('uses the Host App limit even when an adopted request contains more than 128 
             assembly.projection.close();
             assembly.registry.dispose();
         }
-        await desktop.dispose();
+        await desktop.beginClose().completion;
         await provider.close();
         const evidence = process.env.AOTUI_BATCH_TWO_EVIDENCE;
         if (evidence) {

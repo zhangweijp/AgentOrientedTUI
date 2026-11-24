@@ -1,13 +1,6 @@
-import { createStateSession } from '@aotui/core';
-import type { AppStatePersistence, StatePersistenceOptions, StateSessionLimits, StateFlushReport, StateDisposeReport, StateStorage, StateValue } from '@aotui/core';
-import { stateError, stateFields, stateIssue } from '@aotui/core/internal';
-import { DEFAULT_STATE_SESSION_LIMITS, STATE_SESSION_PROTOCOL } from '../adapters/storage/state-storage-protocol.js';
-
-export interface ManagedPersistenceReport {
-    readonly protocol: typeof STATE_SESSION_PROTOCOL; readonly instanceId: string;
-    readonly ok: boolean; readonly unmount: 'completed' | 'failed';
-    readonly flush: StateFlushReport; readonly dispose: StateDisposeReport;
-}
+import { createStateSession, stateError, stateFields, stateIssue } from '@aotui/core/persistence';
+import type { AppStatePersistence, StatePersistenceOptions, StateSessionLimits, StateStorage, StateValue } from '@aotui/core';
+import { DEFAULT_STATE_SESSION_LIMITS, STATE_SESSION_PROTOCOL, type ManagedPersistenceReport } from '../adapters/storage/state-storage-protocol.js';
 export function createAppStatePersistence(options: Readonly<{ instanceId: string; desktopId: string; appKey: string;
     storage: StateStorage; limits?: StateSessionLimits; now?: () => number }>) {
     const { instanceId, desktopId, appKey } = options;

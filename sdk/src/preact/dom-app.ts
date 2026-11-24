@@ -10,20 +10,18 @@ function shortIdentity(id: string): string {
     return id.slice(0, 25).replace(/[\uD800-\uDBFF]$/, '') + '…';
 }
 /** The Preact adapter alone initializes a document in its Worker. */
-export function createDOMAppRoot(appId: string): HTMLElement {
+export function createDOMAppRoot(): HTMLElement {
     if (typeof globalThis.document === 'undefined') {
         const { window, document } = parseHTML('<!DOCTYPE html><html><head></head><body></body></html>');
         Object.assign(globalThis, { document, window });
     }
     const root = document.createElement('div');
-    root.id = `app-root-${appId}`;
-    root.setAttribute('data-app-root', '');
     document.body.appendChild(root);
     return root;
 }
 
 export function readDOMAppViews(root: Element, attachment: (node: Element) => DOMAttachment | undefined,
-    attachedCount?: number): AppFrameView[] {
+    attachedCount: number): AppFrameView[] {
     const nodes = [...root.querySelectorAll(selector)];
     for (const node of nodes) {
         const parent = node.parentElement?.closest(selector);
@@ -35,7 +33,7 @@ export function readDOMAppViews(root: Element, attachment: (node: Element) => DO
             ), { code });
         }
     }
-    if (attachedCount !== undefined && nodes.length !== attachedCount)
+    if (nodes.length !== attachedCount)
         throw new Error('DOM projection does not contain the complete attached View set');
     return nodes.map((node, index) => {
         const current = attachment(node);

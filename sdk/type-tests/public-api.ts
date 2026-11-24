@@ -13,7 +13,6 @@ import {
   type AppContext,
   type AppStatePersistence,
   type AppID,
-  type AppReinitializeContext,
   type ArrayRefHandle,
   type DeepReadonly,
   type DesktopID,
@@ -34,45 +33,18 @@ import {
 } from '@aotui/sdk';
 import { arrayRef, formatRef, ref, type ArrayRefOptions, type RefOptions } from '@aotui/sdk/app';
 
-// @ts-expect-error The retired handwritten parameter DSL no longer owns inference.
-import type { InferArgs } from '@aotui/sdk';
-// @ts-expect-error Parameter types are declared with the shared TypeBox schema.
-import type { ParamBaseType } from '@aotui/sdk';
-// @ts-expect-error The retired parameter-constraint DSL is not a public export.
-import type { ParamConstraints } from '@aotui/sdk';
-// @ts-expect-error The retired parameter-definition DSL is not a public export.
-import type { ParamDef } from '@aotui/sdk';
-// @ts-expect-error The retired parameter-schema DSL is not a public export.
-import type { ParamSchema } from '@aotui/sdk';
-// @ts-expect-error The retired parameter-type DSL is not a public export.
-import type { ParamType } from '@aotui/sdk';
-
-// @ts-expect-error The retired options type is not part of the SDK root API.
-import type { LLMOutputChannelOptions } from '@aotui/sdk';
-// @ts-expect-error Model usage belongs to the host.
-import type { LLMUsageEvent } from '@aotui/sdk';
-// @ts-expect-error App-owned storage uses the context's explicit port.
-import { usePersistentState } from '@aotui/sdk';
 import './view-type-tool.js';
 
-// @ts-expect-error Launch config is read from useAppRuntimeContext().
-import { useAppEnv } from '@aotui/sdk';
-// @ts-expect-error The SDK has no history source for this Hook.
-import { useLLMOutputHistory } from '@aotui/sdk';
 import type {
   ToolError as RuntimeToolError,
   ToolResult as RuntimeToolResult,
 } from '@aotui/core';
 
-// These former exports describe retired/internal Runtime assembly surfaces.
-// @ts-expect-error Legacy object-app interface is not part of the SDK root API.
-import type { IAOTUIApp } from '@aotui/sdk';
 // @ts-expect-error The Context object is private SDK plumbing.
 import { ViewRuntimeContext } from '@aotui/sdk';
 // @ts-expect-error The full SDK Context accessor is private.
 import { useInternalAppRuntimeContext } from '@aotui/sdk';
 
-void (null as unknown as IAOTUIApp);
 void ViewRuntimeContext;
 void useInternalAppRuntimeContext;
 type PublicAppRuntimeContext = ReturnType<typeof useAppRuntimeContext>;
@@ -141,7 +113,7 @@ function checkPublicContextShape() {
 void checkPublicContextShape;
 
 type PublicTypes = [
-  AppContext, AppID, AppReinitializeContext, ArrayRefHandle,
+  AppContext, AppID, ArrayRefHandle,
   DeepReadonly<unknown>, DesktopID, ArgsOf<typeof readRecord>,
   ItemRefFormatter,
   ListRefFormatter, ToolError, ToolResult,
@@ -158,10 +130,6 @@ type NoRefHandleProperties = AssertNever<Extract<keyof RefHandle, 'data' | 'id'>
 type ViewCloseHandler = AssertTrue<Equal<ViewProps<ViewType>['onClose'], (() => ToolResult | Promise<ToolResult>) | undefined>>;
 type PublicShapeChecks = [NoRefHandleProperties, ViewCloseHandler];
 void (null as unknown as PublicShapeChecks);
-
-void useAppEnv;
-void useLLMOutputHistory;
-void usePersistentState;
 
 const config: TUIAppConfig = {
   app_name: 'public_api_types',
@@ -180,7 +148,7 @@ const cleanup: AppLifecycleCallbacks = { stop() {}, close() {} };
 useAppLifecycle(cleanup);
 useAppLifecycle({});
 
-const Reader = defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'RecordDetail',tools:{
+const Reader = defineViewType<object>()({ multiplicity: 'multiple', name:'RecordDetail',tools:{
   read_record:{description:'Read a record.',execute:()=>({success:true}),inputSchema:Type.Object({status:Type.Enum(['ready','pending']),limit:Type.Optional(Type.Number())})},
 }});
 const readRecord = Reader.tools.read_record;
@@ -201,9 +169,13 @@ function checkRefSourceTypes(unknownValue: unknown): void {
   const [all, first] = useArrayRef('records', records, recordsOptions);
   void [label('Current'), all('All'), first(0, 'First')];
 
+  // @ts-expect-error Every published Ref requires a declared schema.
   ref('untyped', unknownValue, { scope: 'protected' });
+  // @ts-expect-error Every published Ref requires a declared schema.
   useDataRef('untyped', unknownValue, { scope: 'protected', refType: 'Data', schema: undefined });
+  // @ts-expect-error Every published Ref requires a declared schema.
   arrayRef('untyped_list', [unknownValue], { scope: 'protected', itemType: 'Data' });
+  // @ts-expect-error Every published Ref requires a declared schema.
   useArrayRef('untyped_list', [unknownValue], { scope: 'protected' });
 
   // @ts-expect-error The value cannot widen a concrete TypeBox source schema.

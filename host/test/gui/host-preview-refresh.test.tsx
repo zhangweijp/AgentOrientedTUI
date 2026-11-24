@@ -10,8 +10,9 @@ import { ChatBridge } from '../../src/gui/ChatBridge.js';
 import { TuiDesktopViewer } from '../../src/gui/components/TuiDesktopViewer.js';
 import { appRouter } from '../../src/trpc/router.js';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import { createSnapshotCore, createAppInteraction, createViewOwnedTools,
-    type ExecutionBinding } from '@aotui/core';
+import { createAppInteraction, createSnapshotCore, createTurnCoordinator } from '@aotui/core/host';
+import { createViewOwnedTools } from '@aotui/core/producer';
+import type { ExecutionBinding } from '@aotui/core';
 
 // Existing DI boundaries: no singleton DesktopManager, user database/config,
 // Electron process/IPC, skills scan, MCP server or model is started by this test.
@@ -39,7 +40,7 @@ function assembly(topicId: string, instanceId: string) {
     const inputSchema = { type: 'object', properties: {}, additionalProperties: false };
     let entries = 0;
     registry.defineViewTypes([{ name: "Workspace", multiplicity: 'multiple', tools: [{ name: 'inspect', description: 'Inspect current work.', inputSchema }] }]);
-    const frame = registry.prepareFrame([{ createId: () => 'work', type: 'Workspace', owner: {}, bindings: [{
+    const frame = registry.prepareFrame([{ idPrefix: 'work', type: 'Workspace', owner: {}, bindings: [{
         name: 'inspect', enabled: true, execute: () => {
             entries++;
             return { success: true, data: { completed: true } };
@@ -48,7 +49,7 @@ function assembly(topicId: string, instanceId: string) {
     frame.accept();
     const view = frame.instances[0]!;
     const binding: ExecutionBinding = { identity: {},
-        isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
+        isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success,
         execute: async () => { entries++; return { kind: 'tool-result', phase: 'entered-returned', result: { success: true } }; },
     };
     const authority = createAppInteraction(core.store, { namespace: 'preview:' + instanceId, now: Date.now, appId: 'preview_app', instanceId,
@@ -57,23 +58,27 @@ function assembly(topicId: string, instanceId: string) {
     let hold: { started: ReturnType<typeof deferred>; resume: ReturnType<typeof deferred> } | undefined;
     const gates: Array<ReturnType<typeof deferred>> = [];
     let sequence = 0, businessValue = '';
-    const interaction = () => ({ status: 'ready' as const, interaction: { ...authority, preview: async () => {
+    const turns = createTurnCoordinator();
+    const getRunningApp = () => ({ status: 'ready' as const, app: { readReceipt: authority.readReceipt,
+        observe: () => turns.prepareObservation(authority, () => true),
+        preview: async () => {
         const barrier = hold; hold = undefined;
         const result = await authority.preview();
         if (barrier) { barrier.started.resolve(); await barrier.resume.promise; }
         return result;
     } } });
-    const desktop = { id: topicId, bindRequestSources: () => undefined, getAppInteraction: interaction,
+    const desktop = { id: topicId, adoptTurn: turns.adoptTurn, getRunningApp,
         output: { subscribe: (fn: () => void) => { listeners.add(fn); }, unsubscribe: (fn: () => void) => { listeners.delete(fn); } },
-        getInstalledApps: () => [{ installationId: 'preview', appId: 'preview_app', appInstanceId: instanceId, name: 'preview_app', status: 'running' }],
-        getAppWindows: () => ({ appId: 'preview_app', instanceId, revision: 0, views: [{ viewId: view.viewId,
-            viewInstanceId: view.viewInstanceId, type: 'Workspace', name: 'Current work', region: 'dynamic', canClose: false }] }),
+        listApps: () => [{ installationId: 'preview', appId: 'preview_app', appInstanceId: instanceId, name: 'preview_app', status: 'running' }],
+        getAppWindows: () => ({ appId: 'preview_app', instanceId,
+            views: [{ viewId: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Workspace',
+                name: 'Current work', region: 'dynamic', canClose: false }] }),
         beginClose: () => ({ completion: Promise.resolve({ ok: true }) }),
         getSystemLogs: () => [],
     };
     function publish(body: string, notify = true) {
         businessValue = body;
-        const accepted = core.committer.accept({ schemaVersion: 7, appId: 'preview_app', instanceId,
+        const accepted = core.committer.accept({ schemaVersion: 8, appId: 'preview_app', instanceId,
             producerSeq: ++sequence, sourceEpoch: sequence, capturedAt: Date.now(),
             views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Workspace', region: 'dynamic', name: 'Current work',
                 content: { format: 'markdown-v1', value: body } }], refs: {},
@@ -85,8 +90,7 @@ function assembly(topicId: string, instanceId: string) {
     publish('Initial ' + topicId, false);
     return { desktop, core, authority, listeners, publish, instanceId, stage(body: string) { businessValue = body; }, businessValue: () => businessValue, entries: () => entries,
         holdNextRead() { const barrier = { started: deferred(), resume: deferred() }; hold = barrier; gates.push(barrier.resume); return barrier; },
-        interaction,
-        async dispose() { for (const gate of gates) gate.resolve(); authority.close(); await authority.whenClosed(); registry.dispose(); core.lifecycle.dispose(); },
+        async dispose() { for (const gate of gates) gate.resolve(); turns.close(); authority.close(); await authority.whenClosed(); registry.dispose(); core.lifecycle.dispose(); },
     };
 }
 function fixture() {
@@ -107,8 +111,7 @@ function fixture() {
     },
         getSession: SessionManagerV3.prototype.getSession.bind({ sessions, logger: { debug() {} } }),
         shutdownSession: async (id: string) => { const session = sessions.get(id); if (session) session.state = 'destroyed'; sessions.delete(id); } };
-    const kernel = { getDesktop: (id: string) => sessions.get(id)?.desktop,
-        getAppInteraction: (id: string, _appId: string, _instanceId: string) => sessions.get(id).app.interaction() };
+    const kernel = { getDesktop: (id: string) => sessions.get(id)?.desktop };
     const host = new HostManagerV2('unused', {} as any);
     Object.assign(host, { sessionManager: manager, kernel });
     const caller = appRouter.createCaller({ hostManager: host } as any);
@@ -147,6 +150,35 @@ function LivePreview({ bridge, topicId }: { bridge: ChatBridge; topicId: string 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); (ChatBridge as any).instance = null; });
 
 describe('current Host preview subscription', () => {
+    it('pulls only while preview is open and coalesces a burst into the final page', async () => {
+        vi.useFakeTimers();
+        const f = fixture();
+        try {
+            const query = vi.spyOn(f.client.session.preview, 'query');
+            await f.bridge.activateDesktop('log');
+            await f.subscribed.promise;
+            const app = f.sessions.get('log').app;
+            app.publish('Chat-only update');
+            await vi.advanceTimersByTimeAsync(200);
+            expect(query).not.toHaveBeenCalled();
+            await f.bridge.requestDesktopPreview('log');
+            expect(query).toHaveBeenCalledTimes(1);
+            app.publish('Log 1'); app.publish('Log 2'); app.publish('DONE');
+            await vi.advanceTimersByTimeAsync(149);
+            expect(query).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(query).toHaveBeenCalledTimes(2);
+            expect(previewBody(f.bridge.getDesktopPreview('log'))).toContain('DONE');
+            app.publish('Pending');
+            f.bridge.stopDesktopPreview('log');
+            app.publish('After preview closed');
+            await vi.advanceTimersByTimeAsync(200);
+            expect(query).toHaveBeenCalledTimes(2);
+            await f.bridge.requestDesktopPreview('log');
+            expect(previewBody(f.bridge.getDesktopPreview('log'))).toContain('After preview closed');
+        } finally { vi.useRealTimers(); await f.dispose(); }
+    });
+
     it('renders two accepted updates while remaining on a paused Topic without another user command or page switch', async () => {
         const f = fixture();
         try {
@@ -157,7 +189,7 @@ describe('current Host preview subscription', () => {
             expect(screen.getByText('Initial topic_a')).toBeInTheDocument();
             const initialQueries = queries.mock.calls.length;
             const app = f.sessions.get('topic_a').app;
-            const agent = new SemanticAOTUIDrivenSource(app.desktop as any, (f.host as any).kernel, { includeInstruction: false });
+            const agent = new SemanticAOTUIDrivenSource(app.desktop as any, { includeInstruction: false });
             try {
                 const context = await agent.getContext(); await context.adopt!();
                 await act(async () => {
@@ -173,7 +205,7 @@ describe('current Host preview subscription', () => {
                 expect(screen.getByText('Committed two')).toBeInTheDocument();
                 expect(screen.queryByText('Initial topic_a')).toBeNull();
                 expect(f.sessions.get('topic_a').state).toBe('paused');
-                expect((await context.executeTool!('preview_app-inspect', { view_id: 'work' }, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
+                expect((await context.executeTool!('preview_app-inspect', { view_id: 'work_1' }, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
                 expect(app.entries()).toBe(1);
                 // The GUI initiates no second request; notifications drive independent reads.
                 expect(queries.mock.calls.length).toBeGreaterThan(initialQueries);
@@ -181,7 +213,7 @@ describe('current Host preview subscription', () => {
                 await context.release?.();
             } finally { agent.dispose(); }
             expect(app.authority.inspect().observations.observationSlots).toBe(0);
-            expect(app.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0 });
+            expect(app.authority.inspect()).toMatchObject({ activeReads: 0, borrowedSnapshots: 0 });
             expect(app.core.store.inspect().activeHolds).toBe(0);
         } finally { await f.dispose(); }
     });
@@ -282,7 +314,7 @@ describe('current Host preview subscription', () => {
             barrier.resume.resolve();
             await vi.waitFor(() => expect(app.authority.inspect().observations.observationSlots).toBe(0));
             expect(app.core.store.inspect().activeHolds).toBe(0);
-            expect(app.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0 });
+            expect(app.authority.inspect()).toMatchObject({ activeReads: 0, borrowedSnapshots: 0 });
             expect(f.bridge.getDesktopPreview('release')).toBe(cached);
             expect(app.listeners.size).toBe(0);
             app.publish('After cancellation');
@@ -342,7 +374,7 @@ describe('current Host preview subscription', () => {
             await f.bridge.requestDesktopPreview('error'); await f.subscribed.promise;
             await vi.waitFor(() => expect(previewBody(f.bridge.getDesktopPreview('error'))).toContain('Initial error'));
             const app = f.sessions.get('error').app;
-            const discovery = vi.spyOn(app.desktop, 'getInstalledApps').mockImplementation(() => { throw Error('Controlled preview capture failed'); });
+            const discovery = vi.spyOn(app.desktop, 'listApps').mockImplementation(() => { throw Error('Controlled preview capture failed'); });
             app.publish('Not readable yet');
             await vi.waitFor(() => expect(events.some(event => event.type === 'snapshot_error' && String(event.data).includes('Controlled preview capture failed'))).toBe(true));
             expect(previewBody(f.bridge.getDesktopPreview('error'))).toContain('Initial error');
@@ -464,7 +496,7 @@ it('restores the current preview after real Session teardown without accepting t
         const barrier = app.holdNextRead(); app.publish('Held previous Session'); await barrier.started.promise;
         previous.agentDriver = { closeToolTurn: vi.fn(async () => {}), dispose: vi.fn() };
         previous.sources = { aotui: { dispose: vi.fn(async () => {}) } };
-        const backend = new SessionManagerV3({} as never, {} as never, {} as never, {} as never);
+        const backend = new SessionManagerV3({} as never, {} as never, {} as never);
         backend['sessions'] = f.sessions;
         try { await backend.destroySession('recycled'); }
         finally { backend.stopCleanupTask(); }
@@ -481,7 +513,7 @@ it('restores the current preview after real Session teardown without accepting t
         await vi.waitFor(() => expect(previewBody(f.bridge.getDesktopPreview('recycled'))).toContain('New incarnation page'));
         expect(seen.some(value => value.includes('Held previous Session'))).toBe(false);
         expect(app.listeners.size).toBe(0); expect(app.authority.inspect().observations.observationSlots).toBe(0);
-        expect(app.core.store.inspect().activeHolds).toBe(0); expect(app.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0 });
+        expect(app.core.store.inspect().activeHolds).toBe(0); expect(app.authority.inspect()).toMatchObject({ activeReads: 0, borrowedSnapshots: 0 });
         app.publish('Late old Desktop notification');
         expect(previewBody(f.bridge.getDesktopPreview('recycled'))).toContain('New incarnation page');
         current.app.publish('New incarnation second update');

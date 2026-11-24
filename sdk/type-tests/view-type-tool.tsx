@@ -7,7 +7,7 @@ import type { ViewBindings } from '@aotui/sdk';
 import type { ToolBinding } from '@aotui/sdk/app';
 
 type DetailContext = { record(id: string): void };
-const Detail = defineViewType<DetailContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Detail', tools:{
+const Detail = defineViewType<DetailContext>()({ multiplicity: 'multiple', name:'Detail', tools:{
     use: { description:'Use a ref',
         inputSchema:Type.Object({ selected:refParam('Item',Type.Object({ id:Type.String() })),
             many:Type.Optional(Type.Array(refParam('Item',Type.Object({ name:Type.String() })))) }),
@@ -23,7 +23,7 @@ const Detail = defineViewType<DetailContext>()({ multiplicity: 'multiple', creat
         },
     },
 } });
-const Empty = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Empty' });
+const Empty = defineViewType({ multiplicity: 'multiple', name:'Empty' });
 const detailContext: DetailContext = { record() {} };
 const detail = createView(Detail,{idPrefix:'one',region:'dynamic',render:() => ({body:'Rows',context:detailContext})});
 const empty = createView(Empty,{idPrefix:'empty',region:'static',render:() => ({body:'Hello'})});
@@ -56,8 +56,7 @@ const oldDeclaration = { name: 'Invalid', tools: { change: { description: 'Modif
 defineViewType(oldDeclaration);
 
 type EditorContext = { readonly writable: boolean; replace(id: string, text: string): void };
-const Editor = defineViewType<EditorContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
-    name: 'Editor',
+const Editor = defineViewType<EditorContext>()({ multiplicity: 'multiple', name: 'Editor',
     tools: {
         replace: {
             description: 'Replace selected text',
@@ -140,11 +139,11 @@ const invalidRender: EditorRender = {
 };
 void invalidRender;
 // @ts-expect-error Contextual declarations require each execute implementation
-defineViewType<EditorContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Invalid', tools: { clear: { description: 'Clear', inputSchema: Type.Object({}) } } });
+defineViewType<EditorContext>()({ multiplicity: 'multiple', name: 'Invalid', tools: { clear: { description: 'Clear', inputSchema: Type.Object({}) } } });
 // @ts-expect-error Executable callbacks are private to the SDK
 Editor.tools.replace.execute;
 
 // @ts-expect-error Context handlers take one named invocation object
-defineViewType<EditorContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'OldPrototype', tools: { clear: { description: 'Clear', execute(_input: object, _context: EditorContext) { return { success: true }; } } } });
+defineViewType<EditorContext>()({ multiplicity: 'multiple', name: 'OldPrototype', tools: { clear: { description: 'Clear', execute(_input: object, _context: EditorContext) { return { success: true }; } } } });
 // @ts-expect-error The receiver field is reserved in the business Schema
-defineViewType<EditorContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'InvalidReceiver', tools: { send: { description: 'Send', inputSchema: Type.Object({ view_id: Type.String() }), execute() { return { success: true }; } } } });
+defineViewType<EditorContext>()({ multiplicity: 'multiple', name: 'InvalidReceiver', tools: { send: { description: 'Send', inputSchema: Type.Object({ view_id: Type.String() }), execute() { return { success: true }; } } } });

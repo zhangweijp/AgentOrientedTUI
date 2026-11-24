@@ -34,8 +34,8 @@ describe('SessionManagerV3 tool receipt updates', () => {
         // This unit exercises handleMessage only; lifecycle dependencies are
         // deliberately not constructed and are never touched by the boundary.
         type Dependencies = ConstructorParameters<typeof SessionManagerV3>;
-        manager = new SessionManagerV3({} as Dependencies[0], {} as Dependencies[1],
-            {} as Dependencies[2], messages);
+        manager = new SessionManagerV3({} as Dependencies[0],
+            {} as Dependencies[1], messages);
         harness = manager as unknown as ReceiptHarness;
         notify = vi.fn(() => { order.push('notify'); });
         harness.sessions.set(topicId, { sources: { host: {

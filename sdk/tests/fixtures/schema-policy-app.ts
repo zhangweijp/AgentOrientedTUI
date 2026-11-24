@@ -8,7 +8,7 @@ const Programme = defineViewType<Context>()({ name: 'Programme', region: 'dynami
     read_program: { description: 'Read the current programme', inputSchema: object({}),
         execute: ({ context }) => context.write('read_program', {}) },
 } });
-const Form = defineViewType<Context>()({ name: 'Form', region: 'dynamic', multiplicity: 'multiple', createId: ({ prefix }) => prefix, tools: {
+const Form = defineViewType<Context>()({ name: 'Form', region: 'dynamic', multiplicity: 'multiple', tools: {
     pick: { description: 'Choose a seat', inputSchema: object({ seat: Type.Tuple([Type.String(), Type.Integer()]) }),
         execute: ({ context, input }) => context.write('pick', input) },
 } });
@@ -34,7 +34,7 @@ export default createApp({ app_name: 'theatre', viewTypes: [Programme, Form, Sta
         const programme = createView(Programme, { id: 'programme', render: () => ({ body: 'Tonight at 20:00', context,
             refs: [ref('when', 'Tonight at 20:00', { scope: 'public', schema: Type.String() })] }) });
         const forms = (mode === 'twins' ? ['form', 'annex'] : ['form']).map(id => createView(Form, { idPrefix: id,
-            render: () => ({ body: 'Reservation form', context, refs: [ref('ticket', 'Reservation input', { scope: 'public' })] }) }));
+            render: () => ({ body: 'Reservation form', context, refs: [ref('ticket', 'Reservation input', { schema: Type.String(), scope: 'public' })] }) }));
         const station = createView(Station, { id: 'station', render: () => ({ body: 'Rail station selection', context }) });
         prepareProjection({ views: mode === 'window' || mode === 'twins' ? [programme, ...forms] : [station] });
     },

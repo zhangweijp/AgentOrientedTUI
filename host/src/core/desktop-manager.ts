@@ -80,8 +80,7 @@ export class DesktopManager {
         const runtimeDataDir = process.env.AOTUI_DATA_DIR
             || path.join(os.homedir(), '.aotui', 'data');
 
-        const actualDesktopId = await this.kernel.createDesktop(desktopId);
-        const desktop = this.kernel.getDesktop(actualDesktopId);
+        const desktop = await this.kernel.createDesktop(desktopId);
         try {
             if (desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
             const { AOTUI_DATA_DIR = runtimeDataDir, ...launchConfig } = { ...config };
@@ -95,8 +94,8 @@ export class DesktopManager {
             if (desktop.isClosing || this.getDesktop(desktop.id) !== desktop) {
                 throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
             }
-            const thirdPartyAppCount = desktop.getInstalledApps().length;
-            console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${thirdPartyAppCount} third-party apps (Semantic)`);
+            const thirdPartyAppCount = desktop.listApps().length;
+            console.log(`[DesktopManager] Created Desktop ${desktop.id} with ${thirdPartyAppCount} third-party apps (Semantic)`);
             return { desktop, thirdPartyAppCount };
         } catch (error) {
             console.error('[DesktopManager] Failed to install apps:', error);

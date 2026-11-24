@@ -26,6 +26,12 @@ export interface PhaseInput {
     tasks?: TaskInput[];
 }
 
+export interface PhaseCompletion {
+    title: string;
+    phaseChanged: boolean;
+    tasksCompleted: number;
+}
+
 export interface Plan {
     id: string;
     title: string;

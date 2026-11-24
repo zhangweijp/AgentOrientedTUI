@@ -10,12 +10,11 @@
  * - 并发限制和资源管理
  * 
  * 设计原则:
- * - **DIP**: 依赖 IKernel 接口，不依赖具体实现
  * - **SRP**: 只负责 Session 生命周期，不负责业务逻辑
  * - **资源管理**: 空闲清理 + 并发限制，防止内存泄漏
  */
 
-import { AOTUIError, createDesktopId, type DesktopCloseHandle, type IKernel, type ReceiptAccess } from '@aotui/runtime';
+import { AOTUIError, createDesktopId, type DesktopCloseHandle, type ReceiptAccess } from '@aotui/runtime';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2, ModelInputError, ProviderToolSchemaError, type LLMConfig, type ToolResult } from '@aotui/agent-driver-v2';
 import type { ModelMessage } from 'ai';
@@ -54,7 +53,6 @@ type OpeningSession = { completion: Promise<Session>; closing?: ClosingSession }
 export class SessionManagerV3 extends EventEmitter {
     private sessions: Map<string, Session> = new Map();
     private readonly inFlightSessions = new Map<string, OpeningSession>();
-    private kernel: IKernel;
     private desktopManager: DesktopManager;
     private llmConfigService: LLMConfigService;
     private messageService: MessageService;
@@ -75,14 +73,12 @@ export class SessionManagerV3 extends EventEmitter {
     private config: Required<SessionManagerConfig>;
 
     constructor(
-        kernel: IKernel,
         desktopManager: DesktopManager,
         llmConfigService: LLMConfigService,
         messageService: MessageService,
         config?: SessionManagerConfig
     ) {
         super();
-        this.kernel = kernel;
         this.desktopManager = desktopManager;
         this.llmConfigService = llmConfigService;
         this.messageService = messageService;
@@ -119,7 +115,6 @@ export class SessionManagerV3 extends EventEmitter {
         if (!session || session.closing) return { kind: 'unavailable', code: 'RECEIPT_LOCATOR_UNAVAILABLE', message: 'The owning topic session is unavailable.' };
         return session.appReceipts.read(query, {
             desktop: session.desktop,
-            kernel: this.kernel,
             isCurrent: () => this.sessions.get(topicId) === session && !session.closing,
             isAppEnabled: installationId => session.sources.aotui.isAppEnabled(installationId),
         }, timeoutMs);
@@ -189,7 +184,7 @@ export class SessionManagerV3 extends EventEmitter {
             if (desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId });
 
             const receipts = appReceipts = new PendingAppReceipts();
-            aotuiSource = new SemanticAOTUIDrivenSource(desktop, this.kernel, {
+            aotuiSource = new SemanticAOTUIDrivenSource(desktop, {
                 includeInstruction: true,
                 onReceiptPending: (locator, result, subcallId) => receipts.remember(locator, result, subcallId),
             });
@@ -210,7 +205,7 @@ export class SessionManagerV3 extends EventEmitter {
 
             const now = Date.now();
             session = { topicId, desktop, agentDriver, sources, appReceipts: receipts,
-                state: 'active', createdAt: now, lastAccessTime: now };
+                state: 'active', lastAccessTime: now };
             this.sessions.set(topicId, session);
             this.emit('message', { topicId, type: 'agent_state', state: 'idle' } satisfies GuiUpdateEvent);
             // A Topic subscription can outlive its previous Desktop.
@@ -784,20 +779,6 @@ export class SessionManagerV3 extends EventEmitter {
         toolResults?: readonly ToolResult[],
         publish = true,
     ): void {
-        // 🔍 打印消息详情
-        console.log('\n=== SessionManagerV3.handleMessage ===');
-        console.log('Topic ID:', topicId);
-        console.log('Type:', type);
-        console.log('Role:', message?.role);
-        console.log('Content type:', Array.isArray(message?.content) ? 'parts' : typeof message?.content);
-        if (Array.isArray(message?.content)) {
-            const partTypes = message.content.map((part: any) => part?.type).filter(Boolean);
-            console.log('Part types:', partTypes.join(', '));
-        }
-        console.log('Message:', JSON.stringify(message, null, 2));
-        console.log('Listeners count:', this.listenerCount('message'));
-        console.log('=====================================\n');
-
         // 1. 保存到数据库
         const session = this.sessions.get(topicId);
         let saved: ReturnType<MessageService['addMessage']> | undefined;
@@ -931,46 +912,6 @@ Guidelines:
 - Respect user privacy and data security
 
 Remember: You control the Desktop. The user communicates with you through applications.`;
-    }
-
-    /**
-     * 获取 Session 信息（用于调试和监控）
-     */
-    getSessionInfo(): Array<{
-        topicId: string;
-        state: string;
-        createdAt: number;
-        lastAccessTime: number;
-        idleTimeMs: number;
-    }> {
-        const now = Date.now();
-        const info: Array<any> = [];
-
-        for (const [topicId, session] of this.sessions.entries()) {
-            info.push({
-                topicId,
-                state: session.state,
-                createdAt: session.createdAt,
-                lastAccessTime: session.lastAccessTime,
-                idleTimeMs: now - session.lastAccessTime,
-            });
-        }
-
-        return info;
-    }
-
-    /**
-     * 检查 Session 是否存在
-     */
-    hasSession(topicId: string): boolean {
-        return this.sessions.has(topicId);
-    }
-
-    /**
-     * 获取 Session 数量
-     */
-    getSessionCount(): number {
-        return this.sessions.size;
     }
 
     /**

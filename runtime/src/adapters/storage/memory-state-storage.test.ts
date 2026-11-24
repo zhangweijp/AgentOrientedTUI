@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { utf8Size } from '@aotui/core/internal';
+import { utf8Size } from '@aotui/core';
 import { createMemoryStateStorage } from './memory-state-storage.js';
 const limits = { maxStoredKeys: 3, maxStoredBytes: 300, maxRecordBytes: 100, maxAddressBytes: 64, maxActiveOwners: 2, maxClaimedNamespaces: 3 };
 describe('A02/A16/A17/Q04 bounded owner and namespace memory storage', () => {

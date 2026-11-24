@@ -2,24 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { validatePreparedSnapshot } from '../snapshot/validate-snapshot.js';
 import { compileToolParameters } from './tool-parameters.js';
 import { createViewOwnedTools } from './view-owned-tools.js';
-const field = (refType = 'File') => ({ type: 'string', minLength: 1, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': { type: 'object' } });
+const field = (refType = 'File') => ({ 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': { type: 'object' } });
 const input = (refType = 'File') => ({ type: 'object', properties: { file: field(refType) }, required: ['file'], additionalProperties: true });
 function schema(refType = 'File'): any {
     const c = compileToolParameters(input(refType)); if (!c.ok) throw Error('fixture'); return c.contract.schema;
 }
 function draft(inputSchema = schema(), activationId = 'active-1', sequence = 1): any {
     const id = JSON.stringify(['app', 'FileDetail', 'inspect']);
-    return { schemaVersion: 7, appId: 'app', instanceId: 'run', producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
+    return { schemaVersion: 8, appId: 'app', instanceId: 'run', producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
         views: [{ toolBindings: [{ toolId: id, activationId }], id: 'fd_A', viewInstanceId: 'mount', type: 'FileDetail', name: 'A', region: 'dynamic', content: { format: 'markdown-v1', value: 'A' } }], refs: {},
-        tools: { [id]: { multiplicity: 'multiple', id, name: 'inspect', viewType: 'FileDetail', nameSharedAcrossViewTypes: false, description: 'Inspect', inputSchema } } };
+        tools: { [id]: { multiplicity: 'multiple', id, name: 'inspect', viewType: 'FileDetail',  description: 'Inspect', inputSchema } } };
 }
 const setup = () => createViewOwnedTools('app', 'run');
 function register(registry: ReturnType<typeof setup>, inputSchema: Readonly<Record<string, unknown>> = input()) {
     registry.defineViewTypes([{ name: "FileDetail", multiplicity: 'multiple', tools: [{ name: 'inspect', description: 'Inspect', inputSchema }] }]);
 }
 function publish(registry: ReturnType<typeof setup>) {
-    const frame = registry.prepareFrame(['fd_A','fd_B'].map(id => ({
-        createId: () => id, type: 'FileDetail', owner: {},
+    const frame = registry.prepareFrame([1, 2].map(() => ({
+        idPrefix: 'fd', type: 'FileDetail', owner: {},
         bindings: [{ name: 'inspect', enabled: true, execute: () => ({ success: true }) }],
     })));
     frame.accept();

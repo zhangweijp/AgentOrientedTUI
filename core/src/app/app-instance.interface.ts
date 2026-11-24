@@ -17,12 +17,16 @@ export interface RuntimeContext {
     readonly projectionLimits: ProjectionLimits;
     /** Aborted when the instance stops admitting new work. */
     readonly signal: CancellationSignal;
+    /** Suggest another look after a meaningful background change. */
+    requestAttention(): void;
     /** Supply the static definitions once before publishing Views. */
     defineViewTypes(definitions: readonly AppViewTypeDefinition[]): void;
     /** Prepare one complete frame locally. A throwing build records a projection failure. */
     publishFrame(build: () => AppProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult;
     /** Read the accepted frame's local version. Required by the Preact adapter. */
     readPreparedProjection?(): PreparedProjection;
+    /** Look up a uniquely named View in the App's healthy accepted frame. */
+    readPreparedViewId(viewType: string, name: string): string | undefined;
 }
 
 export interface AppInstance {

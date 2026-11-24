@@ -4,7 +4,7 @@ import Type from 'typebox';
 import { StaticView, DynamicView, createTUIApp, defineViewType, refParam, useArrayRef } from '@aotui/sdk';
 
 const Phase = Type.Object({ owner: Type.String(), title: Type.String() }, { additionalProperties: false });
-const PhasesType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Phases', tools: {
+const PhasesType = defineViewType()({ multiplicity: 'multiple', name: 'Phases', tools: {
   read_item: {
     description: 'Read one phase.', inputSchema: Type.Object({ phase: refParam('Phase', Phase) }),
     execute: ({ input: { phase } }) => ({ success: true, data: { owner: phase.owner, readonly: Object.isFrozen(phase) } }),
@@ -16,7 +16,7 @@ const PhasesType = defineViewType()({ multiplicity: 'multiple', createId: ({ pre
     } }),
   },
 } });
-const Guide = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Guide', tools: {
+const Guide = defineViewType()({ multiplicity: 'multiple', name: 'Guide', tools: {
   update_b: {
     description: 'Update plan B.', inputSchema: Type.Object({}),
     execute: ({ context }) => { context.setOwner('B updated'); return { success: true }; },
@@ -27,7 +27,7 @@ const Guide = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }
   },
 } });
 function Phases({ owner }) {
-  const [list, item] = useArrayRef('completed_phases', [{ owner, title: 'Design ' + owner }], { scope: 'protected', itemType: 'Phase' });
+  const [list, item] = useArrayRef('completed_phases', [{ owner, title: 'Design ' + owner }], { schema: Type.Array(Type.Object({})), scope: 'protected', itemType: 'Phase' });
   return h('section', {}, [h('h2', {}, list('Completed phases')), h('p', {}, item(0, 'Design ' + owner))]);
 }
 function App() {

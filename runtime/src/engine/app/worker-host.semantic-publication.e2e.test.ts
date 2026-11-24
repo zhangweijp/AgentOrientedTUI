@@ -1,16 +1,17 @@
-import { projectCompleteViews } from '@aotui/core/internal';
+import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
+import type { AppInvocation } from '@aotui/core';
+import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
 import type { AppInteractionPolicy } from '@aotui/core';
 
-type SignalPolicy = 'auto' | 'never' | undefined;
 type Capture =
-    | { type: 'SNAPSHOT_PREPARED'; draft: any; suppressSignal: boolean }
+    | { type: 'SNAPSHOT_PREPARED'; draft: any }
     | { type: 'SNAPSHOT_PREPARE_FAILED'; producerSeq: number; sourceEpoch: number; error: { code: string } };
 
 const temporaryHosts: Array<{ host: AppWorkerHost; worker: Worker; messages: any[] }> = [];
@@ -25,18 +26,17 @@ function deferred<T>() {
     return { promise, resolve, reject };
 }
 
-function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, faultTools = false): string {
-    const policy = signalPolicy ? `signalPolicy: '${signalPolicy}',` : '';
+function applicationSource(initiallyOpen: boolean, faultTools = false): string {
     return `
         import { parentPort } from 'node:worker_threads';
         import { h } from 'preact';
         import Type from 'typebox';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
+        import { createTUIApp, useAppRuntimeContext, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
 
         Date.now = () => 1700000000000;
         let businessCalls = 0;
-        const WorkspaceType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
+        const WorkspaceType = defineViewType()({ multiplicity: 'multiple', name: 'Workspace', tools: {
             refresh: {
                 description: 'Refresh the current view',
                 inputSchema: Type.Object({ query: Type.String() }, { additionalProperties: false }),
@@ -71,11 +71,12 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
             const selection = useMemo(() => state.invalidRef
                 ? { value: () => 'not cloneable' }
                 : { value: state.refValue }, [state.invalidRef, state.refValue]);
-            const ref = useDataRef('selection', selection, { scope: 'protected' });
+            const ref = useDataRef('selection', selection, { schema: { type: 'object' }, scope: 'protected' });
             useLayoutEffect(() => { if (state.invalidLayout) throw new Error('Layout did not finish'); });
             return h('section', {}, h('p', {}, state.text + ' ' + ref('Selection')));
         }
         function Root() {
+            const { requestAttention } = useAppRuntimeContext();
             const [state, setState] = useState({
                 open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
                 toolEnabled: true, extraToolEnabled: false, invalidRef: false, invalidLayout: false,
@@ -85,6 +86,10 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
                     if (message.type !== 'TEST_COMMAND') return;
                     const { command, data } = message;
                     switch (command) {
+                        case 'attention':
+                            setState(current => ({ ...current, text: 'background failure' }));
+                            requestAttention();
+                            break;
                         case 'open': setState(current => ({ ...current, open: true })); break;
                         case 'close': setState(current => ({ ...current, open: false })); break;
                         case 'background':
@@ -108,14 +113,14 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
                 : null);
         }
 
-        export default createTUIApp({ viewTypes: [WorkspaceType], app_name: 'publication_fixture', component: Root, ${policy} });
+        export default createTUIApp({ viewTypes: [WorkspaceType], app_name: 'publication_fixture', component: Root });
     `;
 }
 
-async function compileApplication(name: string, signalPolicy: SignalPolicy, initiallyOpen: boolean, faultTools = false): Promise<string> {
+async function compileApplication(name: string, initiallyOpen: boolean, faultTools = false): Promise<string> {
     const sourcePath = join(temporaryDirectory, name + '.mjs');
     const outputPath = join(temporaryDirectory, name + '.bundle.mjs');
-    await writeFile(sourcePath, applicationSource(signalPolicy, initiallyOpen, faultTools), 'utf8');
+    await writeFile(sourcePath, applicationSource(initiallyOpen, faultTools), 'utf8');
     await build({
         entryPoints: [sourcePath], outfile: outputPath, bundle: true,
         platform: 'node', format: 'esm', target: 'node20', packages: 'external',
@@ -146,11 +151,9 @@ beforeAll(async () => {
         target: 'node20', packages: 'external', logLevel: 'silent',
     });
     await Promise.all([
-        compileApplication('auto-empty', 'auto', false),
-        compileApplication('never-empty', 'never', false),
-        compileApplication('default-open', undefined, true),
-        compileApplication('auto-fault', 'auto', true, true),
-        compileApplication('default-empty', undefined, false),
+        compileApplication('empty', false),
+        compileApplication('open', true),
+        compileApplication('fault', true, true),
     ]);
 });
 
@@ -169,7 +172,7 @@ afterAll(async () => {
 
 async function start(name: string, options: Record<string, unknown> = {}) {
     const worker = new Worker(workerScriptPath);
-    const host = new AppWorkerHost({
+    const host = new AppWorkerHost({ policy: publicationPolicy,
         appId: 'publication_app' as any,
         desktopId: 'desktop' as any,
         appModulePath: appModules.get(name)!,
@@ -181,7 +184,7 @@ async function start(name: string, options: Record<string, unknown> = {}) {
     const captures: Capture[] = [];
     const updates: any[] = [];
     const messages: any[] = [];
-    host.onUpdateRequest = () => updates.push(host.getSemanticSnapshotReport());
+    host.onUpdate = reason => updates.push(reason);
     temporaryHosts.push({ host, worker, messages });
     await host.start();
     // Install after AppWorkerHost's listener so each capture is already accepted
@@ -219,9 +222,14 @@ function waitForCapture(x: Awaited<ReturnType<typeof start>>, after: number): Pr
 
 async function change(x: Awaited<ReturnType<typeof start>>, eventType: string, data: Record<string, unknown> = {}) {
     const before = sequence(x.captures.at(-1));
-    const capture = waitForCapture(x, before);
-    x.worker.postMessage({ type: 'TEST_COMMAND', command: eventType, data: data });
-    return capture;
+    const updates = x.updates.length;
+    x.worker.postMessage({ type: 'TEST_COMMAND', command: eventType, data });
+    if (eventType === 'break-layout') return waitForCapture(x, before);
+    await vi.waitFor(() => expect(x.updates.length).toBeGreaterThan(updates));
+    const opened = x.host.getAppInteraction();
+    if (opened.status !== 'ready') throw Error(opened.issue.code);
+    expect((await opened.interaction.preview()).status).toBe('previewed');
+    return waitForCapture(x, before);
 }
 
 function latestSnapshot(host: AppWorkerHost): any {
@@ -246,32 +254,30 @@ function allViewsPolicy(): AppInteractionPolicy {
 
 const publicationPolicy = allViewsPolicy();
 
-async function createToolCaller(host: AppWorkerHost, name: string, input: Record<string, unknown>) {
-    const scope = host.getAppInteraction(publicationPolicy);
-    expect(scope.status).toBe('ready');
-    if (scope.status !== 'ready') throw new Error(scope.issue.code);
-    const observed = await scope.interaction.observe({ all: true });
-    if (observed.status === 'observed') expect(scope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
-    expect(observed.status).toBe('observed');
-    if (observed.status !== 'observed') throw new Error(observed.issue.code);
-    const tool = observed.observation.tools.find(candidate => candidate.name === name);
+async function createToolCaller(host: AppWorkerHost, name: string, input: AppInvocation['input']) {
+    const turns = workerTurns(host);
+    const prepared = await turns.prepare();
+    if (prepared.status !== 'prepared') throw new Error(prepared.issue.code);
+    const { observation } = prepared.candidate;
+    const turn = turns.adopt(prepared.candidate);
+    const tool = observation.tools.find(candidate => candidate.name === name);
     expect(tool).toBeDefined();
-    const target = observed.observation.views.find(view => view.type === tool?.viewType);
+    const target = observation.views.find(view => view.type === tool?.viewType);
     expect(target).toBeDefined();
     return {
-        invoke: (invocationId: string) => scope.interaction.invoke({
+        invoke: (invocationId: string) => turn.invoke(host.appId, {
             invocationId,
-            observationId: observed.observation.observationId,
+            observationId: observation.observationId,
             toolId: tool!.id,
-            input: { view_id: target!.id, ...input },
+            viewId: target!.id, input,
         }),
-        close: () => scope.interaction.releaseObservation(observed.observation.observationId),
+        close: turn.release,
     };
 }
 
 describe('Semantic publication through the current SDK and a real Node Worker', () => {
     it('keeps the Worker alive after a managed queued layout error and waits for a valid repair', async () => {
-        const x = await start('auto-empty');
+        const x = await start('empty');
         await x.host.open();
         await change(x, 'open');
         const initial = latestSnapshot(x.host);
@@ -288,12 +294,12 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         expect(Object.values(latestSnapshot(x.host).refs)).toMatchObject([{ target: { payload: { value: 'repaired ref' } } }]);
     });
 
-    it('auto publishes empty, background DOM, Ref-only, Tool-only, same-ms generations, and final close', async () => {
-        const x = await start('auto-empty');
+    it('reads empty, background, Ref-only, Tool-only and final closed state on demand', async () => {
+        const x = await start('empty');
         await x.host.open();
         expect(latestSnapshot(x.host).views).toEqual([]);
         expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 1, lastViewCount: 0 });
-        expect(x.updates).toMatchObject([{ health: 'ready', revision: 1, lastViewCount: 0 }]);
+        expect(x.updates).toEqual([]);
 
         const opened = await change(x, 'open');
         expect(opened.type).toBe('SNAPSHOT_PREPARED');
@@ -331,45 +337,32 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         expect(new Set(sequences.map(draft => draft.capturedAt))).toEqual(new Set([1700000000000]));
         expect(new Set(sequences.map(draft => draft.producerSeq)).size).toBe(sequences.length);
         expect(new Set(sequences.map(draft => draft.sourceEpoch)).size).toBe(sequences.length);
-        expect(x.updates.at(-1)).toMatchObject({ health: 'ready', revision: snapshot.revision, lastViewCount: 1 });
+        expect(x.updates.at(-1)).toBe('view_updated');
 
         const closed = await change(x, 'close');
         expect(closed.type).toBe('SNAPSHOT_PREPARED');
         expect(viewCount(x.host)).toBe(0);
         expect(latestSnapshot(x.host)).toMatchObject({ views: [], refs: {}, tools: {} });
-        expect(x.updates.at(-1)).toMatchObject({ health: 'ready', revision: x.host.getSemanticSnapshotReport()?.revision,
-            lastViewCount: 0, lastRefCount: 0, lastToolCount: 0 });
-        expect(x.captures.every(capture => capture.type !== 'SNAPSHOT_PREPARED' || capture.suppressSignal === false)).toBe(true);
+        expect(x.updates.at(-1)).toBe('view_updated');
+        expect(x.messages.filter(message => message.type === 'SNAPSHOT_PREPARED' && !message.requestId)).toHaveLength(1);
     });
 
-    it('never publishes fresh snapshots without notifying', async () => {
-        const passive = await start('never-empty');
-        await passive.host.open();
-        expect(latestSnapshot(passive.host).views).toEqual([]);
-        expect(passive.updates).toHaveLength(0);
-        const opened = await change(passive, 'open');
-        expect(opened.type).toBe('SNAPSHOT_PREPARED');
-        expect(opened.type === 'SNAPSHOT_PREPARED' && opened.suppressSignal).toBe(true);
-        expect(viewCount(passive.host)).toBe(1);
-        expect(passive.updates).toHaveLength(0);
-        const passiveRef = await change(passive, 'ref', { value: 'quiet ref' });
-        expect(passiveRef.type).toBe('SNAPSHOT_PREPARED');
-        expect(passiveRef.type === 'SNAPSHOT_PREPARED' && passiveRef.suppressSignal).toBe(true);
-        expect(Object.values(latestSnapshot(passive.host).refs).find((ref: any) => ref.id === 'selection')).toMatchObject({
-            target: { payload: { value: 'quiet ref' } },
-        });
-        const passiveBackground = await change(passive, 'background', { value: 'quiet background' });
-        expect(passiveBackground.type).toBe('SNAPSHOT_PREPARED');
-        expect(passiveBackground.type === 'SNAPSHOT_PREPARED' && passiveBackground.suppressSignal).toBe(true);
-        const passiveTool = await change(passive, 'tool', { enabled: true });
-        expect(passiveTool.type).toBe('SNAPSHOT_PREPARED');
-        expect(passiveTool.type === 'SNAPSHOT_PREPARED' && passiveTool.suppressSignal).toBe(true);
-        expect(Object.values(latestSnapshot(passive.host).tools).some((tool: any) => tool.name === 'extra')).toBe(true);
-        expect(passive.updates).toHaveLength(0);
+    it('sends a separate attention request after a background change without sending the frame', async () => {
+        const x = await start('open');
+        await x.host.open();
+        x.worker.postMessage({ type: 'TEST_COMMAND', command: 'attention' });
+        await vi.waitFor(() => expect(x.updates).toContain('attention_requested'));
+        expect(x.updates.filter(reason => reason === 'attention_requested')).toHaveLength(1);
+        expect(x.captures).toHaveLength(1);
+        const opened = x.host.getAppInteraction();
+        if (opened.status !== 'ready') throw Error(opened.issue.code);
+        expect(await opened.interaction.preview()).toMatchObject({ status: 'previewed', views: [
+            { content: { value: expect.stringContaining('background failure') } },
+        ] });
     });
 
     it('auto reports a failed projection after a successful mutation and recovers from external state repair', async () => {
-        const x = await start('auto-fault');
+        const x = await start('fault');
         await x.host.open();
         expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, lastViewCount: 1 });
         const fault = await createToolCaller(x.host, 'fault_after_commit', { reason: 'commit then fail to present' });
@@ -379,21 +372,19 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
                 status: 'succeeded', value: { success: true, data: { calls: 1 } },
             },
         } });
-        expect(x.captures.at(-1)).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED',
-            error: { code: 'SNAPSHOT_SERIALIZATION_ERROR' }, suppressSignal: false });
+        await vi.waitFor(() => expect(x.captures.at(-1)).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED',
+            error: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } }));
         expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1, published: 1 });
-        expect(x.updates.at(-1)).toMatchObject({ health: 'degraded' });
+        expect(x.updates.at(-1)).toBe('projection_failed');
 
         const replay = await fault.invoke('reject-old-binding-after-degradation');
         expect(replay).toMatchObject({ kind: 'receipt', receipt: {
             executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
         } });
 
-        const recoveryCapture = waitForCapture(x, sequence(x.captures.at(-1)));
-        x.worker.postMessage({ type: 'TEST_COMMAND', command: 'recover-ref' });
-        expect(await recoveryCapture).toMatchObject({ type: 'SNAPSHOT_PREPARED', suppressSignal: false });
+        expect(await change(x, 'recover-ref')).toMatchObject({ type: 'SNAPSHOT_PREPARED' });
         expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 2, prepareFailed: 1 });
-        expect(x.updates.at(-1)).toMatchObject({ health: 'ready' });
+        expect(x.updates.at(-1)).toBe('projection_recovered');
 
         const stats = await createToolCaller(x.host, 'stats', { query: 'business counter' });
         expect(await stats.invoke('confirm-business-effect-count')).toMatchObject({ kind: 'receipt', receipt: {
@@ -405,15 +396,15 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         stats.close();
     });
 
-    it('uses a fresh Worker and source identity with the default auto signal policy', async () => {
-        const first = await start('default-open');
+    it('uses a fresh Worker and source identity after reopening', async () => {
+        const first = await start('open');
         await first.host.open();
         const originalInstance = first.host.appInstanceId;
         await first.host.close();
         expect(first.worker.threadId).toBe(-1);
         expect(first.host.getSemanticSnapshotReport()?.health).toBe('stopped');
 
-        const second = await start('default-empty');
+        const second = await start('empty');
         expect(second.worker).not.toBe(first.worker);
         expect(second.host.appInstanceId).not.toBe(originalInstance);
         await second.host.open();
@@ -424,6 +415,6 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         expect(opened.type).toBe('SNAPSHOT_PREPARED');
         expect(opened.type === 'SNAPSHOT_PREPARED' && opened.draft.instanceId).toBe(second.host.appInstanceId);
         expect(second.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', lastViewCount: 1 });
-        expect(second.updates.at(-1)).toMatchObject({ health: 'ready', lastViewCount: 1 });
+        expect(second.updates.at(-1)).toBe('view_updated');
     });
 });

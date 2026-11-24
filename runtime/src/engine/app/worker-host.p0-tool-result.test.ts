@@ -36,7 +36,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
 
 
                 const noArgs = Type.Object({}, { additionalProperties: false });
-                const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'FileDetail', tools: {
+                const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
                     fail: {
                         description: 'Fails as business result', inputSchema: noArgs,
                         execute: async () => ({ success: false, error: {
@@ -75,7 +75,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             await host.start();
             await host.open();
 
-            const failed = await invokeObservedTool(host, 'fail', {}, 'root');
+            const failed = await invokeObservedTool(host, 'fail', {}, 'root_1');
             expect(failed).toMatchObject({ kind: 'receipt', receipt: {
                 executionPhase: 'entered-returned', outcome: { status: 'failed', details: {
                     kind: 'tool-result', result: { success: false, error: { code: 'BUSINESS_FAILED',
@@ -83,12 +83,12 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 } },
             } });
 
-            const ok = await invokeObservedTool(host, 'ok', {}, 'root');
+            const ok = await invokeObservedTool(host, 'ok', {}, 'root_1');
             expect(ok).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded',
                 value: { success: true, data: { message: 'completed' } },
             } } });
 
-            const invalid = await invokeObservedTool(host, 'invalid', { target: 42 }, 'root');
+            const invalid = await invokeObservedTool(host, 'invalid', { target: 42 }, 'root_1');
             expect(invalid).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched',
                 outcome: { status: 'rejected' },
             } });

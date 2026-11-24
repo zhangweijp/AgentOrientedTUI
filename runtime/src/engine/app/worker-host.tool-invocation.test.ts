@@ -1,3 +1,6 @@
+import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
+import type { ActiveTurn, AppInvocation } from '@aotui/core';
+import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
 import { Worker } from 'node:worker_threads';
 import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,23 +9,14 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
-import { compileToolParameters } from '@aotui/core';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 const NORMAL_HOST_TIMEOUT_MS = 3000;
 const FAULT_HOST_TIMEOUT_MS = 1500;
 const closing: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close(); vi.restoreAllMocks(); });
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => resolve = yes); return { promise, resolve }; }
-function withBusinessViewId(input: any, viewId: string) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
-  const copy = Object.create(Object.getPrototypeOf(input));
-  const descriptors = Object.getOwnPropertyDescriptors(input);
-  Object.defineProperties(copy, descriptors);
-  if (!Object.hasOwn(descriptors, 'view_id')) Object.defineProperty(copy, 'view_id', { value: viewId, enumerable: true, writable: true, configurable: true });
-  return copy;
-}
 function project({source}:any) {return {refs:[],toolIds:Object.keys(source.tools)};}
-function receiver(snapshot:any,tool:any,id='aa') {
+function receiver(snapshot:any,tool:any,id='aa_1') {
     const view=snapshot.views.find((view:any)=>view.id===id);
     return {viewId:id,viewInstanceId:view.viewInstanceId,activationId:view.toolBindings.find((ref:any)=>ref.toolId===tool.id).activationId};
 }
@@ -30,27 +24,34 @@ function scope(x: any) {
   const authorized: any[] = [], control = { authorize: (_c: any): any => true, canRead: (_m: any, _s: any): any => true };
   const recorded = { authorizations: [] as any[], invocations: [] as any[], observations: [] as any[] };
   (x.scopeFacts ??= []).push(recorded);
-  const opened = x.host.getAppInteraction({ project, authorize(c: any) {
+  x.authorization.use({ project, authorize(c: any) {
     authorized.push(c); recorded.authorizations.push({ invocationId: c.invocationId, rawInput: c.rawInput, effectiveInput: c.effectiveInput,
       receiver: c.source.receiver, instanceId: c.source.instanceId }); return control.authorize(c);
   }, canReadReceipt: (m: any, s: any) => control.canRead(m, s) });
+  const opened = x.host.getAppInteraction();
   expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
-  const original = opened.interaction;
-  const client = { ...original, async invoke(request: unknown) {
-    const invocationId = request && typeof request === 'object' ? Object.getOwnPropertyDescriptor(request, 'invocationId')?.value : null;
-    const response = await original.invoke(request); recorded.invocations.push({ invocationId, response }); return response;
-  } };
-  return { client, control, authorized, async observe(view = 'aa') {
-    const r = await client.observe({ all: true }); recorded.observations.push(r); expect(r.status).toBe('observed');
-    const content = x.snapshot().views.find((item: any) => item.id === view)?.content?.value;
-    expect(content).toContain(`Business View ID: ${view}`);
-    expect(client.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' });
-    return r.observation;
-  },
-    request(o: any, invocationId: string, name = 'find', input: any = {}, view = 'aa') {
+  const client = opened.interaction, turns = workerTurns(x.host);
+  let turn: ActiveTurn;
+  return { client, control, authorized,
+    async invoke(request: AppInvocation, timeoutMs?: number) {
+      const invocationId = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value;
+      const response = await turn.invoke(x.host.appId, request, timeoutMs);
+      recorded.invocations.push({ invocationId, response });
+      return response;
+    },
+    async observe(view = 'aa_1') {
+      const prepared = await turns.prepare();
+      recorded.observations.push(prepared);
+      if (prepared.status !== 'prepared') throw Error(prepared.issue.code);
+      const content = x.snapshot().views.find((item: any) => item.id === view)?.content?.value;
+      expect(content).toContain(`Business View ID: ${view.replace(/_\d+$/, '')}`);
+      turn = turns.adopt(prepared.candidate);
+      return prepared.candidate.observation;
+    },
+    request(o: any, invocationId: string, name = 'find', input: any = {}, view = 'aa_1') {
       const type = o.views.find((item: any) => item.id === view)?.type;
       const tool = o.tools.find((t: any) => t.name === name && t.viewType === type); expect(tool).toBeDefined();
-      return { invocationId, observationId: o.observationId, toolId: tool.id, input: withBusinessViewId(input, view) };
+      return { invocationId, observationId: o.observationId, toolId: tool.id, viewId: view, input };
     } };
 }
 function receipt(r: any) { expect(r.kind).toBe('receipt'); if (r.kind !== 'receipt') throw Error(r.code); return r.receipt; }
@@ -72,8 +73,10 @@ async function control(x: any, type: string, data: any = {}) { const id = ++tag,
     return await wait(x, m => m.type === (type === 'state' ? 'TEST_COMMITTED' : 'TEST_CONTROL_ACK') && m.tag === id, from);
   } finally { x.host.timeout = previousTimeout; } }
 async function change(x: any, patch: any, predicate: (draft: any) => boolean) {
-  const from = x.messages.length; await control(x, 'state', { patch });
-  return wait(x, m => m.type === 'SNAPSHOT_PREPARED' && predicate(m.draft), from);
+  await control(x, 'state', { patch });
+  const opened = x.host.getAppInteraction();
+  expect((await opened.interaction.preview()).status).toBe('previewed');
+  expect(predicate(x.snapshot())).toBe(true);
 }
 const good = { q: '😀', e: '1', items: ['a', 'b'] };
 async function start(options: any = {}) {
@@ -83,14 +86,15 @@ async function start(options: any = {}) {
   const post = worker.postMessage.bind(worker); let hold: ((m: any) => boolean) | undefined;
   worker.postMessage = (m: any) => { attempted.push(m); if (!hold?.(m)) { sent.push(m); post(m); } };
   worker.stdout?.on('data', (b: any) => logs.push(String(b))); worker.stderr?.on('data', (b: any) => logs.push(String(b)));
-  const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: appFile, existingWorker: worker,
+  const authorization = policyProbe();
+  const host = new Host({ policy: options.policy ?? authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile, existingWorker: worker,
     timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS, toolsEnabled: options.toolsEnabled,
     config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
   worker.on('message', (m: any) => messages.push(m));
-  const x = { host, worker, messages, sent, attempted, logs, hold(f: (m: any) => boolean) { hold = f; }, physical(m: any) { sent.push(m); post(m); },
+  const x = { authorization, host, worker, messages, sent, attempted, logs, hold(f: (m: any) => boolean) { hold = f; }, physical(m: any) { sent.push(m); post(m); },
     entries: () => messages.filter(m => m.type === 'TEST_HANDLER_ENTER'), posts: () => sent.filter(isInvoke),
     snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };
-  closing.push(async () => { facts.push({ messages, sent, attempted, scopes: x.scopeFacts ?? [], logs, report: host.getInteractionReport?.() });
+  closing.push(async () => { facts.push({ messages, sent, attempted, scopes: x.scopeFacts ?? [], logs, resourceReport: host.getResourceReport() });
     const owned = host.worker === worker; host.terminate();
     if (owned) { await worker.terminate(); await host.waitForResourceRelease(); } });
   await host.start(); await host.open(); await wait(x, m => m.type === 'SNAPSHOT_PREPARED'); return x;
@@ -113,7 +117,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       alias: { '@aotui/sdk': join(sdk, 'dist/index.js') }, bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
     legacySdkAppFile = join(temporary, 'legacy-sdk-app.mjs');
     await writeFile(legacySdkAppFile, `export default {
-      kernelConfig: { appName: 'legacy_sdk' },
+      app_name: 'legacy_sdk',
       persistenceSupport: 'state-session-v2',
       appLifecycleSupport: 'app-lifecycle-v2',
       initialize() { throw new Error('UNSUPPORTED_FACTORY_EXECUTED'); }
@@ -155,12 +159,11 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
 
   it('R11/R13 really enters the target handler with matching policy/post/handler values and no defaults', async () => {
     const x = await start(), s = scope(x), o = await s.observe(), request = s.request(o, 'normal', 'find', good);
-    const output = value(await s.client.invoke(request));
+    const output = value(await s.invoke(request));
     expect(output.data.view).toBe('aa'); expect(output.data.args).toEqual(good);
     expect(s.authorized[0].rawInput).toEqual(good); expect(s.authorized[0].effectiveInput).toEqual(good);
-    expect(x.posts()[0]).not.toHaveProperty('effectiveArgs'); expect(x.entries()[0]).toMatchObject({ view: 'aa', name: 'find', args: good, frozen: true, nestedFrozen: true });
+    expect(x.posts()[0]).not.toHaveProperty('rawArgs'); expect(x.entries()[0]).toMatchObject({ view: 'aa', name: 'find', args: good, frozen: true, nestedFrozen: true });
     expect(Object.hasOwn(output.data.args, 'n')).toBe(false); expect(Object.hasOwn(output.data.args, 'payload')).toBe(false);
-    expect(x.host.getInteractionReport().toolsEnabled).toBe(true);
   });
   it.each(['enum', 'array', 'type', 'range', 'null', 'missing', 'extra', 'getter', 'bytes'])('R12 invalid %s never authorizes/posts/enters', async kind => {
     const x = await start(), s = scope(x), o = await s.observe(); const input: any = { ...good }; let reads = 0;
@@ -173,50 +176,48 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     if (kind === 'extra') input.W07_UNKNOWN_PRIVATE = 'PRIVATE_INPUT';
     if (kind === 'getter') Object.defineProperty(input, 'e', { enumerable: true, get() { reads++; return '1'; } });
     if (kind === 'bytes') input.payload = { text: 'x'.repeat(128 * 1024) };
-    const result = await s.client.invoke(s.request(o, 'invalid-' + kind, 'find', input));
+    const result = await s.invoke(s.request(o, 'invalid-' + kind, 'find', input));
     if (kind === 'getter') expect(result.kind).toBe('refused');
     else { const r = receipt(result); expect(r.outcome.status).toBe('rejected'); expect(r.executionPhase).toBe('not-dispatched'); }
     expect(s.authorized).toHaveLength(0); expect(x.posts()).toHaveLength(0); expect(x.entries()).toHaveLength(0); expect(reads).toBe(0);
     facts.push({ kind: 'R12 rejection counters', inputCase: kind, authorize: s.authorized.length, invokePost: x.posts().length, handler: x.entries().length, getterReads: reads, response: result });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_INPUT|W07_UNKNOWN_PRIVATE/);
   });
-  it('R12/Q01 accepts exactly 5000 nodes and rejects 5001 before policy and dispatch', async () => {
+  it('checks the shared raw input boundary before dispatch', async () => {
     const x = await start(), s = scope(x), o = await s.observe();
-    const contract = compileToolParameters({ type: 'object', properties: { flags: { type: 'array', items: { type: 'boolean' } } }, required: ['flags'], additionalProperties: false });
-    expect(contract.ok && contract.contract.validateModelInput({ flags: Array(4999).fill(true) }).ok).toBe(true);
-    const accepted = value(await s.client.invoke(s.request(o, 'nodes-5000', 'flags', { flags: Array(4997).fill(true) })));
-    expect(accepted.data).toEqual({ count: 4997, allTrue: true });
+    const accepted = value(await s.invoke(s.request(o, 'nodes-10000', 'flags', { flags: Array(9998).fill(true) })));
+    expect(accepted.data).toEqual({ count: 9998, allTrue: true });
+    const denied = await s.invoke(s.request(o, 'nodes-10001', 'flags', { flags: Array(9999).fill(true) }));
+    expect(denied).toMatchObject({ kind: 'refused', code: 'INVOCATION_INVALID' });
     expect(s.authorized).toHaveLength(1); expect(x.posts()).toHaveLength(1); expect(x.entries()).toHaveLength(1);
-    expect(s.authorized[0].effectiveInput).toEqual(x.posts()[0].rawArgs); expect(x.entries()[0].args).toEqual(x.posts()[0].rawArgs);
-    const denied = receipt(await s.client.invoke(s.request(o, 'nodes-5001', 'flags', { flags: Array(4998).fill(true) })));
-    expect(denied).toMatchObject({ executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'ACTION_INPUT_INVALID' } });
-    expect(s.authorized).toHaveLength(1); expect(x.posts()).toHaveLength(1); expect(x.entries()).toHaveLength(1);
+    expect(s.authorized[0].effectiveInput).toEqual(x.posts()[0].effectiveArgs);
+    expect(x.entries()[0].args).toEqual(x.posts()[0].effectiveArgs);
   });
   it('R13 open input retains extras and prototype-like own fields', async () => {
     const x = await start(), s = scope(x), o = await s.observe();
     const input = JSON.parse('{"q":"x","extra":[null,{"kept":false}],"__proto__":{"safe":true},"constructor":0,"toString":false}');
-    const output = value(await s.client.invoke(s.request(o, 'open-input', 'open', input)));
+    const output = value(await s.invoke(s.request(o, 'open-input', 'open', input)));
     const expected = input;
-    expect(output.data.args).toEqual(expected); expect(s.authorized[0].effectiveInput).toEqual(expected); expect(x.posts()[0].rawArgs).toEqual(expected);
+    expect(output.data.args).toEqual(expected); expect(s.authorized[0].effectiveInput).toEqual(expected); expect(x.posts()[0].effectiveArgs).toEqual(expected);
     expect(x.entries()[0].args).toEqual(expected); expect(({} as any).safe).toBeUndefined();
   });
   it('R14 explicit policy denial does not dispatch or enter', async () => {
     const x = await start(), s = scope(x), o = await s.observe(); s.control.authorize = () => false;
-    expect(receipt(await s.client.invoke(s.request(o, 'deny', 'find', good))).outcome.status).toBe('rejected');
+    expect(receipt(await s.invoke(s.request(o, 'deny', 'find', good))).outcome.status).toBe('rejected');
     expect(s.authorized).toHaveLength(1); expect(x.posts()).toHaveLength(0); expect(x.entries()).toHaveLength(0);
   });
   it.each(['disable', 'rebind', 'unmount', 'close'])('R14 async authorization cannot survive %s', async kind => {
     const x = await start(), s = scope(x), o = await s.observe(), gate = deferred<boolean>(), reached = deferred();
     s.control.authorize = () => { reached.resolve(); return gate.promise; };
-    const pending = s.client.invoke(s.request(o, 'await-' + kind, 'find', good));
+    const pending = s.invoke(s.request(o, 'await-' + kind, 'find', good));
     try {
       await reached.promise;
       if (kind === 'close') x.host.terminate();
       else {
-        const mount = x.snapshot().views.find((view: any) => view.id === 'aa')?.viewInstanceId;
+        const mount = x.snapshot().views.find((view: any) => view.id === 'aa_1')?.viewInstanceId;
         await change(x, kind === 'disable' ? { enabled: false } : kind === 'rebind' ? { rule: true } : { show: false }, d => kind === 'unmount'
-        ? !d.views.some((v: any) => v.id === 'aa') : kind === 'disable' ? !Object.values(d.tools).some((t: any) => t.name === 'find' && t.viewType === 'File')
-          : d.views.some((view: any) => view.id === 'aa' && view.viewInstanceId !== mount));
+        ? !d.views.some((v: any) => v.id === 'aa_1') : kind === 'disable' ? !Object.values(d.tools).some((t: any) => t.name === 'find' && t.viewType === 'File')
+          : d.views.some((view: any) => view.id === 'aa_2' && view.viewInstanceId !== mount));
       }
       gate.resolve(true); const r = await pending; expect(r.kind === 'receipt' ? r.receipt.outcome.status : r.kind).not.toBe('succeeded');
       expect(x.posts()).toHaveLength(0); expect(x.entries()).toHaveLength(0);
@@ -225,7 +226,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   it('R15 invalidation while transport holds a dispatched message fails Worker final checks', async () => {
     const x = await start(), s = scope(x), o = await s.observe(), queued: any[] = [], reached = deferred();
     x.hold((m: any) => { if (m.type !== 'VIEW_TOOL_INVOKE') return false; queued.push(m); reached.resolve(); return true; });
-    const pending = s.client.invoke(s.request(o, 'held-dispatch', 'find', good));
+    const pending = s.invoke(s.request(o, 'held-dispatch', 'find', good));
     try {
       await reached.promise;
       await change(x, { enabled: false }, d => !Object.values(d.tools).some((t: any) => t.name === 'find' && t.viewType === 'File'));
@@ -236,19 +237,19 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   });
   it('R16 rejects invalid Worker arguments before entering the handler', async () => {
     const x = await start(), snapshot = x.snapshot();
-    const { nameSharedAcrossViewTypes: _sharedName, ...tool } = Object.values(snapshot.tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
+    const { id, name, viewType } = Object.values(snapshot.tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
     const from = x.messages.length;
     x.physical({ type: 'VIEW_TOOL_INVOKE', requestId: 'direct-invalid', appId: 'app', instanceId: x.host.appInstanceId,
-      snapshotId: snapshot.id, observationId: 'tampered-probe', tool, receiver: receiver(snapshot,tool), rawArgs: { ...good, e: 1 }, refSources: [] });
+      tool: { id, name, viewType }, receiver: receiver(snapshot,{ id }), effectiveArgs: { ...good, e: 1 }, localRefs: [] });
     const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_RESPONSE' && m.requestId === 'direct-invalid', from);
-    expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'TOOL_INVALID_ARGS' } } });
+    expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'E_INVALID_ARGS' } } });
     expect(x.entries()).toHaveLength(0); expect(JSON.stringify(response)).not.toContain('PRIVATE');
   });
   it.each(['business', 'throw', 'malformed', 'huge'])('R17 result %s preserves phase and transport health', async mode => {
     const x = await start(); await control(x, 'mode', { mode });
     if (mode === 'malformed' || mode === 'huge') x.host.timeout = FAULT_HOST_TIMEOUT_MS;
     const s = scope(x), o = await s.observe();
-    const r = receipt(await s.client.invoke(s.request(o, 'result-' + mode, 'find', good)));
+    const r = receipt(await s.invoke(s.request(o, 'result-' + mode, 'find', good)));
     expect(x.entries()).toHaveLength(1); expect(s.authorized).toHaveLength(1);
     if (mode === 'business') {
       expect(r).toMatchObject({ executionPhase: 'entered-returned', outcome: { status: 'failed', details: { result: {
@@ -260,17 +261,17 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       expect(x.messages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_RESPONSE')?.terminal.phase).toBe('finished-unknown');
       expect(JSON.stringify(r)).not.toContain('W07_PRIVATE_EXCEPTION');
     }
-    expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0 } });
+    expect(x.host.getResourceReport().interactions.retainedOperations).toBe(1);
   });
   it('R18 deduplicates within the instance and authorizes reads from the original observation', async () => {
     const x = await start(), s = scope(x), oa = await s.observe();
-    const request = s.request(oa, 'same-id', 'find', good), first = receipt(await s.client.invoke(request));
-    expect(receipt(await s.client.invoke(request))).toEqual(first); expect(x.entries()).toHaveLength(1);
-    expect(await s.client.invoke({ ...request, input: { ...good, n: 3 } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
-    const ob = await s.observe('bb');
-    expect(await s.client.invoke(s.request(ob, 'same-id', 'find', good, 'bb')))
+    const request = s.request(oa, 'same-id', 'find', good), first = receipt(await s.invoke(request));
+    expect(receipt(await s.invoke(request))).toEqual(first); expect(x.entries()).toHaveLength(1);
+    expect(await s.invoke({ ...request, input: { ...good, n: 3 } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
+    const ob = await s.observe('bb_1');
+    expect(await s.invoke(s.request(ob, 'same-id', 'find', good, 'bb_1')))
       .toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
-    const second = value(await s.client.invoke(s.request(ob, 'next-id', 'find', { ...good, view_id: 'bb' }, 'bb')));
+    const second = value(await s.invoke(s.request(ob, 'next-id', 'find', good, 'bb_1')));
     expect(second.data.view).toBe('bb'); expect(x.entries()).toHaveLength(2);
     const query = { observationId: request.observationId, invocationId: request.invocationId };
     expect(receipt(await s.client.readReceipt(query))).toEqual(first);
@@ -280,11 +281,11 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   it('R19 an invalid terminal preserves the one App-wide execution across observations and tool types', async () => {
     const x = await start(); await control(x, 'mode', { mode: 'hold' });
     const s = scope(x), original = await s.observe();
-    const running = s.client.invoke(s.request(original, 'mix-find', 'find', good), FAULT_HOST_TIMEOUT_MS);
+    const running = s.invoke(s.request(original, 'mix-find', 'find', good), FAULT_HOST_TIMEOUT_MS);
     await wait(x, m => m.type === 'TEST_HANDLER_ENTER');
-    expect(await s.client.invoke(s.request(original, 'mix-zero', 'zero', {}))).toMatchObject({ code: 'INVOCATION_CAPACITY' });
+    expect(await s.invoke(s.request(original, 'mix-zero', 'zero', {}))).toMatchObject({ code: 'INVOCATION_CAPACITY' });
     const current = await s.observe();
-    expect(await s.client.invoke(s.request(current, 'other-observation', 'find', good))).toMatchObject({ code: 'INVOCATION_CAPACITY' });
+    expect(await s.invoke(s.request(current, 'other-observation', 'find', good))).toMatchObject({ code: 'INVOCATION_CAPACITY' });
     const originalEmit = x.worker.emit.bind(x.worker);
     x.worker.emit = (event: string, ...args: any[]) => {
       if (event === 'message' && args[0]?.type === 'VIEW_TOOL_INVOKE_RESPONSE') {
@@ -296,32 +297,28 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(await running).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
     expect(x.posts()).toHaveLength(1);
     expect(x.entries()).toHaveLength(1);
-    expect(x.host.getInteractionReport().workerToolPending).toBe(true);
+    expect(x.host.getResourceReport().interactions.retainedOperations).toBeGreaterThan(1);
     x.host.terminate();
-    expect((await x.host.waitForResourceRelease()).worker).toBe('exited');
-    expect(x.host.getInteractionReport().workerToolPending).toBe(false);
+    expect(await x.host.waitForResourceRelease()).toMatchObject({ worker: 'exited', resourcesReleased: true });
   });
   it('R20 settled business failure allows closing and starting an independent instance', async () => {
     const x = await start(); await control(x, 'mode', { mode: 'business' }); const s = scope(x), o = await s.observe();
-    expect(receipt(await s.client.invoke(s.request(o, 'healthy-failure', 'find', good))).outcome).toMatchObject({ status: 'failed', details: { result: { success: false, error: { code: 'E_HANDLER_ERROR' } } } });
-    expect(x.host.getInteractionReport().workerToolPending).toBe(false);
+    expect(receipt(await s.invoke(s.request(o, 'healthy-failure', 'find', good))).outcome).toMatchObject({ status: 'failed', details: { result: { success: false, error: { code: 'E_HANDLER_ERROR' } } } });
     await x.host.close();expect(x.worker.threadId).toBe(-1);
     const y = await start();expect(y.worker).not.toBe(x.worker); expect(y.host.appInstanceId).not.toBe(x.host.appInstanceId);
     const other = scope(y), observed = await other.observe(); await control(y, 'mode', { mode: 'normal' });
-    expect(value(await other.client.invoke(other.request(observed, 'new-run', 'find', good))).data.view).toBe('aa');
-    const oldRead = await s.client.invoke(s.request(o, 'old-run', 'find', good)); expect(oldRead.kind).not.toBe('receipt');
+    expect(value(await other.invoke(other.request(observed, 'new-run', 'find', good))).data.view).toBe('aa');
+    const oldRead = await s.invoke(s.request(o, 'old-run', 'find', good)); expect(oldRead.kind).not.toBe('receipt');
   });
   it('R21 toolsEnabled false still allows View observation without executable bindings', async () => {
     const x = await start({ toolsEnabled: false }), s = scope(x), o = await s.observe();
     expect(o.views).toHaveLength(2);
     expect(o.tools).toEqual([]);
-    expect(x.host.getInteractionReport().toolsEnabled).toBe(false);
     const snapshot = x.snapshot();
-    const { nameSharedAcrossViewTypes: _sharedName, ...tool } = Object.values(snapshot.tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
+    const { id, name, viewType } = Object.values(snapshot.tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
     const requestId = 'read-only-probe', from = x.messages.length;
     x.physical({ type: 'VIEW_TOOL_INVOKE', requestId, appId: 'app', instanceId: x.host.appInstanceId,
-      snapshotId: snapshot.id, tool, receiver: receiver(snapshot,tool),
-      observationId: 'read-only-probe', rawArgs: good, refSources: [] });
+      tool: { id, name, viewType }, receiver: receiver(snapshot,{ id }), effectiveArgs: good, localRefs: [] });
     expect(await wait(x, message => message.requestId === requestId, from)).toMatchObject({
       type: 'VIEW_TOOL_INVOKE_RESPONSE', terminal: { phase: 'not-entered', result: {
         success: false, error: { code: 'TOOL_EXECUTION_UNAVAILABLE' },
@@ -329,10 +326,22 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     });
     expect(x.entries()).toHaveLength(0);
   });
+  it('calls each Host policy method on the original policy object', async () => {
+    const policy = { project: vi.fn(project), authorize: vi.fn(() => true), canReadReceipt: vi.fn(() => true) };
+    const x = await start({ policy }), turns = workerTurns(x.host);
+    const prepared = await turns.prepare();
+    if (prepared.status !== 'prepared') throw Error(prepared.issue.code);
+    const turn = turns.adopt(prepared.candidate);
+    try {
+      const { observationId, tools } = prepared.candidate.observation;
+      const tool = tools.find(t => t.name === 'find' && t.viewType === 'File')!;
+      expect(value(await turn.invoke('app', { observationId, toolId: tool.id, invocationId: 'host-policy', viewId: 'aa_1', input: good })).success).toBe(true);
+      for (const callback of Object.values(policy)) expect(callback.mock.contexts).toEqual([policy]);
+    } finally { turn.release(); }
+  });
   it('R22 the current shared mode includes empty ordinary parameters and reject duplicate initialization', async () => {
     const x = await start(), s = scope(x), o = await s.observe();
-    expect(x.host.getInteractionReport().toolsEnabled).toBe(true);
-    expect(value(await s.client.invoke(s.request(o, 'zero', 'zero', {}))).data.args).toEqual({});
+    expect(value(await s.invoke(s.request(o, 'zero', 'zero', {}))).data.args).toEqual({});
     const from = x.messages.length, init = x.sent.find((message: any) => message.type === 'INIT');
     x.physical({ ...init, requestId: 'duplicate-init' });
     const error = await wait(x, message => message.requestId === 'duplicate-init', from);

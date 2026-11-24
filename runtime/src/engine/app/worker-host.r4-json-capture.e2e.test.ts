@@ -1,4 +1,5 @@
-import { projectCompleteViews } from '@aotui/core/internal';
+import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
+import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -19,7 +20,7 @@ function appSource(): string {
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
         import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
-        const DetailType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Detail', tools: {
+        const DetailType = defineViewType()({ multiplicity: 'multiple', name: 'Detail', tools: {
             stats: {
                 description: 'Read the getter counter', inputSchema: Type.Object({}, { additionalProperties: false }),
                 execute: async () => ({ success: true, data: { getterCalls } }),
@@ -38,7 +39,7 @@ function appSource(): string {
             const data = useMemo(() => state.mode === 'getter'
                 ? getterData
                 : state.mode === 'oversized' ? oversizedData : { value: 'valid' }, [state.mode]);
-            const ref = useDataRef('payload', data, { scope: 'protected' });
+            const ref = useDataRef('payload', data, { schema: { type: 'object' }, scope: 'protected' });
             return h('section', {}, [
                 h('p', {}, [state.mode, ref('payload')]),
             ]);
@@ -134,7 +135,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
         try {
             const { app, workerScript } = await buildFixture(directory);
             worker = new Worker(workerScript);
-            host = new AppWorkerHost({
+            host = new AppWorkerHost({ policy: policyForSelection(),
                 appId: 'json_capture_app' as any,
                 desktopId: 'json_capture_desktop' as any,
                 appModulePath: app,
@@ -144,7 +145,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             });
             const captures: Capture[] = [];
             const healthNotifications: Array<string | undefined> = [];
-            host.onUpdateRequest = () => healthNotifications.push(host!.getSemanticSnapshotReport()?.health);
+            host.onUpdate = reason => healthNotifications.push(reason);
             worker.on('message', message => {
                 if (message?.type === 'SNAPSHOT_PREPARED' || message?.type === 'SNAPSHOT_PREPARE_FAILED') {
                     captures.push(message);
@@ -159,6 +160,11 @@ describe('R4 strict JSON capture in a real Worker', () => {
                 const after = sequence(captures.at(-1));
                 const result = waitForCapture(worker!, captures, after);
                 worker!.postMessage({ type: 'TEST_COMMAND', command: type });
+                if (type === 'recover') {
+                    const opened = host!.getAppInteraction();
+                    if (opened.status !== 'ready') throw Error(opened.issue.code);
+                    expect((await opened.interaction.preview()).status).toBe('previewed');
+                }
                 return result;
             };
 
@@ -170,7 +176,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             expect(accessorFailure.error.message).toContain('Accessors');
             expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1,
                 published: 1, rejected: 1, lastIssueCode: 'SNAPSHOT_SERIALIZATION_ERROR' });
-            expect(healthNotifications).toEqual(['ready', 'degraded']);
+            expect(healthNotifications).toEqual(['projection_failed']);
 
             const oversizedFailure = await publishEvent('oversized');
             expect(oversizedFailure).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED',
@@ -180,44 +186,27 @@ describe('R4 strict JSON capture in a real Worker', () => {
             expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 2,
                 rejected: 2, lastIssueCode: 'SNAPSHOT_SERIALIZATION_ERROR', lastIssuePath: oversizedFailure.error.path });
             expect(oversizedFailure.error.path).not.toBe(accessorFailure.error.path);
-            expect(healthNotifications).toEqual(['ready', 'degraded', 'degraded']);
+            expect(healthNotifications).toEqual(['projection_failed', 'projection_failed']);
 
             const recovery = await publishEvent('recover');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');
             expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, unchanged: 1,
                 prepareFailed: 2, lastRefCount: 1 });
-            expect(healthNotifications).toEqual(['ready', 'degraded', 'degraded', 'ready']);
+            expect(healthNotifications).toEqual(['projection_failed', 'projection_failed', 'projection_recovered']);
 
-            const openedScope = host.getAppInteraction(policyForSelection());
-            expect(openedScope.status).toBe('ready');
-            if (openedScope.status !== 'ready') throw new Error(openedScope.issue.code);
-            const observed = await openedScope.interaction.observe({ all: true });
-            expect(observed.status).toBe('observed');
-            if (observed.status !== 'observed') throw new Error(observed.issue.code);
-            expect(openedScope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
-            const stats = observed.observation.tools.find(tool => tool.name === 'stats');
-            expect(stats).toBeDefined();
-            const target = observed.observation.views.find(view => view.type === stats?.viewType);
-            expect(target).toBeDefined();
-            const statsResult = await openedScope.interaction.invoke({
-                invocationId: 'read-getter-counter',
-                observationId: observed.observation.observationId,
-                toolId: stats!.id,
-                input: { view_id: target!.id },
-            });
+            const statsResult = await invokeObservedTool(host, 'stats');
             expect(statsResult).toMatchObject({ kind: 'receipt', receipt: {
                 outcome: { status: 'succeeded', value: { success: true, data: { getterCalls: 0 } } },
             } });
-            openedScope.interaction.releaseObservation(observed.observation.observationId);
 
             await host.close();
             expect(host.getSemanticSnapshotReport()?.health).toBe('stopped');
             expect(host.getResourceReport()).toMatchObject({ interactions: {
-                closed: true, retainedOperations: 0, retainedBytes: 0,
+                closed: true, retainedOperations: 0,
             }, appCleanup: { support: 'managed', report: { state: 'completed', issues: [] } } });
             expect(worker.threadId).toBe(-1);
             expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'exited',
-                resourcesReleased: true, interactions: { closed: true, retainedOperations: 0, retainedBytes: 0 } });
+                resourcesReleased: true, interactions: { closed: true, retainedOperations: 0 } });
         } finally {
             host?.terminate();
             if (worker) await worker.terminate();

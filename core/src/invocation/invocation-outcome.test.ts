@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { captureBoundedJson, mapExecutionFact } from './invocation-outcome.js';
-import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
+import { mapExecutionFact } from './invocation-outcome.js';
+import { canonicalJson, copyJson, copyWireJson, utf8Size } from '../snapshot/json.js';
 const limits = { maxDepth: 52, maxNodes: 32032, maxApproxBytes: 520 * 1024, maxCanonicalBytes: 520 * 1024 };
 const error = { code: 'E_INVALID_ARGS', message: 'Business failure', context: { synthetic: true } };
 describe('B2 bounded JSON byte measurement', () => {
@@ -17,9 +17,9 @@ describe('B2 bounded JSON byte measurement', () => {
         const nativeBytes = utf8Size(JSON.stringify(copied)!);
 
         expect(nativeBytes).toBe(canonicalBytes);
-        expect(captureBoundedJson(input, { ...limits, maxCanonicalBytes: canonicalBytes }).bytes).toBe(canonicalBytes);
-        expect(() => captureBoundedJson(input, { ...limits, maxCanonicalBytes: canonicalBytes - 1 }))
-            .toThrow(new RangeError('Bounded JSON capacity exceeded'));
+        expect(copyWireJson(input, { ...limits, maxCanonicalBytes: canonicalBytes })).toEqual(copied);
+        expect(() => copyWireJson(input, { ...limits, maxCanonicalBytes: canonicalBytes - 1 }))
+            .toThrow(/Encoded JSON exceeds the byte limit/);
         expect(Object.isFrozen(copied)).toBe(true);
         expect(Object.isFrozen((copied as { record: object }).record)).toBe(true);
         expect(Object.isFrozen((copied as { tuple: readonly unknown[] }).tuple)).toBe(true);
@@ -36,17 +36,17 @@ describe('B2 bounded JSON byte measurement', () => {
         const descriptor: PropertyDescriptor = prototype === 'array'
             ? { configurable: true, get() { getterReads++; return () => { functionCalls++; return 'changed'; }; } }
             : { configurable: true, writable: true, value() { functionCalls++; return 'changed'; } };
-        let result: ReturnType<typeof captureBoundedJson> | undefined;
+        let result: ReturnType<typeof copyWireJson> | undefined;
         try {
             Object.defineProperty(target, 'toJSON', descriptor);
-            result = captureBoundedJson(input, { ...limits, maxCanonicalBytes: expected });
+            result = copyWireJson(input, { ...limits, maxCanonicalBytes: expected });
         } finally {
             if (previous) Object.defineProperty(target, 'toJSON', previous);
             else Reflect.deleteProperty(target, 'toJSON');
         }
         expect(getterReads).toBe(0);
         expect(functionCalls).toBe(0);
-        expect(result?.bytes).toBe(expected);
+        expect(utf8Size(canonicalJson(result!))).toBe(expected);
     });
 });
 

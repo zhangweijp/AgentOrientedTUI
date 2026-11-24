@@ -13,9 +13,10 @@ import { initialLoadedDiagnostics, transitionLoadedDiagnostics, type LoadedDiagn
 import { mergeWorkspaceFolders } from '../tui/workspace-folders.js';
 
 type Persistence = NonNullable<ReturnType<typeof useAppRuntimeContext>['persistence']>;
-type ProjectionPreparation = Pick<ReturnType<typeof useAppRuntimeContext>, 'prepareProjection' | 'prepareOpeningProjection'>;
-export interface IDEFile { viewId: string; observed: ObservedFile; offset: number; limit: number; page: string;
+type ProjectionPreparation = Pick<ReturnType<typeof useAppRuntimeContext>, 'prepareProjection' | 'prepareOpeningProjection' | 'readPreparedViewId'>;
+export interface IDEFile { key: string; observed: ObservedFile; offset: number; limit: number; page: string;
     diagnostics: LoadedDiagnosticsState; panels: Record<string, unknown> }
+export const fileViewName = (filePath: string) => 'File: ' + filePath;
 type Root = { path: string; identity: string; creator: WorkspaceFileCreator };
 export interface IDEOptions { sessionKey: string; historyPath: string; projectPath?: string }
 const sessionKeys = ['workspaceFolders', 'activeFiles', 'expandedDirs'] as const;
@@ -92,10 +93,14 @@ export class IDESession {
         catch (error) { if (!revertStarted) revert(); throw error; }
     }
     private async openRecords(records: readonly IDEFile[], guard: () => void): Promise<void> {
-        const previous = this.files, candidate = new Map(previous);
-        for (const record of records) candidate.set(record.observed.path, record);
-        await this.navigate(() => { guard(); this.files = candidate; }, () => {
-            if (this.files === candidate) this.files = previous;
+        const previous = this.files, savedSequence = this.sequence, candidate = new Map(previous);
+        let nextSequence = savedSequence;
+        for (const record of records) {
+            const key = candidate.get(record.observed.path)?.key ?? 'slot_' + (nextSequence = nextVersion(nextSequence));
+            candidate.set(record.observed.path, key === record.key ? record : { ...record, key });
+        }
+        await this.navigate(() => { guard(); this.files = candidate; this.sequence = nextSequence; }, () => {
+            if (this.files === candidate) { this.files = previous; this.sequence = savedSequence; }
         });
         guard();
     }
@@ -145,7 +150,7 @@ export class IDESession {
     }
     private record(observed: ObservedFile, offset: number, limit: number, previous?: IDEFile): IDEFile {
         const page = filePage(observed.content, offset, limit);
-        return { viewId: previous?.viewId ?? 'fd_' + (this.sequence = nextVersion(this.sequence)),
+        return { key: previous?.key ?? '',
             observed, offset, limit, page, diagnostics: previous ? transitionLoadedDiagnostics(previous.diagnostics, observed.path, 'idle') : initialLoadedDiagnostics(observed.path), panels: {} };
     }
     private async readTree(roots: readonly Root[], expanded: readonly string[], guard: () => void): Promise<Map<string, string>> {
@@ -260,19 +265,22 @@ export class IDESession {
         const guard = () => { this.current(); requireIDE(this.files.get(file) === record, 'IDE_FILE_STALE'); };
         guard(); return { record, guard };
     }
-    invoke(name: string, args: Readonly<Record<string, any>>, viewId = 'workspace'): Promise<ToolResult> {
+    invoke(name: string, args: Readonly<Record<string, any>>, target = 'workspace'): Promise<ToolResult> {
         if (!this.live || !this.ready) return Promise.resolve(fail(new IDEError('IDE_NOT_READY')));
-        return this.track(this.execute(name, args, viewId).catch(error => {
+        return this.track(this.execute(name, args, target).catch(error => {
             if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) this.cleanupFailed = true;
             return fail(error instanceof IDEError ? error : ['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'ELOOP'].includes(error?.code)
                 ? new IDEError('IDE_IO_' + error.code) : /^(RESOURCE_UNSUPPORTED|RESOURCE_SCOPE_DENIED|RESOURCE_SCOPE_CHANGED|RESOURCE_PARENT_INVALID|RESOURCE_CHANGED_DURING_READ)(:|$)/.test(error?.message ?? '')
                     ? new IDEError(error.message.split(':')[0]) : new IDEError('IDE_TOOL_UNKNOWN', 'unknown'));
         }));
     }
-    /** Return the current app-owned FileDetail View ID for a loaded file, if one exists. */
+    /** Read the committed FileDetail ID for a loaded file. */
     getLoadedFileViewId(filePath: string): string | undefined {
         if (!this.live || !this.ready) return undefined;
-        try { return this.files.get(textPath(filePath))?.viewId; }
+        try {
+            const file = this.files.get(textPath(filePath));
+            return file && this.projection?.readPreparedViewId('FileDetail', fileViewName(file.observed.path));
+        }
         catch { return undefined; }
     }
     /** Return only the receipt metadata; diagnostics themselves stay in the committed FileDetail View. */
@@ -374,8 +382,8 @@ export class IDESession {
         return { result: success({ action, filePath: file, diskCommitted: true,
             ...(viewOpened === undefined ? {} : { viewOpened }), warnings }), committedWorkspaceVersion };
     }
-    private async execute(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<ToolResult> {
-        if (viewId !== 'workspace') return this.executeView(name, args, viewId);
+    private async execute(name: string, args: Readonly<Record<string, any>>, target: string): Promise<ToolResult> {
+        if (target !== 'workspace') return this.executeView(name, args, target);
         if (['edit_file', 'delete_file', 'rename_file'].includes(name) || name === 'write_file' && this.files.has(textPath(args.filePath))) {
             const file = textPath(name === 'rename_file' ? args.oldPath : args.filePath), { record, guard } = this.fileGuard(file);
             if (name === 'delete_file') return (await this.finishDisk(record, file, undefined, guard, 'delete', await deleteObservedFile(record.observed, guard))).result;
@@ -531,12 +539,12 @@ export class IDESession {
         }
         this.lastBatch = boundedJSON(results); this.publish(); return success({ results });
     }
-    private async executeView(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<ToolResult> {
-        if (viewId === 'search') {
+    private async executeView(name: string, args: Readonly<Record<string, any>>, target: string): Promise<ToolResult> {
+        if (target === 'search') {
             const current = this.search; requireIDE(current && name === 'close_search_view', 'IDE_SEARCH_STALE');
             this.current(); this.search = null; this.commitWorkspace(); return success({ closed: 1 });
         }
-        const record = [...this.files.values()].find(file => file.viewId === viewId); requireIDE(record, 'IDE_FILE_VIEW_CLOSED');
+        const record = [...this.files.values()].find(file => file.key === target); requireIDE(record, 'IDE_FILE_VIEW_CLOSED');
         const guard = () => { this.current(); requireIDE(this.files.get(record.observed.path) === record, 'IDE_FILE_VIEW_STALE'); };
         guard();
         if (['write_file', 'edit_file', 'delete_file', 'rename_file'].includes(name)) {

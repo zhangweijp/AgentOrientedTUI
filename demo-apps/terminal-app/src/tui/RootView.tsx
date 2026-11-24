@@ -5,7 +5,7 @@ export function RootView() {
         <h2>How to use</h2><ol>
             <li>Start in TerminalConsole with new_terminal_and_send_command.</li>
             <li>Read the new Terminal View for command status, exit code and output.</li>
-            <li>Use view_id from the intended Terminal View to run another command, expand output or close that session.</li>
+            <li>Use view_id from the open receipt or intended Terminal View to run another command, expand output or close that session.</li>
         </ol>
         <p>A command-start receipt means the shell process was started. Read its status, exit code and output in the Terminal View to determine completion.</p>
         <h2>Views</h2>
@@ -18,7 +18,7 @@ export function RootView() {
             <li>load_more_output requires a live view_id and a positive integer tail_lines; it expands that terminal's visible output.</li>
             <li>close_terminal closes the selected terminal and requests termination of its active command. A closed view_id is rejected.</li>
         </ul>
-        <p>Terminal tools are registered once for the Terminal View Type. Their view_id parameter selects a live Terminal listed here and shown in its View.</p>
+        <p>Terminal tools are shared by the Terminal View Type. The TerminalConsole lists session names. Select a live Terminal using the View's view_id.</p>
         <p>The project path sets the initial working directory and limits the built-in cd command. Shell commands run with the Host's operating-system permissions.</p>
         </section>;
 }

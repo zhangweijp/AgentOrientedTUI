@@ -13,7 +13,7 @@ export interface ConsoleProgram {
     readonly names: readonly string[];
     readonly inputs: Extract<ConsoleInputs, { status: 'ready' }>;
     readonly signal: AbortSignal;
-    recheck(): InteractionIssue | undefined;
+    recheck(): InteractionIssue | undefined | Promise<InteractionIssue | undefined>;
     invoke(name: string, input: Record<string, unknown>, slot: number, signal: AbortSignal): Promise<ToolResult>;
 }
 
@@ -132,7 +132,7 @@ function openProgramProcess(options: NodeConsoleOptions, mode: 'once' | 'scoped'
             const run = sequence + 1;
             const finished = completion<void>();
             const controller = new AbortController(), logs: string[] = [], names = new Set(program.names);
-            const life: { stage: 'ready' | 'initialize' | 'running' | 'finished' } = { stage: 'ready' };
+            const life: { stage: 'ready' | 'initialize' | 'checking' | 'running' | 'finished' } = { stage: 'ready' };
             let bytes = 0, received = 0, truncated = false;
             let error: InteractionIssue | undefined;
             let tail = Promise.resolve();
@@ -149,7 +149,7 @@ function openProgramProcess(options: NodeConsoleOptions, mode: 'once' | 'scoped'
                 kill();
             };
             const skip = (issue: InteractionIssue) => {
-                if (life.stage === 'initialize') writeFrame(input, { type: 'skip', run });
+                if (life.stage === 'initialize' || life.stage === 'checking') writeFrame(input, { type: 'skip', run });
                 finish(issue);
                 if (mode === 'once') kill();
             };
@@ -181,11 +181,14 @@ function openProgramProcess(options: NodeConsoleOptions, mode: 'once' | 'scoped'
                         if (life.stage === 'finished') return;
                         if (life.stage === 'initialize') {
                             if (message.type !== 'initialized') { failed(protocolIssue);return; }
-                            const issue = program.recheck();
-                            if (issue) { skip(issue);return; }
-                            onBegin?.();
-                            life.stage = 'running';
-                            writeFrame(input, { type: 'begin', run });
+                            life.stage = 'checking';
+                            void Promise.resolve().then(() => program.recheck()).then(issue => {
+                                if (life.stage !== 'checking') return;
+                                if (issue) { skip(issue);return; }
+                                onBegin?.();
+                                life.stage = 'running';
+                                writeFrame(input, { type: 'begin', run });
+                            }).catch(() => failed(protocolIssue));
                             return;
                         }
                         if (life.stage === 'running' && message.type === 'log' && typeof message.text === 'string' && logs.length < MAX_LOGS) {

@@ -1,7 +1,6 @@
 /**
  * Runtime Configuration Builder
  * 
- * @module @aotui/runtime/spi/config
  */
 
 import { WORKER_DEFAULTS } from './domains/worker.config.js';

@@ -16,7 +16,7 @@ function readViews(container: Element) {
         region: node.getAttribute('data-fixture-region') === 'static' ? 'static' : 'dynamic',
         type: node.getAttribute('data-aotui-view')!,
         owner: node, bindings: [], refs: [],
-    }));
+    }), container.querySelectorAll('[data-aotui-view]').length);
 }
 
 describe('DOM adapter', () => {
@@ -114,7 +114,7 @@ it('uses attachment metadata independently of DOM roles and data attributes', ()
     const container = createContainer('<div data-aotui-view="Detail" data-region="static"><p data-role="application-instruction">Before</p></div>');
     const views = readDOMAppViews(container, node => ({
         id: 'detail', name: 'Attachment name', type: 'Detail', region: 'dynamic', refs: [], bindings: [], owner: node,
-    }));
+    }), 1);
     expect(views[0]).toMatchObject({ region: 'dynamic', type: 'Detail', id: 'detail', name: 'Attachment name' });
 });
 

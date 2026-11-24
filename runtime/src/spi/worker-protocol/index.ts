@@ -20,7 +20,6 @@
  * import type { MainToWorkerMessage, WorkerToMainMessage } from '../spi/worker-protocol/index.js';
  * ```
  * 
- * @module @aotui/runtime/spi/worker-protocol
  */
 
 // Type definitions

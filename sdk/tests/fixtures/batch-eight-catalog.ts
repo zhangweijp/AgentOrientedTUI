@@ -23,15 +23,14 @@ export default createApp({ app_name: 'console_catalog', viewTypes: [list],
         const view = createView(list, { render() {
             const data = JSON.parse(previous) as Catalog;
             const email = typeof data.people[0]?.email === 'number' ? Type.Number() : Type.String();
-            const person = Type.Object({ email, phone: Type.String() }, { additionalProperties: false });
+            const person = Type.Object({ email }, { additionalProperties: false });
             return { body: '# Console catalog ' + data.revision + (data.padding ?? ''),
                 refs: [
                     arrayRef('todos', data.todos, { scope: 'public', itemType: 'Todo', schema: Type.Array(todo) }),
-                    arrayRef('people', data.people, { scope: data.narrowed ? 'private' : 'public', itemType: 'Person', schema: Type.Array(person) }),
-                    arrayRef('loose', data.todos, { scope: 'public', itemType: 'Todo' }),
+                    arrayRef('people', data.people.map(({ email }) => ({ email })), { scope: data.narrowed ? 'private' : 'public', itemType: 'Person', schema: Type.Array(person) }),
                     arrayRef('other_kind', data.todos, { scope: 'public', itemType: 'Other', schema: Type.Array(todo) }),
-                    arrayRef('private_rows', data.todos, { scope: 'private', itemType: 'Todo' }),
-                    arrayRef('team_rows', data.todos, { scope: 'protected', itemType: 'Todo' }),
+                    arrayRef('private_rows', data.todos, { schema: Type.Array(Type.Object({})), scope: 'private', itemType: 'Todo' }),
+                    arrayRef('team_rows', data.todos, { schema: Type.Array(Type.Object({})), scope: 'protected', itemType: 'Todo' }),
                 ] };
         } });
         const update = () => {

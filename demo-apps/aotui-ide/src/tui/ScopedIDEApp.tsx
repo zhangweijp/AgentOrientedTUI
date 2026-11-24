@@ -1,5 +1,5 @@
 import { useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
-import { IDESession, type IDEFile } from '../core/ide-session.js';
+import { fileViewName, IDESession, type IDEFile } from '../core/ide-session.js';
 import { RootType, WorkspaceType, FileDetailType, SearchResultType, closeFileDetail } from './ide-tool-contracts.js';
 import { WorkspaceCreateView } from './WorkspaceCreateView.js';
 import { requireIDE } from '../core/ide-errors.js';
@@ -21,14 +21,14 @@ function Workspace({ owner }: { owner: IDESession }) {
                 Restore a folder at its listed path and use add_folder_to_workspace to reconnect it, or use remove_folder_from_workspace to remove its saved entry.</p>
             <ul>{owner.unavailableRoots.map(folder => <li key={folder}>{folder}</li>)}</ul>
         </section>}
-        <h3>📂 Opened Files</h3>{owner.files.size ? <ul>{[...owner.files.values()].map(file => <li key={file.viewId}>{file.observed.path} — View {file.viewId}</li>)}</ul> : <p>No files open.</p>}
+        <h3>📂 Opened Files</h3>{owner.files.size ? <ul>{[...owner.files.values()].map(file => <li key={file.key}>{file.observed.path}</li>)}</ul> : <p>No files open.</p>}
         {owner.lastBatch && <><h3>Last batch result</h3><pre>{JSON.stringify(owner.lastBatch, null, 2)}</pre></>}
     </section>;
 }
 
 function FileDetail({ file }: { file: IDEFile }) {
     return <section>
-        <h2>{file.observed.path}</h2><p>View ID: {file.viewId}. LSP positions use one-based lines and characters in the complete loaded document.</p>
+        <h2>{file.observed.path}</h2><p>LSP positions use one-based lines and characters in the complete loaded document.</p>
         <h3>Content</h3><pre>{file.page}</pre>
         {Object.entries(file.panels).map(([name, panel]) => <section key={name}><h3>{name}</h3>
             {name === 'hover' && panel && typeof panel === 'object' && 'value' in panel && panel.value === null &&
@@ -97,8 +97,8 @@ export function ScopedIDEApp() {
             {owner.warnings.length > 0 && <ul>{owner.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
         </RootType>
         <WorkspaceType id="workspace" context={owner} name="Workspace"><Workspace owner={owner} /></WorkspaceType>
-        {[...owner.files.values()].map(file => <FileDetailType key={file.viewId}
-            context={{ owner, file, diagnostics: config.enableDiagnosticsRead !== false }} name={'File: ' + file.observed.path}
+        {[...owner.files.values()].map(file => <FileDetailType key={file.key} idPrefix="fd"
+            context={{ owner, file, diagnostics: config.enableDiagnosticsRead !== false }} name={fileViewName(file.observed.path)}
             onClose={() => closeFileDetail(owner, file)}>
             <FileDetail file={file} /></FileDetailType>)}
         {owner.search && <SearchResultType key={owner.search.incarnation} id="search" context={{ owner, incarnation: owner.search.incarnation }} name="Search Results"><Search owner={owner} /></SearchResultType>}

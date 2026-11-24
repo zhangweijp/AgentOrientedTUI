@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
 import { jsonSchema } from 'ai';
 import { AgentDriverV2, createLanguageModel, type LLMConfig } from '../../src/index.js';
 import { LLMClient } from '../../src/core/llm-client.js';
@@ -178,7 +179,7 @@ const closed = (properties: Record<string, unknown>) => ({ type: 'object', addit
     properties, required: Object.keys(properties) });
 const seatSchema = closed({ seat: { anyOf: [
     { type: 'array', items: false, minItems: 2, prefixItems: [{ type: 'string' }, { type: 'integer', minimum: 1 }] },
-    { type: 'string', pattern: '^[$][^$]' },
+    { type: 'string', description: 'Select a published Ref with $ref.app_id.view_id.ref_id.' },
 ] } });
 
 it('checks OpenAI strict enum totals per tool, including alternatives and nested properties', async () => {
@@ -251,6 +252,69 @@ it.each([
     expect(tool.function ?? tool).toMatchObject({ name: 'published', strict, parameters: input });
 });
 
+it('captures unrestricted JSON on the local provider wire and reports strict failures before sending', async () => {
+    const requests: { path: string; body: any }[] = [];
+    const server = createServer(async (request, response) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(chunk);
+        requests.push({ path: request.url!, body: JSON.parse(Buffer.concat(chunks).toString()) });
+        response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({
+            error: { code: 400, type: 'invalid_request_error', message: 'Captured local encoding', status: 'INVALID_ARGUMENT' },
+        }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected a loopback TCP address');
+        const endpoint = `http://127.0.0.1:${address.port}`;
+        const transport = globalThis.fetch;
+        vi.stubGlobal('fetch', (input: string | URL, init?: RequestInit) => {
+            const url = new URL(String(input));
+            return transport(endpoint + url.pathname + url.search, init);
+        });
+        const routes = [
+            { id: 'openai', baseURL: 'https://api.openai.com/v1', path: '/v1/responses' },
+            { id: 'openai', baseURL: endpoint + '/chat/v1', path: '/chat/v1/chat/completions' },
+            { id: 'deepseek', baseURL: endpoint + '/beta', path: '/beta/chat/completions' },
+        ];
+        const direct = closed({ body: { description: 'Any JSON value' } });
+        const nested = closed({ payload: closed({ values: { type: 'array', items: {} } }) });
+        for (const { id, baseURL, path } of routes) {
+            const strict = new LLMClient({ apiKey: 'fixture', model: 'fixture', provider: { id, baseURL, toolSchemaMode: 'strict' } });
+            const beforeRequest = vi.fn();
+            const before = requests.length;
+            for (const [schema, field] of [[direct, '$.properties.body'], [nested, '$.properties.payload.properties.values.items']] as const) {
+                await expect(strict.call(messages, { arbitrary: { inputSchema: jsonSchema(schema) } }, { preserveTools: true, beforeRequest }))
+                    .rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED', path: field,
+                        reason: expect.stringContaining('unconstrained JSON value') });
+            }
+            expect(beforeRequest).not.toHaveBeenCalled();
+            expect(requests).toHaveLength(before);
+            const client = new LLMClient({ apiKey: 'fixture', model: 'fixture', provider: { id, baseURL, toolSchemaMode: 'non-strict' } });
+            await expect(client.call(messages, { direct: { inputSchema: jsonSchema(direct) }, nested: { inputSchema: jsonSchema(nested) } },
+                { preserveTools: true })).rejects.toMatchObject({ statusCode: 400 });
+            expect(requests).toHaveLength(before + 1);
+            const wire = requests.at(-1)!;
+            expect(wire.path).toBe(path);
+            expect(wire.body.tools.map((value: any) => value.function ?? value)).toEqual([
+                expect.objectContaining({ name: 'direct', strict: false, parameters: direct }),
+                expect.objectContaining({ name: 'nested', strict: false, parameters: nested }),
+            ]);
+        }
+
+        const google = new LLMClient({ apiKey: 'fixture', model: 'fixture', provider: { id: 'google', baseURL: endpoint + '/google' } });
+        const { additionalProperties, ...open } = direct;
+        await expect(google.call(messages, { arbitrary: { inputSchema: jsonSchema(open) } }, { preserveTools: true }))
+            .rejects.toMatchObject({ statusCode: 400 });
+        const googleTool = requests.at(-1)!.body.tools[0].functionDeclarations[0];
+        expect(googleTool.parametersJsonSchema ?? googleTool.parameters).toEqual(open);
+        const googlePolicy = await google.toolSchemaPolicy();
+        if (googleTool.parameters) expect(googlePolicy.check?.(direct)?.path).toBe('$.additionalProperties');
+        else expect(googlePolicy.check?.(direct)).toBeUndefined();
+        expect(requests).toHaveLength(4);
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+}, 15_000);
+
 it('rejects DeepSeek strict without its Beta endpoint and a model without required tools before request admission', async () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
@@ -263,6 +327,25 @@ it('rejects DeepSeek strict without its Beta endpoint and a model without requir
     await expect(noTools.call(messages, tools, flags)).rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED', tool: 'required tools' });
     expect(fetch).not.toHaveBeenCalled();
     expect(beforeRequest).not.toHaveBeenCalled();
+});
+
+it('rejects unsupported Claude strict array bounds in a required tool before adoption', async () => {
+    const fetch = vi.fn(), beforeRequest = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const client = new LLMClient({ apiKey: 'fixture', model: 'claude-sonnet-4-5',
+        provider: { id: 'anthropic', baseURL: 'https://anthropic.test/v1', toolSchemaMode: 'strict' } });
+    const schema = (bounds: object) => closed({ imports: { anyOf: [
+        { type: 'array', items: { type: 'string' }, ...bounds }, { type: 'null' },
+    ] } });
+    const policy = await client.toolSchemaPolicy();
+    for (const minItems of [0, 1]) expect(policy.check?.(schema({ minItems }))).toBeUndefined();
+    for (const [keyword, value] of [['maxItems', 256], ['minItems', 2]] as const) {
+        await expect(client.call(messages, { required_lookup: { inputSchema: jsonSchema(schema({ [keyword]: value })) } },
+            { preserveTools: true, beforeRequest })).rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED',
+            tool: 'required_lookup', path: `$.properties.imports.anyOf[0].${keyword}`, reason: expect.stringContaining('minItems of 0 or 1') });
+    }
+    expect(beforeRequest).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
 });
 
 it.each([

@@ -35,7 +35,7 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 import { DynamicView } from './sdk/src/components/View.tsx';
 
                 import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
-                const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'FileDetail', tools: {
+                const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
                     inspect: {
                         description: 'Inspect the selected file',
                         inputSchema: Type.Object({ filePath: Type.String() }, { additionalProperties: false }),

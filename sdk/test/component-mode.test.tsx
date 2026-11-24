@@ -21,8 +21,8 @@ describe('[RFC-027] Component Mode', () => {
         expect(app).toBeDefined();
         // component字段被转换为factory对象
         expect(typeof app.initialize).toBe('function');
-        expect(app.kernelConfig).not.toHaveProperty('component');
-        expect(app.kernelConfig.appName).toBe('test_app');
+        expect(app).not.toHaveProperty('component');
+        expect(app.app_name).toBe('test_app');
     });
 
 
@@ -40,6 +40,6 @@ describe('[RFC-027] Component Mode', () => {
         // component字段应该存在(已转换为factory)
         expect(typeof app.initialize).toBe('function');
         // root字段不应该存在(已废弃)
-        expect(app.kernelConfig).not.toHaveProperty('root');
+        expect(app).not.toHaveProperty('root');
     });
 });

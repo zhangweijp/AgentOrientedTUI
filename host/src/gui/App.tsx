@@ -389,7 +389,7 @@ export function App() {
         void bridge.requestDesktopPreview(activeTopicId).catch(error => {
             if (current) showToast(`TUI preview failed: ${error instanceof Error ? error.message : String(error)}`);
         });
-        return () => { current = false; };
+        return () => { current = false; bridge.stopDesktopPreview(activeTopicId); };
     }, [bridge, viewMode, activeTopicId, showToast]);
 
     // Actions

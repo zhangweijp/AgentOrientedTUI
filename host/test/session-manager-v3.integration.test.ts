@@ -115,12 +115,11 @@ describe('SessionManager V3 Integration', () => {
 
         // Create SessionManager
         const desktopManager = { createDesktop: vi.fn(async (id: string) => {
-            const key = await mockKernel.createDesktop(createDesktopId(id));
+            const key = (await mockKernel.createDesktop(createDesktopId(id))).id;
             return { desktop: mockKernel.getDesktop(key), thirdPartyAppCount: 0 };
         }) };
         vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({ text: '', toolCalls: [], finishReason: 'stop' });
         sessionManager = new SessionManagerV3(
-            mockKernel,
             desktopManager as unknown as DesktopManager,
             llmConfigService,
             messageService

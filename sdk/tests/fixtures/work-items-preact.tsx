@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { createTUIApp, useAppLifecycle, useArrayRef, useDataRef, DynamicView } from '@aotui/sdk';
-import { ItemType, WorkspaceType, initialState, itemRefOptions, label, listRefOptions, otherViewId, selectedViewId,
+import { ItemType, WorkspaceType, initialState, itemRefOptions, label, listRefOptions, otherViewPrefix, selectedViewPrefix,
     workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 
 function Item({ value, items }: { readonly value: State['value']; readonly items?: State['items'] }) {
@@ -25,8 +25,8 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
         useAppLifecycle({ stop: () => options.onStop?.(), close: () => options.onClose?.() });
         return <>
             <DynamicView idPrefix="workspace" type={WorkspaceType} context={{ change: setState, options }} ><p>{workspaceText(state)}</p></DynamicView>
-            <DynamicView idPrefix={otherViewId} type={ItemType} context={{ change: setState }} ><Item value={false} /></DynamicView>
-            {state.open && <DynamicView idPrefix={selectedViewId} type={ItemType} context={{ change: setState }} ><Item value={state.value} items={state.items} /></DynamicView>}
+            <DynamicView idPrefix={otherViewPrefix} type={ItemType} context={{ change: setState }} ><Item value={false} /></DynamicView>
+            {state.open && <DynamicView idPrefix={selectedViewPrefix} type={ItemType} context={{ change: setState }} ><Item value={state.value} items={state.items} /></DynamicView>}
         </>;
     }
     return createTUIApp({ app_name, component: WorkItems, viewTypes: workViewTypes });

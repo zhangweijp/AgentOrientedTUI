@@ -11,6 +11,7 @@ export function readSqliteState(root: string, desktop: string, app: string, key:
     const Driver = require('better-sqlite3');
     const database = new Driver(file, { readonly: true, fileMustExist: true });
     try {
+        if (!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'aotui_state'").get()) return undefined;
         const row = database.prepare('SELECT record FROM aotui_state WHERE namespace = ? AND key = ?')
             .get(JSON.stringify([desktop, app]), key);
         return row?.record?.toString('utf8');

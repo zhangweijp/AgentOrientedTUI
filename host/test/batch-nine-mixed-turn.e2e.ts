@@ -39,7 +39,7 @@ const factory = {
     async createDesktop(id: DesktopID) {
         const folder = join(state, `desktop-${folders.length}`);
         folders.push(folder);
-        const desktop = runtime.getDesktop(await runtime.createDesktop(id));
+        const desktop = await runtime.createDesktop(id);
         await installConsoleFixtures(desktop, resolve(consumer), folder);
         await desktop.openApp(TASKS);
         return { desktop, thirdPartyAppCount: 2 };
@@ -156,7 +156,7 @@ try {
     await writeFile(release, '');
     await host.dispose();
     await MCP.disconnect('local');
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();
     db.closeDatabase();
     if (evidence) await writeFile(resolve(evidence), JSON.stringify(facts, null, 2));

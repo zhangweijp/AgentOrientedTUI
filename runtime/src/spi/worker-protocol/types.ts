@@ -1,4 +1,4 @@
-export const WORKER_PROTOCOL = 'app-worker/v6' as const;
+export const WORKER_PROTOCOL = 'app-worker/v10' as const;
 
 /**
  * Worker Protocol - Type Definitions
@@ -7,7 +7,6 @@ export const WORKER_PROTOCOL = 'app-worker/v6' as const;
  * 
  * [架构原则] 这里重新导出 SPI 中已有的类型，保持单一来源。
  * 
- * @module @aotui/runtime/spi/worker-protocol
  */
 
 import type { AppID, DesktopID } from '@aotui/core';

@@ -39,14 +39,24 @@ const llm: LLMConfig = { model: 'fixture/usage', provider: { id: 'usage-gateway'
     inputBudget: () => ({ contextWindow, maxOutputTokens: OUTPUT }) };
 const nativeLLM: LLMConfig = { ...llm, model: 'fixture-native-google', provider: { id: 'google', baseURL: provider.url } };
 const paths = new Map<string, string>();
+const adoptedObservations = new Map<DesktopID, ReadonlyMap<string, string>>();
+const restoreAdoptions: Array<() => void> = [];
 const desktops = {
     async createDesktop(id: DesktopID) {
-        if (id === nativeTopicId) return { desktop: runtime.getDesktop(await runtime.createDesktop(id)), thirdPartyAppCount: 0 };
+        if (id === nativeTopicId) return { desktop: await runtime.createDesktop(id), thirdPartyAppCount: 0 };
         const folder = join(project, 'files-' + paths.size);
         paths.set(id, folder);
         await setupFiles(folder);
-        const desktopId = await runtime.createDesktop(id);
+        const desktopId = (await runtime.createDesktop(id)).id;
         const desktop = runtime.getDesktop(desktopId);
+        const adopt = desktop.adoptTurn.bind(desktop);
+        const recordAdoption = mock.method(desktop, 'adoptTurn', (selection: Parameters<typeof adopt>[0]) => {
+            const result = adopt(selection);
+            if (result.status === 'adopted') adoptedObservations.set(id, new Map(selection.apps.map(({ candidate: { observation } }) =>
+                [observation.source.appId, observation.observationId])));
+            return result;
+        });
+        restoreAdoptions.push(() => recordAdoption.mock.restore());
         await desktop.registerPendingApp({ installationId: 'files_install', localPath: await fixtureAppPath(moduleURL, APP, folder), config: { folder } });
         await desktop.openApp('files_install');
         return { desktop, thirdPartyAppCount: 1 };
@@ -93,7 +103,9 @@ const record = mock.method(Worker.prototype, 'postMessage', function (this: Work
     if (worker) wire.push({ ...worker, direction: 'toWorker', type: message.type,
         ...(message.protocol ? { protocol: message.protocol } : {}) });
     if (worker && message.type === 'VIEW_TOOL_INVOKE') {
-        dispatches.push({ desktopId: worker.desktopId, observationId: message.observationId,
+        const observationId = adoptedObservations.get(worker.desktopId)?.get(message.appId);
+        assert.ok(observationId, 'Expected the original observation from Desktop adoption');
+        dispatches.push({ desktopId: worker.desktopId, observationId,
             tool: message.tool.name, viewId: message.receiver.viewId });
     }
     return post.apply(this, args);
@@ -175,14 +187,14 @@ try {
         assert.equal(received.length, usageStart);
         assert.equal(provider.requests.length, requestStart + 1);
         const desktop = runtime.getDesktop(sessionId);
-        const { client } = appClient(runtime, desktop, APP);
+        const { client } = appClient(desktop, APP);
         async function projection() {
             const { observationId, source, views, refs, tools } = await observe(client);
-            client.releaseObservation(observationId);
+            client.release(observationId);
             return { source, views, refs, tools };
         }
         const before = await projection();
-        assert.ok(before.views.some(view => view.id === 'file_B' && view.content.value.includes('B-INITIAL')));
+        assert.ok(before.views.some(view => view.id === 'file_B_1' && view.content.value.includes('B-INITIAL')));
         assert.ok(before.tools.some(tool => tool.name === 'edit'));
 
         let replyStart = -1;
@@ -246,14 +258,14 @@ try {
         });
         assert.deepEqual(paired.assistant.content, [
             { type: 'reasoning', text: reasoning }, { type: 'text', text },
-            { type: 'tool-call', toolCallId: editedCall, toolName: 'window_files-edit', input: { view_id: 'file_B', mode: 'short' } },
+            { type: 'tool-call', toolCallId: editedCall, toolName: 'window_files-edit', input: { view_id: 'file_B_1', mode: 'short' } },
         ]);
         assert.equal(Array.isArray(paired.result.content) && paired.result.content[0]?.toolCallId, editedCall);
         assert.equal(Array.isArray(paired.result.content) && paired.result.content[0]?.output.value.saved, true);
         assert.equal(Array.isArray(paired.opened.content) && paired.opened.content[0]?.output.value.opened[0], 'B');
         const editDispatches = dispatches.filter(item => item.desktopId === sessionId && item.tool === 'edit');
         assert.equal(editDispatches.length, 1);
-        assert.equal(editDispatches[0]!.viewId, 'file_B');
+        assert.equal(editDispatches[0]!.viewId, 'file_B_1');
         const receipt = await client.readReceipt({ observationId: editDispatches[0]!.observationId, invocationId: editedCall });
         assert.equal(receipt.kind, 'receipt');
         assert.equal(receipt.receipt.executionPhase, 'entered-returned');
@@ -265,7 +277,7 @@ try {
         assert.equal(await readFile(join(folder, 'B.txt'), 'utf8'), 'B-EDITED');
         const edited = await projection();
         assert.ok(edited.source.revision > before.source.revision);
-        assert.ok(edited.views.some(view => view.id === 'file_B' && view.content.value.includes('B-EDITED')));
+        assert.ok(edited.views.some(view => view.id === 'file_B_1' && view.content.value.includes('B-EDITED')));
         const request = provider.requests.find(item => item.label === editLabel);
         assert.match(pageFor(request.body, 'B'), /B-INITIAL/);
         assert.ok(request.body.messages.some((message: any) => message.role === 'tool' && message.tool_call_id === openCall));
@@ -284,7 +296,7 @@ try {
     assert.ok(outbound.some(item => item.kind === 'final' && item.text === 'im editing B.'));
     assert.doesNotMatch(JSON.stringify(outbound), /fixture-usage-only|inputTokenDetails/);
     assert.doesNotMatch(JSON.stringify(provider.requests.map(request => request.body)), /fixture-usage-only|inputTokenDetails/);
-    assert.deepEqual(wire.filter(message => message.type === 'INIT').map(message => message.protocol), ['app-worker/v6', 'app-worker/v6']);
+    assert.deepEqual(wire.filter(message => message.type === 'INIT').map(message => message.protocol), ['app-worker/v10', 'app-worker/v10']);
     assert.equal(wire.filter(message => message.direction === 'toWorker' && message.type === 'VIEW_TOOL_INVOKE').length, 4);
     assert.ok(!wire.some(message => /LLM_USAGE|LLM_OUTPUT/.test(message.type)));
 
@@ -327,9 +339,10 @@ try {
     unsubscribeFailing();
     await im.stop();
     await host.dispose();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();
     record.mock.restore();
+    for (const restore of restoreAdoptions) restore();
     config.mock.restore();
     db.closeDatabase();
     if (evidence) await writeFile(resolve(evidence), JSON.stringify(facts, null, 2));

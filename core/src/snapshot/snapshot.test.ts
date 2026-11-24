@@ -22,7 +22,7 @@ function draft(
     override: Record<string, unknown> = {},
 ): PreparedAppSnapshotDraft {
     return {
-        schemaVersion: 7,
+        schemaVersion: 8,
         ...identity,
         producerSeq: seq,
         sourceEpoch: epoch,
@@ -36,7 +36,7 @@ function draft(
             content: { format: 'markdown-v1', value: '[Stable task](tasks[0])' },
         }],
         refs: {
-            [KEY]: { scope: 'protected',
+            [KEY]: { valueSchema: { type: 'object' }, scope: 'protected',
                 id: 'tasks[0]', ownerViewId: 'workspace', ownerViewInstanceId: 'mount_1',
                 refType: 'Task',
                 target: { kind: 'snapshot-value', payload: { id, status: 'pending' } },
@@ -45,7 +45,7 @@ function draft(
         tools: {
             [TOOL]: { multiplicity: 'multiple',
                 id: TOOL, name: 'complete_task', viewType: 'Workspace',
-                nameSharedAcrossViewTypes: false, description: 'Complete selected task',
+                 description: 'Complete selected task',
                 inputSchema: taskSchema,
             },
         },
@@ -325,12 +325,8 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
         expect([first.revision, second.revision, third.revision]).toEqual([1, 2, 3]);
         expect(first.views[0]!.content).toEqual(third.views[0]!.content);
         expect(third.views[0]!.toolBindings).toEqual([]);
-        expect(core.store.getTool({
-            snapshotId: first.id, appId: 'task_app', instanceId: 'instance_a', toolId: TOOL,
-        }).status).toBe('found');
-        expect(core.store.getTool({
-            snapshotId: third.id, appId: 'task_app', instanceId: 'instance_a', toolId: TOOL,
-        }).status).toBe('rejected');
+        expect(core.store.getById(first.id)).toMatchObject({ status: 'found', snapshot: { tools: { [TOOL]: { id: TOOL } } } });
+        expect(third.tools).toEqual({});
         expect(core.store.inspect().heldSnapshots).toBe(1);
         held.hold.release(); expect(core.store.inspect().heldSnapshots).toBe(0);
     });
@@ -415,7 +411,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
             }],
             refs: {
                 ...first.refs,
-                [secondKey]: { scope: 'protected',
+                [secondKey]: { valueSchema: { type: 'object' }, scope: 'protected',
                     id: 'tasks[0]', ownerViewId: 'detail', ownerViewInstanceId: 'mount_2',
                     refType: 'Task', target: { kind: 'snapshot-value', payload: { id: 'entity-b' } },
                 },
@@ -893,15 +889,6 @@ describe('M1 Core — defensive JSON boundary edge cases', () => {
         })).toThrow(/byte budget/);
     });
 
-    it('does not allow Tool descriptor lookup to cross source App identity', () => {
-        const core = createSnapshotCore(identity);
-        const snap = published(core, draft());
-        const result = core.store.getTool({
-            snapshotId: snap.id, appId: 'task_app', instanceId: 'wrong-instance', toolId: TOOL,
-        });
-        expect(result.status).toBe('rejected');
-        if (result.status === 'rejected') expect(result.issue.code).toBe('APP_INSTANCE_MISMATCH');
-    });
 
     it('retains holds across time within capacity and releases historical data when the final owner settles', () => {
         let now = 0;

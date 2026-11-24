@@ -34,7 +34,7 @@ export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ 
 `);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
         app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
-        persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
+        appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     await runCli('install', '.');
     const first = JSON.parse(await readFile(config, 'utf8')).apps[name];

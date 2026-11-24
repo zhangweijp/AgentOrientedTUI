@@ -1,5 +1,4 @@
 import Type from 'typebox';
-import { modelToolSchema } from '@aotui/core';
 import { describe, expect, it, vi } from 'vitest';
 import { captureViewBindings, captureViewTypes, defineViewType, refParam } from './tools/view-type-tool.js';
 
@@ -7,30 +6,27 @@ const execute = () => ({ success: true as const });
 const noArgs = Type.Object({}, { additionalProperties: false });
 
 describe('shared ViewType definitions', () => {
-    it('detaches deeply frozen business metadata and derives one model receiver', () => {
+    it('detaches deeply frozen business metadata and leaves receiver routing to the Host', () => {
         const schema = Type.Object({ item: refParam('Item', Type.Object({ name: Type.String() })) });
-        const descriptor = defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Reader', tools:{ inspect:{ description:'Inspect a row', inputSchema:schema, execute } } });
-        schema.properties.item.minLength = 9;
+        const descriptor = defineViewType<object>()({ multiplicity: 'multiple', name:'Reader', tools:{ inspect:{ description:'Inspect a row', inputSchema:schema, execute } } });
+        schema.properties.item['x-aotui-ref-kind'] = 'Mutated';
         const tool = descriptor.tools.inspect;
         expect(Object.isFrozen(tool.inputSchema.properties)).toBe(true);
-        expect(tool.inputSchema).toMatchObject({ properties:{ item:{ minLength:1 } } });
-        const model = modelToolSchema(tool.inputSchema, descriptor.name, descriptor.multiplicity);
-        expect(model).toMatchObject({
-            properties: {
-                view_id: { type:'string', description: expect.stringContaining('Reader') },
-                item: { type:'string', description: expect.stringContaining('view_id.ref_id') },
-            },
-            required:['view_id','item'],
-        });
-        expect(model).not.toHaveProperty('properties.item.x-aotui-ref-value');
+        expect(tool.inputSchema.properties).toEqual({ item: {
+            'x-aotui-ref-kind': 'Item',
+            'x-aotui-ref-value': { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+        } });
+        expect(tool.inputSchema.additionalProperties).toBe(false);
+        expect((tool.inputSchema.properties as any).item).not.toHaveProperty('type');
+        expect((tool.inputSchema.properties as any).item).not.toHaveProperty('minLength');
         expect(tool.inputSchema).not.toHaveProperty('properties.view_id');
     });
 
     it('rejects duplicate types, reserved parameters, accessors and unsupported TypeBox fields', () => {
-        const descriptor = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Page' });
-        expect(() => captureViewTypes([descriptor, defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Page' })]))
+        const descriptor = defineViewType({ multiplicity: 'multiple', name:'Page' });
+        expect(() => captureViewTypes([descriptor, defineViewType({ multiplicity: 'multiple', name:'Page' })]))
             .toThrow(expect.objectContaining({ code:'VIEW_TYPE_DUPLICATE' }));
-        const invalid = (inputSchema: any) => defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Page',tools:{ change:{description:'Change',inputSchema,execute} } });
+        const invalid = (inputSchema: any) => defineViewType<object>()({ multiplicity: 'multiple', name:'Page',tools:{ change:{description:'Change',inputSchema,execute} } });
         expect(() => invalid(Type.Object({view_id:Type.String()}))).toThrow(expect.objectContaining({
             code:'TOOL_SCHEMA_INVALID', path:'$.properties.view_id',
         }));
@@ -38,7 +34,7 @@ describe('shared ViewType definitions', () => {
             code:'TOOL_SCHEMA_UNSUPPORTED',path:'$.properties.value.format',
         }));
         const get = vi.fn(() => noArgs);
-        expect(() => defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Page',tools:{ change:Object.defineProperty({description:'Change',execute},'inputSchema',
+        expect(() => defineViewType<object>()({ multiplicity: 'multiple', name:'Page',tools:{ change:Object.defineProperty({description:'Change',execute},'inputSchema',
             {enumerable:true,get}) as any } })).toThrow(expect.objectContaining({code:'TOOL_DEFINITION_INVALID'}));
         expect(get).not.toHaveBeenCalled();
     });
@@ -49,14 +45,9 @@ describe('shared ViewType definitions', () => {
         const page = declare({ multiplicity: 'multiple', name: 'Page', tools: { close } });
         const empty = declare({ multiplicity: 'multiple', name: 'Page', tools: { close: { ...close, inputSchema: noArgs } } });
         expect(page.tools.close.inputSchema).toEqual(empty.tools.close.inputSchema);
-        const model = modelToolSchema(page.tools.close.inputSchema, page.name, page.multiplicity);
-        expect(model).toMatchObject({
-            type: 'object',
-            properties: { view_id: { type: 'string' } },
-            required: ['view_id'],
-            additionalProperties: false,
+        expect(page.tools.close.inputSchema).toMatchObject({
+            type: 'object', properties: {}, required: [], additionalProperties: false,
         });
-        expect(Object.keys(model.properties!)).toEqual(['view_id']);
         for (const inputSchema of [undefined, null, Type.String(), Type.Object({ view_id: Type.String() })]) {
             const invalid = { ...close, inputSchema } as typeof close & { inputSchema: typeof noArgs };
             expect(() => declare({ multiplicity: 'multiple', name: 'Page', tools: { close: invalid } }))
@@ -71,7 +62,7 @@ describe('shared ViewType definitions', () => {
             context.change();
             return { success: true as const };
         });
-        const Page = defineViewType<PageContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Page', tools: {
+        const Page = defineViewType<PageContext>()({ multiplicity: 'multiple', name: 'Page', tools: {
             change: { description: 'Modify the selected page', inputSchema: noArgs, execute, enabled },
         } });
 
@@ -106,7 +97,7 @@ describe('shared ViewType definitions', () => {
 
     it('passes a callable page context by reference', async () => {
         const change = vi.fn();
-        const Page = defineViewType<() => void>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Callable', tools: {
+        const Page = defineViewType<() => void>()({ multiplicity: 'multiple', name: 'Callable', tools: {
             change: { description: 'Change a page', execute({ context }) {
                 expect(context).toBe(change);
                 context();
@@ -135,7 +126,7 @@ describe('shared ViewType definitions', () => {
         expect(getter).not.toHaveBeenCalled();
         expect(() => defineViewType({ name: 'Legacy', tools: { change: { description: 'Change' } } } as never))
             .toThrow(expect.objectContaining({ code: 'TOOL_DEFINITION_INVALID' }));
-        expect(captureViewBindings(defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Empty' }), 'empty')).toEqual([]);
+        expect(captureViewBindings(defineViewType({ multiplicity: 'multiple', name: 'Empty' }), 'empty')).toEqual([]);
 
         for (const context of [undefined, null, 'page']) {
             expect(() => captureViewBindings(ContextPage, 'page', context)).toThrow(expect.objectContaining({

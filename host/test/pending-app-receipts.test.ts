@@ -1,18 +1,18 @@
 import { expect, it, vi } from 'vitest';
 import type { ToolResult } from '@aotui/agent-driver-v2';
 import type { PendingAppReceipt } from '@aotui/agent-driver-adapter';
-import type { AppInteraction, IDesktop, IKernel, ReceiptAccess } from '@aotui/runtime';
+import type { IDesktop, RunningApp, ReceiptAccess } from '@aotui/runtime';
 import { PendingAppReceipts } from '../src/core/pending-app-receipts.js';
 
 function fixture() {
     const desktopId = 'topic' as IDesktop['id'];
     const timeout: ReceiptAccess = { kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT', message: 'still running' };
-    const readReceipt = vi.fn(async () => timeout);
-    const interaction = { readReceipt } as unknown as AppInteraction;
-    const access = vi.fn(() => ({ status: 'ready', interaction }));
+    const readReceipt = vi.fn<IDesktop['readReceipt']>(async () => timeout);
+    const app = { readReceipt } as unknown as RunningApp;
+    const access = vi.fn(() => ({ status: 'ready', app }));
     const session = {
-        desktop: { id: desktopId, getInstalledApps: () => [{ appId: 'mail', appInstanceId: 'instance', installationId: 'mail_install' }] } as IDesktop,
-        kernel: { getAppInteraction: access } as unknown as IKernel,
+        desktop: { id: desktopId, getRunningApp: access, readReceipt,
+            listApps: () => [{ appId: 'mail', appInstanceId: 'instance', installationId: 'mail_install' }] } as unknown as IDesktop,
         isCurrent: () => true,
         isAppEnabled: () => true,
     };
@@ -39,10 +39,11 @@ it('associates multiple results independently and distinguishes two saved messag
     await f.read('later-message', 'reused');
     await f.read('first-message', 'sibling');
     await f.read('first-message', 'reused');
+    const identity = { desktopId: 'topic', appId: 'mail', instanceId: 'instance' };
     expect(f.readReceipt.mock.calls).toEqual([
-        [{ observationId: 'contacts-3', invocationId: 'reused' }, 50],
-        [{ observationId: 'contacts-2', invocationId: 'sibling' }, 50],
-        [{ observationId: 'contacts-1', invocationId: 'reused' }, 50],
+        [{ ...identity, observationId: 'contacts-3', invocationId: 'reused' }, 50],
+        [{ ...identity, observationId: 'contacts-2', invocationId: 'sibling' }, 50],
+        [{ ...identity, observationId: 'contacts-1', invocationId: 'reused' }, 50],
     ]);
 });
 

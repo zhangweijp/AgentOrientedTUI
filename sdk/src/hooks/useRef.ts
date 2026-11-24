@@ -1,7 +1,7 @@
 /**
  * Declares a Ref to one application data value.
  *
- * @module @aotui/sdk/useDataRef
+ * @module @aotui/sdk
  */
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import type Type from 'typebox';
@@ -16,7 +16,7 @@ export type RefHandle = (content: string) => string;
  *
  * @param refId - A Ref ID unique within the current View.
  * @param data - The value bound to the Ref.
- * @param options - Explicit publication scope and optional business type and schema.
+ * @param options - Required publication scope and value schema. The business Ref type is optional.
  */
 export function useDataRef<Schema extends Type.TSchema>(
   refId: string, data: RefSourceValue<Schema>, options: RefOptions<Schema>,

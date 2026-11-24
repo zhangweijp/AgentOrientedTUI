@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SemanticSnapshotReceiver } from './receiver.js';
 
 function draft(seq: number, text = 'current') {
-    return { schemaVersion: 7, appId: 'app', instanceId: 'instance',
+    return { schemaVersion: 8, appId: 'app', instanceId: 'instance',
         producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value: text } }], refs: {}, tools: {} };
@@ -75,17 +75,17 @@ describe('receiver-owned interaction lifetime', () => {
         receiver.acceptPrepared(draft(1));
         const interaction = receiver.interaction(policy, execution);
         expect(receiver.interaction(policy, execution)).toBe(interaction);
-        const first = await interaction.observe({ all: true });
+        const first = await interaction.observe();
         expect(first.status).toBe('observed');
         if (first.status !== 'observed') throw Error(first.issue.code);
-        expect((await interaction.observe({ all: true })).status).toBe('rejected');
+        expect((await interaction.observe()).status).toBe('rejected');
         expect(interaction.adoptObservation(first.observation.observationId)).toEqual({ status: 'adopted' });
-        const next = await interaction.observe({ all: true });
+        const next = await interaction.observe();
         expect(next.status).toBe('observed');
         expect(receiver.preview().status).toBe('previewed');
-        expect((await interaction.observe({ all: true })).status).toBe('rejected');
+        expect((await interaction.observe()).status).toBe('rejected');
         await receiver.close();
-        expect(receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
+        expect(receiver.getInteractionStats()).toMatchObject({ closed: true, });
     });
 
     it('uses the injected clock without expiring the current observation', async () => {
@@ -94,13 +94,13 @@ describe('receiver-owned interaction lifetime', () => {
         receiver.acceptPrepared(draft(1));
         const core = (receiver as any).core, id = receiver.report().snapshotId!;
         const interaction = receiver.interaction(policy, execution);
-        const first = await interaction.observe({ all: true });
+        const first = await interaction.observe();
         if (first.status !== 'observed') throw Error(first.issue.code);
         expect(interaction.adoptObservation(first.observation.observationId)).toEqual({ status: 'adopted' });
         time = 60001;
         expect(core.store.inspect().activeHolds).toBe(1);
         receiver.acceptPrepared(draft(2, 'new current'));
-        const second = await interaction.observe({ all: true });
+        const second = await interaction.observe();
         if (second.status !== 'observed') throw Error(second.issue.code);
         time = 660002;
         const retained = core.store.acquire(id);
@@ -108,9 +108,9 @@ describe('receiver-owned interaction lifetime', () => {
         interaction.releaseObservation(first.observation.observationId);
         interaction.releaseObservation(second.observation.observationId);
         expect(core.store.acquire(id).status).toBe('rejected');
-        expect((await interaction.observe({ all: true })).status).toBe('observed');
+        expect((await interaction.observe()).status).toBe('observed');
         await receiver.close();
-        expect(receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0 });
+        expect(receiver.getInteractionStats()?.observations.observationSlots).toBe(0);
     });
 
     it.each([-1, NaN, 9])('fails closed with invalid injected clock %s and still cleans up', async timeAfter => {
@@ -118,14 +118,14 @@ describe('receiver-owned interaction lifetime', () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance', () => time);
         receiver.acceptPrepared(draft(1));
         const interaction = receiver.interaction(policy, execution);
-        const first = await interaction.observe({ all: true });
+        const first = await interaction.observe();
         expect(first.status).toBe('observed');
         time = timeAfter;
-        expect(await interaction.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
+        expect(await interaction.observe()).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
         expect(await interaction.invoke({ invocationId: 'bad', observationId: 'bad', toolId: 'bad', input: {} }))
             .toMatchObject({ kind: 'refused', code: 'OBSERVATION_INTERNAL_ERROR' });
         await receiver.close();
-        expect(receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
+        expect(receiver.getInteractionStats()).toMatchObject({ closed: true, });
         expect(receiver.report().health).toBe('stopped');
     });
 });

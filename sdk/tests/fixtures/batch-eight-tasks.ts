@@ -7,7 +7,7 @@ import { arrayRef, createApp, createView, defineViewType, refParam, type ViewHan
 
 const todo = Type.Object({ title: Type.String(), done: Type.Boolean() }, { additionalProperties: false });
 type Writer = { write(label: string, value: object): Promise<ToolResult> };
-const detail = defineViewType<Writer>()({ name: 'detail', multiplicity: 'multiple', region: 'dynamic', createId: ({ prefix }) => prefix,
+const detail = defineViewType<Writer>()({ name: 'detail', multiplicity: 'multiple', region: 'dynamic',
     tools: { edit: { description: 'Edit the open detail.', inputSchema: Type.Object({ value: Type.String() }, { additionalProperties: false }),
         execute: ({ input, context }) => context.write('edit', input) } },
 });
@@ -49,7 +49,7 @@ export default createApp({ app_name: 'console_tasks', viewTypes: [workspace, det
             return { success: true, data: { saved: true, label, undisplayed: 'TOOL_DATA_NOT_INSPECTED' } };
         } };
         function open(): ToolResult {
-            if (!details) details = createView(detail, { idPrefix: 'detail_1', render: () => ({ body: '# Detail available', context: owner }),
+            if (!details) details = createView(detail, { idPrefix: 'detail', render: () => ({ body: '# Detail available', context: owner }),
                 onClose: () => { details = undefined;publish();return { success: true }; } });
             publish();
             return { success: true, data: { opened: true } };

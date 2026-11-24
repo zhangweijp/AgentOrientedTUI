@@ -5,14 +5,14 @@ describe('Kernel Lifecycle Management', () => {
     describe('runtime shutdown', () => {
         it('shutdown is idempotent and rejects further Runtime requests', async () => {
             const kernel = createRuntime();
-            const id1 = await kernel.createDesktop();
-            const id2 = await kernel.createDesktop();
+            const id1 = (await kernel.createDesktop()).id;
+            const id2 = (await kernel.createDesktop()).id;
 
             expect(kernel.getDesktop(id1)).toBeDefined();
             expect(kernel.getDesktop(id2)).toBeDefined();
 
-            await kernel.shutdown();
-            await kernel.shutdown();
+            await kernel.beginClose().completion;
+            await kernel.beginClose().completion;
 
             expect(() => kernel.getDesktop(id1)).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));
             expect(() => kernel.getDesktop(id2)).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));

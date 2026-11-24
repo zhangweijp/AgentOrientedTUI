@@ -11,6 +11,14 @@ export const todoEntry = folder => ({ name: installation, source: 'local:' + fol
 
 export function trackTodo(desktop) {
     const events = [], signals = [], originals = Worker.prototype.postMessage;
+    const adoptTurn = desktop.adoptTurn;
+    desktop.adoptTurn = function (selection) {
+        const result = adoptTurn.call(this, selection);
+        const adopted = selection.apps.find(({ candidate }) => candidate.observation.source.appId === app)?.candidate.observation;
+        if (result.status === 'adopted' && adopted)
+            events.push({ type: 'adopted', observationId: adopted.observationId });
+        return result;
+    };
     const owners = new WeakSet();
     const listener = signal => signals.push(signal);
     desktop.output.subscribe(listener);
@@ -35,7 +43,11 @@ export function trackTodo(desktop) {
         }
         return originals.call(this, message, ...rest);
     };
-    return { events, signals, restore() { Worker.prototype.postMessage = originals; desktop.output.unsubscribe(listener); } };
+    return { events, signals, restore() {
+        Worker.prototype.postMessage = originals;
+        desktop.adoptTurn = adoptTurn;
+        desktop.output.unsubscribe(listener);
+    } };
 }
 
 export async function exerciseTodo(turn, runtime, desktop, folder, tracked) {
@@ -44,7 +56,7 @@ export async function exerciseTodo(turn, runtime, desktop, folder, tracked) {
     const page = request => request.messages.filter(message => message.role === 'user' &&
         message.content.startsWith('<view ') && message.content.includes(`app_id="${app}"`));
     const run = async (label, calls, bodyPattern) => {
-        const start = tracked.events.length, signaled = tracked.signals.length;
+        const start = tracked.events.length;
         const { body, message } = await turn(label, calls);
         const pages = page(body);
         assert.equal(pages.length, bodyPattern ? 1 : 0);
@@ -54,14 +66,15 @@ export async function exerciseTodo(turn, runtime, desktop, folder, tracked) {
         const unsolicited = events.filter(event => event.type === 'publication' && event.replyTo === undefined);
         const refresh = events.filter(event => ['publication', 'confirmation'].includes(event.type) && event.replyTo !== undefined);
         assert.ok(refresh.every(reply => events.some(event => event.type === 'refresh' && event.requestId === reply.replyTo)));
-        turns[label] = { unsolicited, refresh, manualRefresh: tracked.signals.slice(signaled).filter(signal => signal.reason === 'manual_refresh').length };
-        const observationId = events.find(event => event.type === 'dispatch')?.message.observationId;
-        if (observationId) {
-            const current = desktop.getInstalledApps().find(record => record.appId === app);
-            const access = runtime.getAppInteraction(desktop.id, app, current.appInstanceId);
+        turns[label] = { unsolicited, refresh };
+        const observationId = events.find(event => event.type === 'adopted')?.observationId;
+        if (calls.some(operation => operation.function.name.startsWith(app + '-'))) {
+            assert.ok(observationId, label + ' has an adopted observation');
+            const current = desktop.listApps().find(record => record.appId === app);
+            const access = desktop.getRunningApp(app, current.appInstanceId);
             assert.equal(access.status, 'ready');
             for (const [index, operation] of calls.entries()) {
-                const receipt = await access.interaction.readReceipt({ observationId, invocationId: operation.id });
+                const receipt = await access.app.readReceipt({ observationId, invocationId: operation.id });
                 assert.equal(receipt.kind, 'receipt', JSON.stringify(receipt));
                 assert.equal(receipt.receipt.outcome.status, resultsForTurn[index].output.type === 'json' ? 'succeeded' : 'rejected');
                 receipts[operation.id] = receipt.receipt;
@@ -86,19 +99,20 @@ export async function exerciseTodo(turn, runtime, desktop, folder, tracked) {
     const check = await run('check', [call('checked', 'check')], /\bDone\b/);
     const exported = await run('export', [call('exported', 'export_todos')], /\bDone\b/);
     const firstVersion = output('finish-first').prepared;
-    assert.deepEqual(firstVersion, { status: 'prepared', sourceEpoch: 2 });
+    assert.deepEqual(firstVersion, { status: 'prepared' });
     assert.deepEqual(output('finish-first'), { prepared: firstVersion, attempt: 1 });
     assert.deepEqual(output('finish-second'), { prepared: firstVersion, attempt: 2 });
     assert.deepEqual(output('check'), { done: true, attempts: 2, commits: 2 });
-    assert.equal(turns['finish-first'].unsolicited.length, 1);
-    assert.equal(turns['finish-first'].manualRefresh, 1);
-    for (const label of ['finish-second', 'check', 'export']) {
+    const finished = [...turns['finish-first'].refresh, ...turns['finish-second'].refresh]
+        .filter(reply => reply.type === 'publication' && reply.sourceEpoch === 2);
+    assert.equal(finished.length, 1);
+    for (const label of ['finish-first', 'finish-second', 'check', 'export']) {
         assert.equal(turns[label].unsolicited.length, 0, label);
-        assert.equal(turns[label].manualRefresh, 0, label);
+    }
+    for (const label of ['check', 'export']) {
         assert.ok(turns[label].refresh.length > 0, label);
         assert.ok(turns[label].refresh.every(reply => reply.type === 'confirmation' &&
-            reply.sourceEpoch === firstVersion.sourceEpoch &&
-            reply.producerSeq === turns['finish-first'].unsolicited[0].producerSeq));
+            reply.sourceEpoch === finished[0].sourceEpoch && reply.producerSeq === finished[0].producerSeq));
     }
     assert.deepEqual(['first', 'second', 'checked', 'exported'].map(id => receipts[id].source.revision), [1, 2, 2, 2]);
     assert.notEqual(receipts.first.observationId, receipts.second.observationId);
@@ -107,21 +121,22 @@ export async function exerciseTodo(turn, runtime, desktop, folder, tracked) {
     wireResult(check, 'second', output('finish-second'));
     wireResult(exported, 'checked', output('check'));
 
-    const address = { value: '$tasks.todo.priority' };
+    const address = { value: '$ref.tasks.todo.priority' };
     const changing = await run('priority', [call('change', 'set_priority', { value: 2 }), call('original', 'inspect_priority', address)], /\bDone\b/);
     wireResult(changing, 'exported', { path: 'todos.csv', count: 1 });
     assert.deepEqual(output('priority', 1), { observed: 1, current: 2 });
-    assert.equal(output('priority').prepared.sourceEpoch, 3);
+    assert.deepEqual(output('priority').prepared, { status: 'prepared' });
     const updated = await run('disable', [call('updated', 'inspect_priority', address),
         call('revoke', 'set_priority', { value: 0 }), call('denied', 'inspect_priority', address)], /\bDone\b/);
     assert.deepEqual(output('disable'), { observed: 2, current: 2 });
-    assert.equal(output('disable', 1).prepared.sourceEpoch, 4);
+    assert.deepEqual(output('disable', 1).prepared, { status: 'prepared' });
     assert.equal(results.disable[2].output.type, 'error-json');
     assert.equal(results.disable[2].output.value.code, 'TOOL_SOURCE_STALE');
     assert.equal(receipts.denied.executionPhase, 'not-dispatched');
     assert.equal(page(updated)[0].content, page(changing)[0].content);
-    assert.equal(turns.priority.unsolicited[0].body, turns['finish-first'].unsolicited[0].body);
-    assert.equal(turns.priority.unsolicited[0].mount, turns['finish-first'].unsolicited[0].mount);
+    const priorityFrame = turns.priority.refresh.find(reply => reply.type === 'publication' && reply.sourceEpoch === 3);
+    assert.equal(priorityFrame.body, finished[0].body);
+    assert.equal(priorityFrame.mount, finished[0].mount);
 
     const close = await run('close', [modelCall('close', 'system-close_app', { app_id: app })], /\bDone\b/);
     assert.equal(close.tools.some(tool => tool.function.name === `${app}-inspect_priority`), false);

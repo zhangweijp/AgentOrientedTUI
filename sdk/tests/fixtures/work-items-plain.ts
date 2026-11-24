@@ -1,5 +1,5 @@
 import { arrayRef, createApp, createView, formatRef, ref, type ToolResult } from '@aotui/sdk/app';
-import { ItemType, WorkspaceType, initialState, itemRefOptions, label, listRefOptions, otherViewId, selectedViewId,
+import { ItemType, WorkspaceType, initialState, itemRefOptions, label, listRefOptions, otherViewPrefix, selectedViewPrefix,
     workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 
 export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
@@ -22,13 +22,13 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
                 idPrefix: 'workspace', region: 'dynamic', render: () => ({ body: workspaceText(state), context: { change, options } }),
             });
             const other = createView(ItemType, {
-                idPrefix: otherViewId, region: 'dynamic', render: () => {
+                idPrefix: otherViewPrefix, region: 'dynamic', render: () => {
                     const selected = ref('selected', false, itemRefOptions);
                     return { body: formatRef('Other item', selected), refs: [selected], context: { change } };
                 },
             });
             const selected = createView(ItemType, {
-                idPrefix: selectedViewId, region: 'dynamic', render: () => {
+                idPrefix: selectedViewPrefix, region: 'dynamic', render: () => {
                     const selectedRef = ref('selected', state.value, itemRefOptions);
                     const items = arrayRef('items', state.items, listRefOptions);
                     return {

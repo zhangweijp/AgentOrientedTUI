@@ -1,7 +1,6 @@
 /**
  * Runtime Configuration Types
  * 
- * @module @aotui/runtime/spi/config
  */
 
 import type { WorkerConfig } from './domains/worker.config.js';

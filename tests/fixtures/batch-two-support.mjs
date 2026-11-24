@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 export const ORIGINAL = ['beta@example.test', 'alpha@example.test', 'beta@example.test'];
 export const CHANGED = ['alpha@example.test', 'beta@example.test'];
 export const MAIL_TOOL = 'mail-set_recipients';
-export const TO_CONTACTS = { to: '$contacts.list.emails' };
+export const TO_CONTACTS = { to: '$ref.contacts.list.emails' };
 
 // Some test Apps are compiled as modules in a shared consumer. Give each
 // temporary local registration its own manifest without copying the module.
@@ -23,24 +23,59 @@ export async function fixtureAppPath(moduleLocation, appName, folder) {
     return localPath;
 }
 
-export async function installFixture(runtime, desktop, appName, installationId, moduleURL, folder, policy) {
+export async function installFixture(desktop, appName, installationId, moduleURL, folder, policy) {
     const localPath = await fixtureAppPath(moduleURL, appName, folder);
     await desktop.registerPendingApp({ installationId, localPath, config: { folder } });
-    const id = await desktop.openApp(installationId);
-    return appClient(runtime, desktop, id, policy);
+    const opened = await desktop.openApp(installationId, { policy });
+    return appClient(desktop, opened.appId);
 }
 
-export function appClient(runtime, desktop, appId, policy) {
-    const app = desktop.getInstalledApps().find(item => item.appId === appId);
-    const access = runtime.getAppInteraction(desktop.id, appId, app?.appInstanceId, policy);
+export function appClient(desktop, appId) {
+    const app = desktop.listApps().find(item => item.appId === appId);
+    const access = desktop.getRunningApp(appId, app?.appInstanceId);
     assert.equal(access.status, 'ready', JSON.stringify(access));
-    return { app, client: access.interaction };
+    return { app, running: access.app, client: singleAppHost(desktop, access.app) };
+}
+
+// A one-App test Host. Fixtures testing cross-App state adopt their complete list directly.
+export function singleAppHost(desktop, running) {
+    const candidates = new Map();
+    const turns = new Map();
+    let current;
+    return {
+        preview: () => running.preview(),
+        readReceipt: (...args) => running.readReceipt(...args),
+        async observe() {
+            const result = await running.observe();
+            if (result.status === 'rejected') return result;
+            const { observation } = result.candidate;
+            candidates.set(observation.observationId, result.candidate);
+            return { status: 'observed', observation };
+        },
+        candidate: id => candidates.get(id),
+        adopt(id, windows) {
+            const result = desktop.adoptTurn({ apps: [{ candidate: candidates.get(id), windows }] });
+            if (result.status === 'adopted') { current = result.turn; turns.set(id, current); }
+            return result;
+        },
+        release(id) {
+            turns.get(id)?.release();
+            candidates.get(id)?.discard();
+            candidates.delete(id);
+            // Keep the retired handle so a late call exercises the turn's own check.
+        },
+        invoke(request, timeout, signal) {
+            const turn = turns.get(request.observationId) ?? current;
+            return turn ? turn.invoke(running.appId, request, timeout, signal)
+                : Promise.resolve({ kind: 'refused', code: 'TURN_NOT_ACTIVE', message: 'Adopt the App candidate before dispatch.' });
+        },
+    };
 }
 
 export async function observe(client, adopt = false) {
-    const result = await client.observe({ all: true });
+    const result = await client.observe();
     assert.equal(result.status, 'observed', JSON.stringify(result));
-    if (adopt) assert.equal(client.adoptObservation(result.observation.observationId).status, 'adopted');
+    if (adopt) assert.equal(client.adopt(result.observation.observationId).status, 'adopted');
     return result.observation;
 }
 

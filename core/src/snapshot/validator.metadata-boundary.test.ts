@@ -13,30 +13,30 @@ if (!empty.ok) throw new Error('Fixture Tool schema must compile');
 const emptySchema = empty.contract.schema;
 const expected = {
     canonicalContent: canonicalJson({
-        schemaVersion: 7,
+        schemaVersion: 8,
         views: [{ toolBindings: [{ toolId, activationId: 'active-read' }], id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', region: 'dynamic',
             content: { format: 'markdown-v1', value: text } }],
-        refs: { [refId]: { scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
+        refs: { [refId]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
-        tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Type', nameSharedAcrossViewTypes: false, description: 'Read value',
+        tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Type',  description: 'Read value',
             inputSchema: emptySchema } },
     } as any),
-    contentDigest: 'fnv1a64:8f1bb964f64c70e4',
-    bytes: 862,
-    emptyCanonicalContent: '{"refs":{},"schemaVersion":7,"tools":{},"views":[]}',
-    emptyContentDigest: 'fnv1a64:7c0d5df3fa9b5b58',
+    contentDigest: 'fnv1a64:d5745fd531cebede',
+    bytes: 860,
+    emptyCanonicalContent: '{"refs":{},"schemaVersion":8,"tools":{},"views":[]}',
+    emptyContentDigest: 'fnv1a64:692b628ab889e35b',
     emptyBytes: 136,
 };
 
 function fixture() {
     return {
-        schemaVersion: 7 as const, appId: 'app', instanceId: 'instance',
+        schemaVersion: 8 as const, appId: 'app', instanceId: 'instance',
         producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
         views: [{ toolBindings: [{ toolId, activationId: 'active-read' }], id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', region: 'dynamic',
             content: { format: 'markdown-v1', value: text } }],
-        refs: { [refId]: { scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
+        refs: { [refId]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
-        tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Type', nameSharedAcrossViewTypes: false, description: 'Read value',
+        tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Type',  description: 'Read value',
             inputSchema: emptySchema } },
     };
 }

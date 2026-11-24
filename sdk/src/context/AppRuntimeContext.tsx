@@ -6,7 +6,7 @@
  * Supplies app metadata and the Preact adapter's View attachments.
  */
 
-import type { AppLifecyclePort } from '@aotui/core';
+import type { AppLifecyclePort, RuntimeContext } from '@aotui/core';
 import type { AppStatePersistence } from '@aotui/core';
 import { useContext, useMemo } from 'preact/hooks';
 import { sharedPreactContext } from './shared-preact-context.js';
@@ -42,12 +42,13 @@ interface AppRuntimeContextValue {
     launchConfig?: AppLaunchConfig | undefined;
     readonly projectionLimits: ProjectionLimits;
 
-    viewTypes: ReadonlyMap<string, ViewType>;
     resolveViewType: (definition: ViewType) => ViewType;
     createViewRefs: (label: string) => ReturnType<typeof createViewRefs>;
     views: Map<Element, Omit<AppFrameView, 'content' | 'refs'> & Pick<ReturnType<typeof createViewRefs>, 'readRefs'>>;
     prepareProjection: PrepareProjection;
     prepareOpeningProjection: PrepareOpeningProjection;
+    readPreparedViewId: RuntimeContext['readPreparedViewId'];
+    requestAttention: RuntimeContext['requestAttention'];
 }
 
 interface AppRuntimePublicContextValue {
@@ -60,6 +61,8 @@ interface AppRuntimePublicContextValue {
     readonly prepareProjection: PrepareProjection;
     /** Prepare a reversible View opening, restoring navigation state on capacity rejection. */
     readonly prepareOpeningProjection: PrepareOpeningProjection;
+    readonly readPreparedViewId: RuntimeContext['readPreparedViewId'];
+    readonly requestAttention: RuntimeContext['requestAttention'];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -107,6 +110,8 @@ export function useAppRuntimeContext(): AppRuntimePublicContextValue {
             projectionLimits: context.projectionLimits,
             prepareProjection: context.prepareProjection,
             prepareOpeningProjection: context.prepareOpeningProjection,
+            readPreparedViewId: context.readPreparedViewId,
+            requestAttention: context.requestAttention,
             ...(context.launchConfig === undefined ? {} : { launchConfig: context.launchConfig }),
             ...(persistence === undefined ? {} : { persistence }),
         });

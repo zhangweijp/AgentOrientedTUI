@@ -22,7 +22,14 @@ export function createDraft(storage: AppStatePersistence | undefined, publish: (
     return {
         body: () => `Draft: ${draft}\nSaved lookup: ${previous}\n`,
         async edit(text: string) { draft = text; await publish(); return success; },
-        async save() { await storage.save('draft', draft); return success; },
+        async save() {
+            try { await storage.save('draft', draft); }
+            catch (error) {
+                if ((error as { code?: string })?.code !== 'NAMESPACE_BUSY') throw error;
+                return { success: false as const, error: { code: 'NAMESPACE_BUSY', message: 'Another App owns this notebook.' } };
+            }
+            return success;
+        },
         async load(adopt: boolean) {
             const loaded = await storage.load('draft');
             previous = typeof loaded === 'string' ? loaded : 'missing';

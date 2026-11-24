@@ -44,7 +44,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 import { useArrayRef } from './sdk/src/hooks/useArrayRef.ts';
 
                 import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
-                const WorkspaceType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
+                const WorkspaceType = defineViewType()({ multiplicity: 'multiple', name: 'Workspace', tools: {
                     complete: {
                         description: 'Complete selected task', inputSchema: Type.Object({}, { additionalProperties: false }),
                         execute: async () => ({ success: true }),
@@ -64,8 +64,8 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                         parentPort.on('message', onCommand);
                         return () => parentPort.off('message', onCommand);
                     }, []);
-                    const selected = useDataRef('selected', target, { scope: 'protected' });
-                    const [listLabel, itemLabel] = useArrayRef('pending', [target], { scope: 'protected', itemType: 'Task' });
+                    const selected = useDataRef('selected', target, { schema: { type: 'object' }, scope: 'protected' });
+                    const [listLabel, itemLabel] = useArrayRef('pending', [target], { schema: { type: 'array', items: { type: 'object' } }, scope: 'protected', itemType: 'Task' });
                     return h('section', {}, [
                         h('p', {key:'selected'}, selected('Stable task label')),
                         h('p', {key:'list'}, listLabel('Stable list label')),
@@ -105,12 +105,15 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             const oldRead = semanticCore.store.getById(initial.snapshotId);
             expect(oldRead.status).toBe('found');
             const oldViewInstanceId = oldRead.snapshot.views[0].viewInstanceId;
-            const oldRefKey = refKey('workspace', oldViewInstanceId, 'pending');
+            const oldRefKey = refKey('workspace_1', oldViewInstanceId, 'pending');
             expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject([{ id: 'A' }]);
             const markup = oldRead.snapshot.views[0].content.value;
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'replace-target', data: { id: 'B' } });
+            const opened = host.getAppInteraction();
+            if (opened.status !== 'ready') throw Error(opened.issue.code);
+            expect((await opened.interaction.preview()).status).toBe('previewed');
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
                 const report = host?.getSemanticSnapshotReport();
                 expect(report?.health).toBe('ready');
@@ -123,7 +126,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             const newRead = semanticCore.store.getById(changed.snapshotId);
             expect(newRead.status).toBe('found');
             expect(newRead.snapshot.views[0].viewInstanceId).toBe(oldViewInstanceId);
-            const newRefKey = refKey('workspace', oldViewInstanceId, 'pending');
+            const newRefKey = refKey('workspace_1', oldViewInstanceId, 'pending');
             expect(newRead.snapshot.refs[newRefKey].target.payload).toMatchObject([{ id: 'B' }]);
             const completeTool = Object.values(newRead.snapshot.tools).find((tool: any) => tool.name === 'complete') as any;
             expect(completeTool).toMatchObject({ viewType: 'Workspace' });

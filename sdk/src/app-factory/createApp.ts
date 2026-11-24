@@ -13,7 +13,7 @@ export interface ViewHandle { readonly [viewHandle]: true }
 type ViewFrame = { readonly views: readonly ViewHandle[] };
 
 export interface AppAuthorContext extends
-    Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'projectionLimits' | 'signal'> {
+    Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'projectionLimits' | 'signal' | 'readPreparedViewId' | 'requestAttention'> {
     registerCleanup(callbacks: AppLifecycleCallbacks): void;
     /** Prepare a complete frame for a subsequent observation. */
     prepareProjection(frame: ViewFrame): PreparedProjection;
@@ -76,7 +76,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 const label = metadata.id ?? metadata.idPrefix ?? type.name;
                 const path = 'View ' + label;
                 const { body, refs = [], context } = render();
-                const placement = captureViewPlacement(type, metadata, context);
+                const placement = captureViewPlacement(type, metadata);
                 if (typeof body !== 'string') invalid(path, 'Expected a Markdown body');
 
                 const refIds = new Set<string>();
@@ -113,6 +113,8 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
             registerCleanup: callbacks => { appLifecycle.register(callbacks); },
             prepareProjection: frame => prepare(frame),
             prepareOpeningProjection: frame => prepare(frame, { opening: true }),
+            readPreparedViewId: (type, name) => context.readPreparedViewId(type, name),
+            requestAttention: () => context.requestAttention(),
         });
         return { close() {} };
     });

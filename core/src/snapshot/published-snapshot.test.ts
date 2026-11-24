@@ -4,26 +4,29 @@ import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
 import { validatePreparedSnapshot } from './validate-snapshot.js';
 
+const fixtureJsonSchema = { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }, { type: 'object' }, { type: 'array', items: {} }] };
+
+
 const appId = 'editor', instanceId = 'run-1', viewId = 'file_a', viewInstanceId = 'mount-1';
 const viewType = 'FileDetail';
 const typeId = JSON.stringify([appId, viewType, 'edit_file']);
 const refId = JSON.stringify([appId, viewType, 'read_ref']);
 const target = { viewId, viewInstanceId, bindingVersion: 4 };
 const ordinary = compileToolParameters({ type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'], additionalProperties: false });
-const snapshotValue = compileToolParameters({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
+const snapshotValue = compileToolParameters({ type: 'object', properties: { file: { 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
 if (!ordinary.ok || !snapshotValue.ok) throw new Error('Snapshot fixtures must compile');
 
 function draft() {
     return {
-        schemaVersion: 7 as const, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
+        schemaVersion: 8 as const, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
         views: [{ toolBindings:[{toolId:typeId,activationId:"activation-1"},{toolId:refId,activationId:"activation-2"}], id: viewId, viewInstanceId, type: viewType, name: 'file-a', region: 'dynamic' as const,
             content: { format: 'markdown-v1' as const, value: '# Current file' } }],
-        refs: { [refKey(viewId, viewInstanceId, 'file')]: { scope: 'protected', id: 'file', ownerViewId: viewId,
+        refs: { [refKey(viewId, viewInstanceId, 'file')]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'file', ownerViewId: viewId,
             ownerViewInstanceId: viewInstanceId, refType: 'File', target: { kind: 'snapshot-value' as const, payload: { path: 'a.txt' } } } },
         tools: {
-            [typeId]: { multiplicity: 'multiple', id: typeId, name: 'edit_file', viewType, nameSharedAcrossViewTypes: false, description: 'Edit an opened FileView',
+            [typeId]: { multiplicity: 'multiple', id: typeId, name: 'edit_file', viewType,  description: 'Edit an opened FileView',
                 inputSchema: ordinary.contract.schema },
-            [refId]: { multiplicity: 'multiple', id: refId, name: 'read_ref', viewType, nameSharedAcrossViewTypes: false, description: 'Read a captured Ref',
+            [refId]: { multiplicity: 'multiple', id: refId, name: 'read_ref', viewType,  description: 'Read a captured Ref',
                 inputSchema: snapshotValue.contract.schema },
         },
     };
@@ -74,11 +77,10 @@ describe('Published Snapshot', () => {
         if (result.status === 'rejected') throw new Error(JSON.stringify(result.issue));
         expect(result.status).toBe('published');
         if (result.status !== 'published') return;
-        expect(result.snapshot.schemaVersion).toBe(7);
-        expect(result.snapshot.id).toContain('aotui-app-snapshot:v7:');
+        expect(result.snapshot.schemaVersion).toBe(8);
+        expect(result.snapshot.id).toContain('aotui-app-snapshot:v8:');
         expect(core.committer.accept({ ...draft(), schemaVersion: 6 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
-        expect(core.store.getTool({ snapshotId: result.snapshot.id, appId, instanceId, toolId: typeId }))
-            .toMatchObject({ status: 'found', tool: { id: typeId, viewType } });
+        expect(result.snapshot.tools[typeId]).toMatchObject({ id: typeId, viewType });
         expect(core.committer.accept({ ...draft(), schemaVersion: 4 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
         expect(core.committer.accept({ ...draft(), schemaVersion: 2 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
         expect(core.committer.accept({ ...draft(), schemaVersion: 1 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
@@ -101,8 +103,8 @@ describe('Published Snapshot', () => {
         if (next.status === 'published') {
             expect(next.snapshot.revision).toBe(2);
             expect(next.snapshot.contentDigest).not.toBe(first.snapshot.contentDigest);
-            expect(core.store.getTool({ snapshotId: first.snapshot.id, appId, instanceId, toolId: typeId }))
-                .toMatchObject({ status: 'found', tool: { id: typeId, viewType } });
+            expect(core.store.getById(first.snapshot.id)).toMatchObject({ status: 'found',
+                snapshot: { tools: { [typeId]: { id: typeId, viewType } } } });
         }
         held.hold.release(); core.lifecycle.dispose();
     });
@@ -128,25 +130,34 @@ describe('Published Snapshot', () => {
         expect(validatePreparedSnapshot(unknown).ok).toBe(false);
     });
 
-    it('requires explicit boolean name metadata even when only one ViewType is present', () => {
-        const { nameSharedAcrossViewTypes, ...oldTool } = draft().tools[typeId]!;
-        for (const tool of [oldTool, { ...oldTool, nameSharedAcrossViewTypes: 'false' }]) {
-            const input = draft();
-            expect(validatePreparedSnapshot({ ...input, tools: { ...input.tools, [typeId]: tool } }))
-                .toMatchObject({ ok: false, issue: { path: `$.tools[${JSON.stringify(typeId)}].nameSharedAcrossViewTypes` } });
-        }
-        const input = draft();
-        input.tools[typeId]!.nameSharedAcrossViewTypes = true;
-        expect(validatePreparedSnapshot(input).ok).toBe(true);
-    });
-
-    it('rejects conflicting name metadata for two active ViewTypes declaring the same tool name', () => {
+    it('allows two ViewTypes to use the same business action name', () => {
         const input = draft(), secondId = JSON.stringify([appId, 'Result', 'edit_file']);
         input.views.push({ ...input.views[0]!, id: 'result', viewInstanceId: 'result-mount', type: 'Result',
             toolBindings: [{ toolId: secondId, activationId: 'result-edit' }] });
-        input.tools[secondId] = { ...input.tools[typeId]!, id: secondId, viewType: 'Result', nameSharedAcrossViewTypes: true };
-        expect(validatePreparedSnapshot(input)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('nameSharedAcrossViewTypes') } });
-        input.tools[typeId]!.nameSharedAcrossViewTypes = true;
+        input.tools[secondId] = { ...input.tools[typeId]!, id: secondId, viewType: 'Result' };
         expect(validatePreparedSnapshot(input).ok).toBe(true);
+    });
+
+    it('validates Ref valueSchema declarations and payloads at snapshot acceptance', () => {
+        const key = refKey(viewId, viewInstanceId, 'count');
+        const withSchema = (valueSchema: unknown, payload: unknown) => {
+            const input = draft();
+            input.refs = {
+                [key]: { valueSchema: fixtureJsonSchema,
+                    scope: 'protected', id: 'count', ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
+                    refType: 'Number', target: { kind: 'snapshot-value', payload: payload as any },
+                    ...(valueSchema === undefined ? {} : { valueSchema: valueSchema as any }),
+                },
+            };
+            return validatePreparedSnapshot(input);
+        };
+        expect(withSchema({}, 42)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('valueSchema') } });
+        expect(withSchema({ anyOf: [{ type: 'object' }, {}] }, 42)).toMatchObject({
+            ok: false, issue: { code: 'SNAPSHOT_INVALID', path: expect.stringMatching(/\.valueSchema\.anyOf\[1\]$/) },
+        });
+        expect(withSchema({ type: 'number' }, 'text')).toMatchObject({ ok: false, issue: { path: expect.stringContaining('target.payload') } });
+        expect(withSchema({ anyOf: [{ type: 'string' }, { type: 'null' }] }, null).ok).toBe(true);
+        expect(withSchema(undefined, 'anything').ok).toBe(true);
+        expect(withSchema({ type: 'number' }, 42).ok).toBe(true);
     });
 });

@@ -54,19 +54,34 @@ export function checkJsonLimits(input: unknown, limits: JsonCopyLimits): void {
     createJsonWalker(limits, false)(input);
 }
 
-function createJsonWalker(limits: JsonCopyLimits, clone: boolean): (input: unknown) => JsonValue {
+type WireLimits = JsonCopyLimits & { readonly maxCanonicalBytes: number };
+
+export function copyWireJson(input: unknown, limits: WireLimits): JsonValue {
+    return createJsonWalker(limits, true, false, limits.maxCanonicalBytes)(input);
+}
+
+/** Validate bounded JSON and report whether the checked tree is frozen. */
+export function checkWireJson(input: unknown, limits: WireLimits, freeze = false): boolean {
+    const ownership = { frozen: true };
+    createJsonWalker(limits, false, freeze, limits.maxCanonicalBytes, ownership)(input);
+    return ownership.frozen;
+}
+
+function createJsonWalker(limits: JsonCopyLimits, clone: boolean, freeze = false, maxWireBytes?: number,
+    ownership?: { frozen: boolean }): (input: unknown) => JsonValue {
     const ancestors = new Set<object>();
     let nodes = 0;
-    let approxBytes = 0;
-    const byteLimit = limits.maxApproxBytes ?? Number.MAX_SAFE_INTEGER;
+    let measuredBytes = 0;
+    const wire = maxWireBytes !== undefined;
+    const byteLimit = maxWireBytes ?? limits.maxApproxBytes ?? Number.MAX_SAFE_INTEGER;
     function reserve(bytes: number, path: string): void {
-        approxBytes += bytes;
-        if (approxBytes > byteLimit) {
-            throw new JsonCopyLimitError(path, 'Approximate input byte budget exceeded');
+        measuredBytes += bytes;
+        if (measuredBytes > byteLimit) {
+            throw new JsonCopyLimitError(path, wire ? 'Encoded JSON exceeds the byte limit' : 'Approximate input byte budget exceeded');
         }
     }
     function walk(value: unknown, path: string, depth: number): JsonValue {
-        reserve(2, path); // minimum structural overhead; final canonical bytes are checked separately
+        if (!wire) reserve(2, path);
         if (++nodes > limits.maxNodes) {
             throw new JsonCopyLimitError(path, 'Node budget exceeded');
         }
@@ -77,12 +92,15 @@ function createJsonWalker(limits: JsonCopyLimits, clone: boolean): (input: unkno
             if (value.length > byteLimit) {
                 throw new JsonCopyLimitError(path, 'String exceeds input byte budget');
             }
-            reserve(utf8Size(value), path);
+            reserve(utf8Size(wire ? JSON.stringify(value) : value), path);
             return value;
         }
-        if (value === null || typeof value === 'boolean') return value;
+        if (value === null || typeof value === 'boolean') {
+            if (wire) reserve(value === false ? 5 : 4, path);
+            return value;
+        }
         if (typeof value === 'number' && Number.isFinite(value)) {
-            reserve(24, path);
+            reserve(wire ? JSON.stringify(value).length : 24, path);
             return Object.is(value, -0) ? 0 : value;
         }
         if (typeof value !== 'object') {
@@ -91,6 +109,7 @@ function createJsonWalker(limits: JsonCopyLimits, clone: boolean): (input: unkno
         if (ancestors.has(value)) {
             throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path, 'Cyclic object reference');
         }
+        if (ownership?.frozen && !freeze && !Object.isFrozen(value)) ownership.frozen = false;
         const array = Array.isArray(value);
         const prototype = Object.getPrototypeOf(value);
         if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
@@ -108,6 +127,7 @@ function createJsonWalker(limits: JsonCopyLimits, clone: boolean): (input: unkno
                 if (keys.length !== length + 1) {
                     throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path, 'Sparse array or extra properties');
                 }
+                if (wire) reserve(2 + Math.max(length - 1, 0), path);
                 const result: JsonValue[] | undefined = clone ? [] : undefined;
                 for (let i = 0; i < length; i++) {
                     const descriptor = descriptors[String(i)];
@@ -117,16 +137,19 @@ function createJsonWalker(limits: JsonCopyLimits, clone: boolean): (input: unkno
                     const child = walk(descriptor.value, path + '[' + i + ']', depth + 1);
                     result?.push(child);
                 }
+                if (freeze) Object.freeze(value);
                 return result ? Object.freeze(result) : null;
             }
+            if (wire) reserve(2 + Math.max(keys.length - 1, 0), path);
             const result: Record<string, JsonValue> | undefined = clone ? Object.create(null) : undefined;
             for (const key of keys as string[]) {
                 const descriptor = descriptors[key]!;
-                const fieldPath = path + '[' + JSON.stringify(key) + ']';
+                const encodedKey = JSON.stringify(key);
+                const fieldPath = path + '[' + encodedKey + ']';
                 if (key.length > byteLimit) {
                     throw new JsonCopyLimitError(fieldPath, 'Object key exceeds byte budget');
                 }
-                reserve(utf8Size(key) + 4, fieldPath);
+                reserve(wire ? utf8Size(encodedKey) + 1 : utf8Size(key) + 4, fieldPath);
                 if (!descriptor.enumerable || !('value' in descriptor)) {
                     throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', fieldPath, 'Accessors/hidden properties are forbidden');
                 }
@@ -138,6 +161,7 @@ function createJsonWalker(limits: JsonCopyLimits, clone: boolean): (input: unkno
                     value: child,
                 });
             }
+            if (freeze) Object.freeze(value);
             return result ? Object.freeze(result) : null;
         } finally {
             ancestors.delete(value);
@@ -156,8 +180,9 @@ export function canonicalJson(value: JsonValue): string {
     ).join(',') + '}';
 }
 
+const encoder = new TextEncoder();
 export function utf8Size(value: string): number {
-    return new TextEncoder().encode(value).byteLength;
+    return encoder.encode(value).byteLength;
 }
 
 /** For diagnostics only. Equality and authorization compare canonical data, not this hash. */

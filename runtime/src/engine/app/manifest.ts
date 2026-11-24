@@ -6,6 +6,7 @@ import { AOTUIError, APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL, captureAppM
 export interface AppManifest {
     readonly metadata: AppMetadata;
     readonly modulePath: string;
+    readonly persistenceSupport: typeof STATE_SESSION_PROTOCOL | null;
 }
 
 function localTarget(localPath: string): string {
@@ -57,7 +58,7 @@ function findAppManifest(target: string): AppManifest | undefined {
                 if (file && target !== modulePath)
                     throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: modulePath, actual: target, path: location });
                 if (!statIfPresent(modulePath)?.isFile()) throw new TypeError('The generated entry.main file does not exist; build the App first');
-                return Object.freeze({ metadata, modulePath });
+                return Object.freeze({ metadata, modulePath, persistenceSupport: manifest.persistenceSupport ?? null });
             }
             if (!file || statIfPresent(join(directory, 'package.json')) || dirname(directory) === directory) return;
             directory = dirname(directory);
@@ -78,7 +79,7 @@ export async function readAppManifest(localPath: string): Promise<AppManifest> {
     return manifest;
 }
 
-export function resolveAppModule(modulePath: string, expected?: string): AppManifest {
+export function resolveAppModule(modulePath: string, expected?: string): Omit<AppManifest, 'persistenceSupport'> & Partial<Pick<AppManifest, 'persistenceSupport'>> {
     const target = localTarget(modulePath);
     const manifest = findAppManifest(target);
     if (manifest) {

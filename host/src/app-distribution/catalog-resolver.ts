@@ -40,7 +40,7 @@ export interface CatalogSignature {
     value: string;
 }
 
-export interface RemoteCatalogEnvelope {
+interface RemoteCatalogEnvelope {
     catalog: CatalogData;
     signature?: CatalogSignature;
 }
@@ -140,7 +140,7 @@ export async function resolveCatalog(options: CatalogResolverOptions = {}): Prom
     };
 }
 
-export async function fetchRemoteCatalog(
+async function fetchRemoteCatalog(
     remoteUrl: string,
     options: CatalogResolverOptions = {}
 ): Promise<{ catalog: CatalogData; signature?: CatalogSignature; signatureVerified: boolean; warnings: string[] }> {
@@ -196,7 +196,7 @@ export async function fetchRemoteCatalog(
     };
 }
 
-export function verifyCatalogSignature(
+function verifyCatalogSignature(
     catalog: CatalogData,
     signature: CatalogSignature,
     key: TrustedCatalogKey | CatalogTrustKeyConfig

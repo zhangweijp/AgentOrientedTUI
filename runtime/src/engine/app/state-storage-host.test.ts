@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { createStateStorageHost, DEFAULT_NODE_STATE_LIMITS, resolveStateDirectory } from './state-storage-host.js';
 import { createSqliteStateStorage } from '../../adapters/storage/sqlite-state-storage.js';
 import { DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
-import { stateIssue } from '@aotui/core/internal';
+import { stateIssue } from '@aotui/core/persistence';
 const defer = <T = void>() => { let resolve!: (v: T) => void;const promise = new Promise<T>(r => { resolve = r; });return { promise, resolve }; };
 const req = (sequence: number, action = 'read', extra: object = {}) => ({ type: 'STATE_STORAGE_REQUEST', version: 2, instanceId: 'i', sequence, action,
     ...(action === 'release' ? {} : { address: { namespace: '["d","a"]', key: 'k' } }), ...extra });
@@ -36,10 +36,10 @@ it('B03: shared failed open leaves target mutations failed/none', async () => {
     expect((await host.release()).status).toBe('released');
 });
 it('B12: resolves explicit merged configuration and both historical defaults without I/O', () => {
-    expect(resolveStateDirectory({ AOTUI_DATA_DIR: 'data' }, '/tmp/launch')).toBe('/tmp/launch/data/app-state');
-    expect(resolveStateDirectory({ AOTUI_DATA_DIR: '/tmp/data' })).toBe('/tmp/data/app-state');
-    expect(resolveStateDirectory({ AOTUI_DATA_DIR: '' })).toBe(resolveStateDirectory(undefined));
-    expect(() => resolveStateDirectory({ AOTUI_DATA_DIR: 42 })).toThrow('INVALID_INPUT');
+    expect(resolveStateDirectory('data', '/tmp/launch')).toBe('/tmp/launch/data/app-state');
+    expect(resolveStateDirectory('/tmp/data', '/tmp/launch')).toBe('/tmp/data/app-state');
+    expect(resolveStateDirectory('', '/tmp/launch')).toBe(resolveStateDirectory(undefined, '/tmp/launch'));
+    expect(() => resolveStateDirectory(42, '/tmp/launch')).toThrow('INVALID_INPUT');
 });
 it('B04/B11/B13/B14: real Node path, shared backend ownership, exact highwater and desktop fence', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'aotui-b2-host-')), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);

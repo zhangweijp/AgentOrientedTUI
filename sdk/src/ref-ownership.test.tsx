@@ -1,5 +1,6 @@
+import FixtureType from 'typebox';
 import { preparedRefs } from './__tests__/projection-facts.js';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { describe, expect, it } from 'vitest';
 import { h } from 'preact';
@@ -13,17 +14,16 @@ import { useDataRef } from './hooks/useRef.js';
 import { ViewRuntimeContext, type RefRegistry } from './contexts/view-runtime-context.js';
 
 import {defineViewType} from './tools/view-type-tool.js';
-const RecordType=defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Record'});
-const WorkspaceType=defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Workspace'});
+const RecordType=defineViewType({ multiplicity: 'multiple',name:'Record'});
+const WorkspaceType=defineViewType({ multiplicity: 'multiple',name:'Workspace'});
 function setup(component: () => any) {
   const factory = createTUIApp({ app_name: 'ref_ownership', viewTypes:[RecordType,WorkspaceType], component });
-  const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+  const kernel = new AppKernel({ factory,
       appId: createAppId('ref_ownership_app'), desktopId: createDesktopId('desktop'),
       instanceId: 'ref-ownership-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
   });
   return {
     kernel,
-    get container() { return document.getElementById('app-root-ref_ownership_app')!; },
     open: () => kernel.onOpen(),
     async close() { await kernel.onClose(); },
   };
@@ -35,8 +35,8 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
 
 describe('Ref registration ownership', () => {
   it.each([
-    ['useDataRef', 'items', () => useDataRef('items', { private: 'RefPayload' }, { scope: 'protected' })],
-    ['useArrayRef', 'unsafe\nlabel', () => useArrayRef('unsafe\nlabel', ['RefPayload'], { scope: 'protected' })],
+    ['useDataRef', 'items', () => useDataRef('items', { private: 'RefPayload' }, { schema: FixtureType.Object({}), scope: 'protected' })],
+    ['useArrayRef', 'unsafe\nlabel', () => useArrayRef('unsafe\nlabel', ['RefPayload'], { schema: FixtureType.Array(FixtureType.String()), scope: 'protected' })],
   ] as const)('explains how to move %s into its View', async (hook, id, publish) => {
     const x = setup(function Page() {
       publish();
@@ -47,7 +47,7 @@ describe('Ref registration ownership', () => {
       await expect(x.open().catch(error => {
         message = error.message;
         throw error;
-      })).rejects.toThrow('rendered as a child of <View>');
+      })).rejects.toThrow('must run in a child component of <StaticView>, <DynamicView>');
       expect(message).toContain(hook);
       if (id === 'items') expect(message).toContain('"items"');
       else expect(message).not.toContain('unsafe');
@@ -66,7 +66,7 @@ describe('Ref registration ownership', () => {
       const [step, setStep] = useState(0);
       advance = setStep;
       const { captureRef, registerRef } = useContext(ViewRuntimeContext)!;
-      const publication = { id: 'selected', scope: 'protected' as const, capture: captureRef(values[step]) };
+      const publication = { id: 'selected', scope: 'protected' as const, valueSchema: { type: 'object' }, capture: captureRef(values[step]) };
       useLayoutEffect(() => {
         if (step === 0) {
           first = registerRef(publication);
@@ -86,12 +86,12 @@ describe('Ref registration ownership', () => {
     const x = setup(() => h(DynamicView, { idPrefix: 'view', type: RecordType, }, h(Content, {})));
     try {
       await x.open();
-      expect(refsOf(x.kernel)['view:selected']).toEqual(values[0]);
-      expect(refsOf(x.kernel)['view:selected']).not.toBe(values[0]);
+      expect(refsOf(x.kernel)['view_1:selected']).toEqual(values[0]);
+      expect(refsOf(x.kernel)['view_1:selected']).not.toBe(values[0]);
       await act(() => advance(1));
-      expect(refsOf(x.kernel)['view:selected']).toEqual(values[1]);
+      expect(refsOf(x.kernel)['view_1:selected']).toEqual(values[1]);
       await act(() => advance(2));
-      expect(refsOf(x.kernel)['view:selected']).toEqual(values[2]);
+      expect(refsOf(x.kernel)['view_1:selected']).toEqual(values[2]);
     } finally {
       await x.close();
     }
@@ -102,12 +102,12 @@ describe('Ref registration ownership', () => {
   it('rejects duplicate declarations in real Preact when the later publisher keeps stable data', async () => {
     const firstValue = { id: 'first' };
     function FirstPublisher() {
-      useDataRef('selected', firstValue, { scope: 'protected' });
+      useDataRef('selected', firstValue, { schema: FixtureType.Object({}), scope: 'protected' });
       return null;
     }
     function SecondPublisher() {
       const stableValue = useMemo(() => ({ id: 'second' }), []);
-      useDataRef('selected', stableValue, { scope: 'protected' });
+      useDataRef('selected', stableValue, { schema: FixtureType.Object({}), scope: 'protected' });
       return null;
     }
     function App() {
@@ -129,23 +129,23 @@ describe('Ref registration ownership', () => {
       const [state, setState] = useState({ id: 'one', refId: 'selected' });
       update = value => setState(value);
       const value = useMemo(() => ({ id: state.id }), [state.id]);
-      useDataRef(state.refId, value, { scope: 'protected' });
+      useDataRef(state.refId, value, { schema: FixtureType.Object({}), scope: 'protected' });
       return null;
     }
     const x = setup(() => h(DynamicView, {idPrefix: 'workspace', type: WorkspaceType }, h(Content, {})));
     await x.open();
-    expect(refsOf(x.kernel)['workspace:selected']).toEqual({ id: 'one' });
+    expect(refsOf(x.kernel)['workspace_1:selected']).toEqual({ id: 'one' });
 
     await act(async () => update({ id: 'two', refId: 'selected' }));
-    expect(refsOf(x.kernel)['workspace:selected']).toEqual({ id: 'two' });
+    expect(refsOf(x.kernel)['workspace_1:selected']).toEqual({ id: 'two' });
 
     await act(async () => update({ id: 'three', refId: 'renamed' }));
-    expect(refsOf(x.kernel)['workspace:selected']).toBeUndefined();
-    expect(refsOf(x.kernel)['workspace:renamed']).toEqual({ id: 'three' });
+    expect(refsOf(x.kernel)['workspace_1:selected']).toBeUndefined();
+    expect(refsOf(x.kernel)['workspace_1:renamed']).toEqual({ id: 'three' });
 
     await act(async () => update({ id: 'four', refId: 'selected' }));
-    expect(refsOf(x.kernel)['workspace:selected']).toEqual({ id: 'four' });
-    expect(refsOf(x.kernel)['workspace:renamed']).toBeUndefined();
+    expect(refsOf(x.kernel)['workspace_1:selected']).toEqual({ id: 'four' });
+    expect(refsOf(x.kernel)['workspace_1:renamed']).toBeUndefined();
 
     await x.close();
     expect(preparedRefs(x.kernel)).toEqual([]);
@@ -154,14 +154,14 @@ describe('Ref registration ownership', () => {
   it('registers a 100-item ArrayRef as one binding and releases it on unmount', async () => {
     const items = Array.from({ length: 100 }, (_, index) => ({ id: 'item_' + index }));
     function Content() {
-      useArrayRef('pending', items, { scope: 'protected', itemType: 'Task' });
+      useArrayRef('pending', items, { schema: FixtureType.Array(FixtureType.Object({})), scope: 'protected', itemType: 'Task' });
       return null;
     }
     const x = setup(() => h(DynamicView, { idPrefix: 'workspace', type: WorkspaceType }, h(Content, {})));
     try {
       await x.open();
       expect(preparedRefs(x.kernel)).toEqual([
-        { viewId: 'workspace', refId: 'pending', refType: 'Task', value: items },
+        { viewId: 'workspace_1', refId: 'pending', refType: 'Task', value: items },
       ]);
     } finally { await x.close(); }
     expect(preparedRefs(x.kernel)).toEqual([]);

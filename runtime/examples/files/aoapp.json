@@ -1,0 +1,10 @@
+{
+  "app_name": "turn_files",
+  "description": "Open and edit files within the Host-provided directory.",
+  "version": "0.1.0",
+  "entry": {
+    "main": "../../dist/examples/files/app.mjs"
+  },
+  "toolAuthoringProtocol": "view-type-tools-v7",
+  "appLifecycleSupport": "app-lifecycle-v2"
+}

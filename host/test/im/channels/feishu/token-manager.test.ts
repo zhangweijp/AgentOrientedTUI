@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   getTenantAccessToken,
   clearTenantTokenCache,
-  getTenantTokenCacheSize,
 } from '../../../../src/im/channels/feishu/token-manager.js'
 
 beforeEach(() => {
@@ -78,7 +77,6 @@ describe('getTenantAccessToken', () => {
     expect(t1).toBe('t-cached')
     expect(t2).toBe('t-cached')
     expect(fetchImpl).toHaveBeenCalledTimes(1) // Only one API call
-    expect(getTenantTokenCacheSize()).toBe(1)
   })
 
   it('throws on HTTP error', async () => {
@@ -131,12 +129,13 @@ describe('getTenantAccessToken', () => {
         JSON.stringify({ code: 0, tenant_access_token: 't-x', expire: 7200 }),
     })) as any
 
-    await getTenantAccessToken({ appId: 'a1', appSecret: 's' }, { fetchImpl })
-    await getTenantAccessToken({ appId: 'a2', appSecret: 's' }, { fetchImpl })
-
-    expect(getTenantTokenCacheSize()).toBe(2)
+    const accounts = [{ appId: 'a1', appSecret: 's' }, { appId: 'a2', appSecret: 's' }]
+    for (const account of accounts) await getTenantAccessToken(account, { fetchImpl })
+    for (const account of accounts) await getTenantAccessToken(account, { fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
 
     clearTenantTokenCache()
-    expect(getTenantTokenCacheSize()).toBe(0)
+    for (const account of accounts) await getTenantAccessToken(account, { fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
   })
 })

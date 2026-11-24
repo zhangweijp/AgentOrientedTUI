@@ -3,16 +3,16 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { createRuntime } from '@aotui/runtime';
-import { createAppInteraction, createSnapshotCore, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core';
+import { createAppInteraction, createSnapshotCore, createTurnCoordinator } from '@aotui/core/host';
+import { createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core/producer';
 import { APP_LIFECYCLE_PROTOCOL, hasViewTypeToolAuthoringProtocol, isTUIAppFactory } from '@aotui/core';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from '@aotui/runtime/adapters';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 
 // One known serial App, using only package exports. Keep the wiring visible so it can be measured.
-async function openLocalWorkItems(factory, desktopId, projectionLimits) {
-    const identity = { appId: 'local', instanceId: 'local-work-items-1' };
+async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
+    const identity = { appId, instanceId: appId + '-work-items-1' };
     const core = createSnapshotCore(identity);
     const registry = createViewOwnedTools(identity.appId, identity.instanceId);
     const projection = new SemanticProjectionCoordinator({ identity: () => identity });
@@ -27,6 +27,8 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits) {
         } },
         defineViewTypes: definitions => { projection.assertWritable(); registry.defineViewTypes(definitions); },
         readPreparedProjection: () => projection.readPreparedProjection(),
+        readPreparedViewId: (type, name) => projection.readPreparedViewId(type, name),
+        requestAttention() {},
         publishFrame(build, options) {
             assert.equal(options, undefined, 'Work Items only uses ordinary commits in this scenario');
             const result = projection.commit(() => {
@@ -59,8 +61,8 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits) {
     assert.deepEqual(readPreparedProjection(), { status: 'prepared', sourceEpoch: 1 });
     const binding = {
         identity: {},
-        isLive: ({ tool, receiver }) => ({ ok: !controller.signal.aborted && !projection.failed &&
-            registry.validateTypeToolBinding(tool, receiver).success }),
+        isLive: ({ tool, receiver }) => !controller.signal.aborted && !projection.failed &&
+            registry.validateTypeToolBinding(tool, receiver).success,
         execute: async ({ source, effectiveInput }) => ({
             kind: 'tool-result', ...await registry.invokeTypeTool(source.tool, source.receiver, effectiveInput),
         }),
@@ -74,10 +76,11 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits) {
         execution: { resolve: source => source.appId === identity.appId && source.instanceId === identity.instanceId ? binding : null },
     });
     return {
-        app: { installationId: 'local_installation', appId: identity.appId, appInstanceId: identity.instanceId, name: 'local', status: 'running' },
-        client: { ...authority,
-            async observe(selection) { await instance.whenCommitted(controller.signal); return authority.observe(selection); },
-            async invoke(request) { await instance.whenCommitted(controller.signal); return authority.invoke(request); },
+        app: { installationId: appId + '_installation', appId: identity.appId, appInstanceId: identity.instanceId, name: appId, status: 'running' },
+        readReceipt: authority.readReceipt,
+        async observe(turns) {
+            await instance.whenCommitted(controller.signal);
+            return turns.prepareObservation(authority, () => !controller.signal.aborted);
         },
         async close() {
             controller.abort();
@@ -86,9 +89,11 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits) {
             cleanup.stop();
             try { await authority.whenClosed(); await instance.close(); await cleanup.close(); }
             finally { projection.close(); registry.dispose(); core.lifecycle.dispose(); }
-            const released = { combinedBytes: authority.inspect().combinedBytes,
+            const { activeInvocations, activeReads, borrowedSnapshots, observations } = authority.inspect();
+            const released = { activeInvocations, activeReads, borrowedSnapshots, observationSlots: observations.observationSlots,
                 activeHolds: core.store.inspect().activeHolds, bindings: registry.inspect().bindings };
-            assert.deepEqual(released, { combinedBytes: 0, activeHolds: 0, bindings: 0 });
+            assert.deepEqual(released, { activeInvocations: 0, activeReads: 0, borrowedSnapshots: 0, observationSlots: 0,
+                activeHolds: 0, bindings: 0 });
             return released;
         },
     };
@@ -124,71 +129,66 @@ const modules = await realpath('node_modules');
 for (const path of Object.values(resolutions)) assert.ok(path.startsWith(modules + sep), path);
 const factory = (await import(entry)).default;
 assert.ok(isTUIAppFactory(factory) && hasViewTypeToolAuthoringProtocol(factory));
-assert.equal(factory.kernelConfig.appName, manifest.app_name);
+assert.equal(factory.app_name, manifest.app_name);
 const jsonLimits = Object.freeze({ maxDepth: 12, maxNodes: 8192, maxApproxBytes: 65536, maxCanonicalBytes: 65536 });
 const limits = Object.freeze({ maxViews: 8, maxRefs: 64, maxTools: 16,
     observation: Object.freeze({ ...jsonLimits, maxDepth: 20 }), metadata: jsonLimits });
-const runtime = createRuntime();
 const originalFetch = globalThis.fetch;
-const turns = [];
+const requests = [];
+const turns = createTurnCoordinator();
 const receipts = [];
 const release = {};
-let source, local, driver, turn;
+const owners = [];
+let source, driver, turn;
 try {
-    const desktopId = await runtime.createDesktop('assembly');
-    const desktop = runtime.getDesktop(desktopId);
-    const installationId = await desktop.registerPendingApp({ installationId: 'work_items_install', localPath: appDirectory,
-        projectionLimits: limits, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
-    const appId = await desktop.openApp(installationId);
-    const [managed] = desktop.getInstalledApps();
-    const access = runtime.getAppInteraction(desktopId, appId, managed.appInstanceId);
-    assert.equal(access.status, 'ready');
-    local = await openLocalWorkItems(factory, desktopId, limits);
-    const clients = new Map([[managed.appId, access.interaction], [local.app.appId, local.client]]);
+    const desktopId = 'assembly';
+    const left = await openLocalWorkItems(factory, desktopId, limits, 'work_items');
+    owners.push(left);
+    const local = await openLocalWorkItems(factory, desktopId, limits, 'local');
+    owners.push(local);
+    const managed = left.app;
+    const clients = new Map(owners.map(owner => [owner.app.appId, owner]));
+    const activeApps = new Set(owners);
     const candidates = new Map();
-    // Real observations, adoption results and receipts on both paths. The only injected fault
-    // releases the second candidate immediately before its actual Core adoption attempt.
+    // This portable Host owns both instances and delegates the entire turn to Core.
     delete process.env.AOTUI_SYSTEM_INSTRUCTION_PATH;
-    source = new SemanticAOTUIDrivenSource({
-        id: desktopId, getInstalledApps: () => [...desktop.getInstalledApps(), local.app], getSystemLogs: () => [],
-        getAppWindows: (appId, instanceId) => desktop.getAppWindows(appId, instanceId),
-        // This mixed managed/pure Core fixture only makes same-App calls.
-        bindRequestSources({ apps }) {
-            assert.deepEqual(apps.map(item => item.observationId), turn.adoptions.map(([appId]) => turn.observations[appId]));
-            return Object.freeze({});
+    const desktop = {
+        id: desktopId, listApps: () => [...activeApps].map(owner => owner.app), getSystemLogs: () => [],
+        getAppWindows: () => undefined,
+        getRunningApp(appId, instanceId) {
+            const owner = clients.get(appId);
+            assert.equal(instanceId, owner.app.appInstanceId);
+            return { status: 'ready', app: { async observe() {
+                const prepared = await owner.observe(turns);
+                assert.equal(prepared.status, 'prepared', JSON.stringify(prepared.issue));
+                const { observation } = prepared.candidate;
+                candidates.set(appId, prepared.candidate);
+                turn.observations[appId] = observation.observationId;
+                return prepared;
+            } } };
         },
-    }, { getAppInteraction(id, appId, instanceId) {
-        const client = clients.get(appId);
-        assert.equal(id, desktopId);
-        assert.equal(instanceId, appId === managed.appId ? managed.appInstanceId : local.app.appInstanceId);
-        return { status: 'ready', interaction: { ...client,
-            async observe(selection) {
-                const result = await client.observe(selection);
-                assert.equal(result.status, 'observed', JSON.stringify(result.issue));
-                candidates.set(appId, result.observation);
-                turn.observations[appId] = result.observation.observationId;
-                return result;
-            },
-            adoptObservation(oid, windows) {
-                assert.equal(oid, candidates.get(appId).observationId);
-                if (turn.partial && appId === local.app.appId) client.releaseObservation(oid);
-                const result = client.adoptObservation(oid, windows);
-                turn.adoptions.push([appId, result.status]);
-                return result;
-            },
-            async invoke(request) {
-                const observed = candidates.get(appId);
+        adoptTurn(selection) {
+            if (turn.partial) candidates.get(local.app.appId).discard();
+            const result = turns.adoptTurn(selection);
+            for (const { candidate } of selection.apps) turn.adoptions.push([candidate.observation.source.appId, result.status]);
+            if (result.status !== 'adopted') return result;
+            const active = result.turn;
+            return { ...result, turn: { ...active, get isCurrent() { return active.isCurrent; }, async invoke(appId, request, ...options) {
+                const observed = candidates.get(appId).observation;
                 assert.equal(request.observationId, observed.observationId);
                 const captured = turn.calls.find(([id]) => id === request.invocationId);
                 const tool = observed.tools.find(tool => appId + '-' + tool.name === captured[1]);
                 assert.equal(request.toolId, tool.id);
-                assert.deepEqual({ ...request.input }, captured[2]);
-                const result = await client.invoke(request);
-                receipts.push({ appId, request, result });
-                return result;
-            },
-        } };
-    } });
+                const { view_id, ...input } = captured[2];
+                assert.equal(request.viewId, view_id);
+                assert.deepEqual({ ...request.input }, input);
+                const invoked = await active.invoke(appId, request, ...options);
+                receipts.push({ appId, request, result: invoked });
+                return invoked;
+            } } };
+        },
+    };
+    source = new SemanticAOTUIDrivenSource(desktop);
 
     // Control each turn explicitly. Production Source, Driver, AI SDK and provider serializer
     // all run. Only the provider's HTTP transport returns a scripted SSE response.
@@ -231,36 +231,39 @@ try {
             }
             assert.equal(request.max_tokens, 256);
         }
-        turns.push({ label, sent: turn.requests.length, observations: turn.observations, adoptions: turn.adoptions, error: turn.error?.code,
+        requests.push({ label, sent: turn.requests.length, observations: turn.observations, adoptions: turn.adoptions, error: turn.error?.code,
             budget: turn.error?.details, tools: request?.tools.map(tool => tool.function.name),
             wireBytes: turn.wireBytes, request });
         return turn;
     }
     const previous = new Map();
     for (const [id, client] of clients) {
-        const captured = await client.observe({ all: true });
-        assert.equal(captured.status, 'observed');
-        assert.equal(client.adoptObservation(captured.observation.observationId).status, 'adopted');
-        previous.set(id, captured.observation);
+        const captured = await client.observe(turns);
+        assert.equal(captured.status, 'prepared');
+        previous.set(id, captured.candidate);
     }
+    const prior = turns.adoptTurn({ apps: [...previous.values()].map(candidate => ({ candidate })) });
+    assert.equal(prior.status, 'adopted');
     const denied = await run('budget', [], { window: 1024 });
     assert.equal(denied.error?.code, 'MODEL_INPUT_BUDGET_EXCEEDED');
     assert.equal(denied.error.details.inputLimit, 768);
     assert.deepEqual(denied.adoptions, []);
     assert.equal(denied.requests.length, 0);
 
-    const list = 'billing_export_2026_11';
-    for (const [id, observed] of previous) {
-        const result = await clients.get(id).invoke({ invocationId: 'prior-count', observationId: observed.observationId,
-            toolId: observed.tools.find(tool => tool.name === 'count').id, input: { view_id: 'b', selected: '$' + id + '.' + list + '.items[0]' } });
+    const list = 'billing_export_2026_11_1';
+    const reopenedList = 'billing_export_2026_11_2';
+    for (const [id, { observation: observed }] of previous) {
+        const result = await prior.turn.invoke(id, { invocationId: 'prior-count', observationId: observed.observationId,
+            toolId: observed.tools.find(tool => tool.name === 'count').id, viewId: 'b_1', input: {  selected: '$ref.' + id + '.' + list + '.items[0]' } });
         assert.equal(result.receipt?.outcome.status, 'succeeded', 'Budget refusal preserved the previously adopted source');
     }
+    prior.turn.release();
     const scripts = name => [
-        [name + '-reverse', name + '-update', { view_id: 'workspace', operation: 'reverse' }],
-        [name + '-remember', name + '-inspect', { view_id: 'b', selected: '$' + name + '.' + list + '.items[0]' }],
-        [name + '-close', name + '-update', { view_id: 'workspace', operation: 'close' }],
-        [name + '-open', name + '-update', { view_id: 'workspace', operation: 'open' }],
-        [name + '-stale', name + '-inspect', { view_id: list, selected: '$' + name + '.b.selected' }],
+        [name + '-reverse', name + '-update', { view_id: 'workspace_1', operation: 'reverse' }],
+        [name + '-remember', name + '-inspect', { view_id: 'b_1', selected: '$ref.' + name + '.' + list + '.items[0]' }],
+        [name + '-close', name + '-update', { view_id: 'workspace_1', operation: 'close' }],
+        [name + '-open', name + '-update', { view_id: 'workspace_1', operation: 'open' }],
+        [name + '-stale', name + '-inspect', { view_id: list, selected: '$ref.' + name + '.b_1.selected' }],
     ];
     const calls = [...scripts(managed.name), ...scripts(local.app.name)];
     const before = await run('operate', calls);
@@ -280,17 +283,17 @@ try {
             assert.equal(outcome.value.success, true);
         }
     }
-    const after = await run('observe', [[managed.name + '-close-list', managed.name + '-update', { view_id: 'workspace', operation: 'close' }]]);
+    const after = await run('observe', [[managed.name + '-close-list', managed.name + '-update', { view_id: 'workspace_1', operation: 'close' }]]);
     assert.ifError(after.error);
     for (const { appId, name } of [managed, local.app]) {
         const view = (step, viewId) => step.requests[0].messages.filter(m => m.role === 'user' &&
             typeof m.content === 'string' && m.content.startsWith('<view view_id="' + viewId + '"') && m.content.includes('app_id="' + appId + '"'));
         assert.equal(view(before, list).length, 1);
         assert.match(view(before, list)[0].content, /items\[4\]/);
-        assert.equal(view(after, list).length, 1);
-        assert.doesNotMatch(view(after, list)[0].content, /items\[4\]/);
-        assert.match(view(before, 'workspace')[0].content, /Inspections: 0/);
-        assert.match(view(after, 'workspace')[0].content, /Inspections: 1[\s\S]*"selected":0/);
+        assert.equal(view(after, reopenedList).length, 1);
+        assert.doesNotMatch(view(after, reopenedList)[0].content, /items\[4\]/);
+        assert.match(view(before, 'workspace_1')[0].content, /Inspections: 0/);
+        assert.match(view(after, 'workspace_1')[0].content, /Inspections: 1[\s\S]*"selected":0/);
         const tools = after.requests[0].tools.filter(tool => tool.function.name === name + '-inspect');
         assert.equal(tools.length, 1);
         assert.ok(tools[0].function.parameters.required.includes('view_id'));
@@ -298,23 +301,25 @@ try {
     assert.equal(receipts.length, 11);
     assert.equal(receipts.at(-1).result.receipt.outcome.status, 'succeeded');
     const broken = await run('partial', [], { partial: true });
-    assert.equal(broken.error?.code, 'SEMANTIC_ADOPTION_PARTIAL');
-    assert.deepEqual(broken.adoptions, [[managed.appId, 'adopted'], [local.app.appId, 'rejected']]);
+    assert.equal(broken.error?.code, 'SEMANTIC_ADOPTION_FAILED');
+    assert.deepEqual(broken.adoptions, [[managed.appId, 'rejected'], [local.app.appId, 'rejected']]);
     assert.equal(broken.requests.length, 0);
-    for (const [id, observation] of candidates) assert.equal(clients.get(id).adoptObservation(observation.observationId).status, 'rejected');
+    for (const candidate of candidates.values()) assert.equal(turns.adoptTurn({ apps: [{ candidate }] }).status, 'rejected');
     const recovered = await run('recovered');
     assert.ifError(recovered.error);
     assert.equal(recovered.requests.length, 1);
     for (const { appId, request: { observationId, invocationId }, result } of receipts) {
-        assert.notEqual(observationId, candidates.get(appId).observationId);
+        assert.notEqual(observationId, candidates.get(appId).observation.observationId);
         assert.deepEqual(await clients.get(appId).readReceipt({ observationId, invocationId }), result);
     }
     const recovery = recovered.requests[0];
-    const listMessages = recovery.messages.filter(m => typeof m.content === 'string' && m.content.startsWith('<view view_id="' + list + '"'));
+    const listMessages = recovery.messages.filter(m => typeof m.content === 'string' && m.content.startsWith('<view view_id="' + reopenedList + '"'));
     assert.equal(listMessages.length, 1);
     assert.ok(listMessages[0].content.includes('app_id="local"'));
     assert.ok(recovery.tools.some(tool => tool.function.name === managed.name + '-inspect'), 'Second Item still receives the shared Tool');
-    await desktop.closeApp(managed.appId, managed.appInstanceId);
+    release[managed.appId] = await left.close();
+    activeApps.delete(left);
+    owners.splice(owners.indexOf(left), 1);
     const remaining = await run('closed');
     assert.ifError(remaining.error);
     const last = remaining.requests[0];
@@ -327,17 +332,10 @@ try {
     driver?.stop();
     driver?.dispose();
     source?.dispose();
-    try { release.local = await local?.close(); }
-    finally {
-        const report = await runtime.beginShutdown().completion;
-        assert.ok(report.ok && report.resourcesReleased, JSON.stringify(report));
-        assert.equal(report.interactions.retainedOperations, 0);
-        assert.equal(report.interactions.retainedBytes, 0);
-        release.managed = { resourcesReleased: report.resourcesReleased, retainedOperations: report.interactions.retainedOperations,
-            retainedBytes: report.interactions.retainedBytes };
-    }
+    turns.close();
+    for (const owner of owners) release[owner.app.appId] = await owner.close();
 }
-console.log(JSON.stringify({ turns, resolutions, appEntrySHA256: createHash('sha256').update(await readFile(fileURLToPath(entry))).digest('hex'),
+console.log(JSON.stringify({ turns: requests, resolutions, appEntrySHA256: createHash('sha256').update(await readFile(fileURLToPath(entry))).digest('hex'),
     checkedReceipts: receipts.length, receipts: receipts.map(({ appId, request, result }) => ({
         appId, ...request, outcome: result.receipt.outcome, executionPhase: result.receipt.executionPhase,
     })), release }));

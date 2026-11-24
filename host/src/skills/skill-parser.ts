@@ -1,12 +1,6 @@
 import { readFile } from 'fs/promises';
 import type { SkillInfo, SkillScope } from './types.js';
 
-export interface ParsedSkill {
-    name: string;
-    description: string;
-    content: string;
-}
-
 function parseFrontmatter(raw: string): { data: Record<string, string>; content: string } {
     const normalized = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     if (!normalized.startsWith('---\n')) {

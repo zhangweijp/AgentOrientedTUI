@@ -8,9 +8,9 @@ const NoteSchema = Type.Object({ id: Type.String(), title: Type.String(), text: 
   { additionalProperties: false });
 const noteRefOptions = { scope: 'private', refType: 'Note', schema: NoteSchema } as const;
 const notesRefOptions = { scope: 'private', itemType: 'Note', schema: Type.Array(NoteSchema) } as const;
-export const RootType = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root' });
+export const RootType = defineViewType({ multiplicity: 'multiple', name: 'Root' });
 
-export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: boolean): void }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
+export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: boolean): void }>()({ multiplicity: 'multiple', name: 'Workspace', tools: {
         open_notes: { description: 'Open the Notes page.',
             inputSchema: Type.Object({}, { additionalProperties: false }),
             execute({ context }) {
@@ -28,7 +28,7 @@ export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: 
         },
 } });
 
-export const NoteDetailType = defineViewType<{ inspect(notes: readonly Readonly<Type.Static<typeof NoteSchema>>[]): ToolResult }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'NoteDetail', tools: {
+export const NoteDetailType = defineViewType<{ inspect(notes: readonly Readonly<Type.Static<typeof NoteSchema>>[]): ToolResult }>()({ multiplicity: 'multiple', name: 'NoteDetail', tools: {
         inspect_note: { description: 'Inspect a Note Ref; read the result in Note Detail.',
             inputSchema: Type.Object({ note: refParam('Note', NoteSchema) }, { additionalProperties: false }),
             execute: ({ input, context }) => context.inspect([input.note]),
@@ -81,7 +81,7 @@ function App() {
     <StaticView  idPrefix="root" type={RootType} name="Notes instructions">
       <h1>Notes Example Application Instruction</h1>
       <p>Open Notes from Workspace. Pass the receiving page’s XML view_id to its tools. Select Notes from the detail page with
-        $app_id.detail.current, $app_id.detail.notes or $app_id.detail.notes[0], using the app_id from its XML.
+        $ref.app_id.detail.current, $ref.app_id.detail.notes or $ref.app_id.detail.notes[0], using the app_id from its XML.
         Read the Inspection section after a receipt. Close Notes when finished.</p>
     </StaticView>
     <DynamicView  idPrefix="workspace" type={WorkspaceType} name="Notes workspace" context={{ opened, setOpened }}>

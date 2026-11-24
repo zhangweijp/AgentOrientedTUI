@@ -1,7 +1,5 @@
 import { expect, it } from 'vitest';
 import { WorkerCapacity } from './worker-capacity.js';
-import { AppManager } from './manager.js';
-import { defineRuntimeConfig } from '../../spi/config/index.js';
 
 it('bounds physical admission and closes only after every reserved slot is released', async () => {
     const capacity = new WorkerCapacity(2);
@@ -45,15 +43,4 @@ it('keeps unlimited Worker ownership until every reservation is released', async
     await closing;
     releases[0]!();
     expect(capacity.getReport()).toEqual({ state: 'closed', limit: Number.POSITIVE_INFINITY, total: 0 });
-});
-
-it('a standalone AppManager closes its own pool and leaves a borrowed pool to its owner', async () => {
-    const runtimeConfig = defineRuntimeConfig({ worker: { maxWorkers: 3, timeoutMs: 1234 } });
-    const standalone = new AppManager({} as any, { runtimeConfig });
-    expect((await standalone.cleanupAsync()).workers).toMatchObject({ ownership: 'owned', report: { state: 'closed', total: 0, limit: 3 } });
-    const capacity = new WorkerCapacity(1);
-    const borrowed = new AppManager({} as any, { runtimeConfig, workerCapacity: capacity });
-    expect((await borrowed.cleanupAsync()).workers).toEqual({ ownership: 'not-owned', report: null });
-    expect(capacity.getReport()).toMatchObject({ state: 'open', limit: 1, total: 0 });
-    await capacity.close();
 });

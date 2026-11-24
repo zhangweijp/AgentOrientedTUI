@@ -10,46 +10,45 @@ if (!databasePath) throw new Error('Usage: node demo.mjs <database-file> [absolu
 const dataDir = await mkdtemp(join(tmpdir(), 'aotui-sqlite-demo-'));
 const runtime = createRuntime();
 try {
-    const desktopId = await runtime.createDesktop(createDesktopId('sqlite-demo'));
-    const desktop = runtime.getDesktop(desktopId);
+    const desktop = await runtime.createDesktop(createDesktopId('sqlite-demo'));
     const installationId = await desktop.registerPendingApp({
         installationId: 'sqlite_work_items',
         localPath: fileURLToPath(new URL('./', import.meta.url)),
         config: { databasePath: resolve(databasePath), AOTUI_DATA_DIR: dataDir, ...(sqliteExecutable && { sqliteExecutable }) },
     });
-    const appId = await desktop.openApp(installationId);
-    const app = desktop.getInstalledApps().find(app => app.appId === appId);
-    if (!app?.appInstanceId) throw new Error('Missing SQLite work items instance');
-    const access = runtime.getAppInteraction(desktopId, appId, app.appInstanceId);
-    if (access.status !== 'ready') throw new Error(JSON.stringify(access.issue));
-    const client = access.interaction;
+    const app = await desktop.openApp(installationId);
 
     async function show() {
-        const prepared = await client.observe({ all: true });
-        if (prepared.status !== 'observed') throw new Error(JSON.stringify(prepared.issue));
-        const observation = prepared.observation;
-        const adopted = client.adoptObservation(observation.observationId);
-        if (adopted.status !== 'adopted') throw new Error(JSON.stringify(adopted.issue));
-        for (const view of observation.views) if (view.kind === 'state') console.log(`\n${view.name}\n${view.content?.value}`);
-        return observation;
+        const prepared = await app.observe();
+        if (prepared.status !== 'prepared') throw new Error(JSON.stringify(prepared.issue));
+        const { candidate } = prepared;
+        const adopted = desktop.adoptTurn({ apps: [{ candidate }] });
+        if (adopted.status !== 'adopted') {
+            candidate.discard();
+            throw new Error(JSON.stringify(adopted.issue));
+        }
+        const { observation } = candidate;
+        for (const view of observation.views) console.log(`\n${view.name}\n${view.content.value}`);
+        return { observation, turn: adopted.turn };
     }
 
-    async function invoke(observation, name, input) {
+    async function invoke({ observation, turn }, name, localRef, input = {}) {
         const tool = observation.tools.find(tool => tool.name === name);
         if (!tool) throw new Error(`Missing ${name}. Check that the example database is seeded and readable.`);
         const view = observation.views.find(view => view.type === tool.viewType);
         if (!view) throw new Error(`Missing View for ${name}.`);
-        const result = await client.invoke({ invocationId: name, observationId: observation.observationId,
-            toolId: tool.id, input: input });
+        const item = `$ref.${observation.source.appId}.${view.id}.${localRef}`;
+        const result = await turn.invoke(app.appId, { invocationId: name, observationId: observation.observationId,
+            toolId: tool.id, input: { ...input, item } });
         console.log(JSON.stringify(result));
         if (result.kind !== 'receipt' || result.receipt.outcome.status !== 'succeeded') process.exitCode = 1;
     }
 
-    await invoke(await show(), 'open_item', { item: '$sqlite_work_items.items.items[0]' });
-    if (!process.exitCode) await invoke(await show(), 'set_status', { item: '$sqlite_work_items.detail.current', status: 'done' });
+    await invoke(await show(), 'open_item', 'items[0]');
+    if (!process.exitCode) await invoke(await show(), 'set_status', 'current', { status: 'done' });
     await show();
 } finally {
-    const report = await runtime.beginShutdown().completion;
+    const report = await runtime.beginClose().completion;
     if (report.resourcesReleased) await rm(dataDir, { recursive: true, force: true });
     if (!report.ok || !report.resourcesReleased) {
         console.error(report);

@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { projectNativeToolSchema } from '@aotui/runtime/adapters';
 import { journal, modelCall, watchUntil } from './batch-two-support.mjs';
 import { savedParts } from './batch-ten-delivery.mjs';
 
-export const address = '$cinema.hall.seat';
+export const address = '$ref.cinema.hall.seat';
 export const original = ['A', 12];
 export const changed = ['B', 9];
 export const cinemaLog = manifest => journal(dirname(manifest.modulePath), 'cinema-effects');
@@ -21,31 +22,10 @@ export async function publishSeat(manifest, seat, withdrawn = false) {
     return state;
 }
 
-// Keep the real clients and their Runtime identity at the binding boundary.
+// Keep the issued candidates and the active Runtime turn at the adoption boundary.
 // Count public adoption calls and inject the two test mutations only on the Worker wire.
-export function captureAdmission(runtime) {
-    const clients = new WeakMap();
+export function captureAdmission() {
     const events = [], workers = [], mutations = [], receipts = [];
-    const getInteraction = runtime.getAppInteraction;
-    runtime.getAppInteraction = function (...args) {
-        const opened = getInteraction.apply(this, args);
-        if (opened.status !== 'ready') return opened;
-        const client = opened.interaction;
-        const interaction = { ...client,
-            adoptObservation(...selection) {
-                const result = client.adoptObservation(...selection);
-                events.push({ appId: args[1], observationId: selection[0], status: result.status });
-                return result;
-            },
-            async invoke(request, ...options) {
-                const result = await client.invoke(request, ...options);
-                receipts.push({ appId: args[1], invocationId: request.invocationId, result });
-                return result;
-            },
-        };
-        clients.set(interaction, client);
-        return { ...opened, interaction };
-    };
     const post = Worker.prototype.postMessage;
     Worker.prototype.postMessage = function (message, ...other) {
         if (message?.type === 'INIT') {
@@ -56,12 +36,12 @@ export function captureAdmission(runtime) {
         if (message?.type === 'VIEW_TOOL_INVOKE') {
             const original = message;
             let mutation;
-            if (message.appId === 'cinema' && message.tool.name === 'lookup' && message.rawArgs.seat === address) {
+            if (message.appId === 'cinema' && message.tool.name === 'lookup' && message.localRefs.some(ref => ref.param === 'seat')) {
                 mutation = mutations.shift();
                 if (mutation) {
                     message = structuredClone(message);
-                    if (mutation === 'path') message.refSources[0].path = [1];
-                    else message.refSources[0].value = ['A', '12'];
+                    if (mutation === 'mount') message.localRefs.find(ref => ref.param === 'seat').viewInstanceId = 'retired-hall';
+                    else message.effectiveArgs.seat[1] = '12';
                 }
             }
             workers.push({ event: 'tool', original, dispatched: message, ...(mutation ? { mutation } : {}) });
@@ -70,26 +50,40 @@ export function captureAdmission(runtime) {
     };
     const restores = [];
     return { events, workers, mutations, receipts, attach(desktop) {
-        const bind = desktop.bindRequestSources;
-        desktop.bindRequestSources = function ({ apps }) {
-            return bind.call(this, { apps: apps.map(source => ({ ...source, client: clients.get(source.client) ?? source.client })) });
+        const adopt = desktop.adoptTurn;
+        const revoke = desktop.revokeWindowAccess, close = desktop.closeView;
+        const originalTurns = new WeakMap();
+        desktop.adoptTurn = function (selection) {
+            const result = adopt.call(this, selection);
+            for (const { candidate } of selection.apps) events.push({ appId: candidate.observation.source.appId,
+                observationId: candidate.observation.observationId, status: result.status });
+            if (result.status === 'rejected') return result;
+            const { turn } = result;
+            const instrumented = { ...turn, get isCurrent() { return turn.isCurrent; }, async invoke(appId, request, ...options) {
+                const invoked = await turn.invoke(appId, request, ...options);
+                receipts.push({ appId, invocationId: request.invocationId, result: invoked });
+                return invoked;
+            } };
+            originalTurns.set(instrumented, turn);
+            return { ...result, turn: instrumented };
         };
-        restores.push(() => { desktop.bindRequestSources = bind; });
+        desktop.revokeWindowAccess = function (turn, target) { return revoke.call(this, originalTurns.get(turn) ?? turn, target); };
+        desktop.closeView = function (target, turn) { return close.call(this, target, originalTurns.get(turn) ?? turn); };
+        restores.push(() => { desktop.adoptTurn = adopt; desktop.revokeWindowAccess = revoke; desktop.closeView = close; });
     }, restore() {
         Worker.prototype.postMessage = post;
-        runtime.getAppInteraction = getInteraction;
         for (const restore of restores) restore();
     } };
 }
 
 export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     const codes = {}, comparison = {}, results = {};
-    const before = await cinemaClient.observe({ all: true, programTools: true });
+    const before = await cinemaClient.observe();
     assert.equal(before.status, 'observed');
     const observation = before.observation;
     const lookup = observation.tools.find(tool => tool.name === 'lookup');
     assert.ok(lookup);
-    cinemaClient.releaseObservation(observation.observationId);
+    cinemaClient.release(observation.observationId);
     const tuple = { type: 'array', minItems: 2, items: false,
         prefixItems: [{ type: 'string', description: 'Row' }, { type: 'integer', minimum: 1, description: 'Seat number' }] };
     const native = (id, seat) => modelCall(id, 'cinema-lookup', { seat });
@@ -104,10 +98,17 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     const first = await compare('seat-native', [native('valid-seat', original), native('seat-order', [12, 'A']),
         native('seat-number', ['A', '12']), native('seat-zero', ['A', 0])]);
     const observedSchema = JSON.parse(JSON.stringify(lookup.inputSchema));
-    assert.deepEqual(first.tools['cinema-lookup'].parameters, observedSchema);
-    const [literal, refInput] = observedSchema.properties.seat.anyOf;
-    assert.deepEqual(literal, tuple);
-    assert.deepEqual(refInput, { type: 'string', pattern: '^[$][^$]' });
+    assert.deepEqual(observedSchema.properties.seat, tuple);
+    const receivers = observation.views.filter(view => view.type === lookup.viewType)
+        .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
+    const nativeSchema = projectNativeToolSchema({ ...lookup, inputSchema: observedSchema }, observation.source, receivers,
+        observation.refs.map(ref => ({ source: observation.source, ref })));
+    assert.deepEqual(first.tools['cinema-lookup'].parameters, nativeSchema);
+    const [literal, refInput] = nativeSchema.properties.seat.anyOf;
+    assert.deepEqual(literal.prefixItems[0], tuple.prefixItems[0]);
+    assert.deepEqual(literal.prefixItems[1].anyOf[0], tuple.prefixItems[1]);
+    assert.equal(refInput.type, 'string');
+    assert.match(refInput.description, /\$ref\.app_id\.view_id\.ref_id/);
     assert.deepEqual(observedSchema.required, ['seat']);
     assert.equal(first.result[0].success, true);
     for (const [index, path] of ['$.seat[0]', '$.seat[1]', '$.seat[1]'].entries()) {
@@ -121,7 +122,7 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     assert.equal(first.tools['cinema-lookup_at'].parameters.required[0], 'view_id');
     const declaration = first.tools.run_code.description.split('\n\ntype JsonValue')[1];
     assert.ok(declaration);
-    assert.match(declaration, /"cinema-lookup"\(args: .*readonly \[string, number\]/);
+    assert.match(declaration, /"cinema-lookup"\(args: .*readonly \[string, number(?: \| AppRefAddress)?\]/);
     assert.match(declaration, /"cinema-lookup_at"\(args: .*\bview_id: string/);
     assert.match(declaration, /"cinema-selection"\(args: .*AppRefAddress/);
     codes.declaration = 'type JsonValue' + declaration;
@@ -133,11 +134,11 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     });
     assert.ok(views(snapshot.body).some(view => view.includes('Reserved seat A 12')));
     assert.deepEqual(snapshot.result[0].parameters.seat, original);
-    const program = `await tools["cinema-lookup_at"]({view_id:${JSON.stringify(westId)}, seat:["$sale",7], label:"$cinema.hall.row", tags:["$cinema.hall.row"]});
+    const program = `await tools["cinema-lookup_at"]({view_id:${JSON.stringify(westId)}, seat:["$sale",7], label:"$$ref.cinema.hall.row", tags:["$ref.cinema.hall.row"]});
 await tools["cinema-selection"]({seat:"${address}"});
 await tools["cinema-lookup"]({seat:refs.cinema.hall.seat}); inspect(refs.cinema.hall.seat);`;
     const active = await compare('seat-console', [modelCall('program-tuple', 'run_code', { code: program }),
-        modelCall('mixed-tags', 'cinema-lookup_at', { view_id: westId, seat: ['$ordinary', 3], label: 'native', tags: ['$cinema.hall.row', 'keep', '$cinema.hall.row'] })]);
+        modelCall('mixed-tags', 'cinema-lookup_at', { view_id: westId, seat: ['$ordinary', 3], label: 'native', tags: ['$ref.cinema.hall.row', 'keep', '$ref.cinema.hall.row'] })]);
     assert.ok(views(active.body).some(view => view.includes('Reserved seat B 9')));
     assert.equal(active.result[0].subcalls.length, 3, JSON.stringify(active.result[0]));
     assert.ok(active.result[0].subcalls.every(receipt => receipt.status === 'succeeded' && receipt.phase === 'entered-returned'));
@@ -146,32 +147,33 @@ await tools["cinema-lookup"]({seat:refs.cinema.hall.seat}); inspect(refs.cinema.
     const effects = (await cinemaLog(manifest)).filter(event => event.operation);
     assert.deepEqual(effects.map(event => [event.desk, event.operation, event.parameters]), [
         ['hall', 'lookup', { seat: original }], ['hall', 'lookup', { seat: original }],
-        ['west', 'lookup_at', { seat: ['$sale', 7], label: '$cinema.hall.row', tags: ['$cinema.hall.row'] }],
+        ['west', 'lookup_at', { seat: ['$sale', 7], label: '$ref.cinema.hall.row', tags: ['B'] }],
         ['hall', 'selection', { seat: changed }], ['hall', 'lookup', { seat: changed }],
         ['west', 'lookup_at', { seat: ['$ordinary', 3], label: 'native', tags: ['B', 'keep', 'B'] }],
     ]);
 
-    captured.mutations.push('value', 'path');
-    const tampered = await compare('seat-worker-recheck', [native('wrong-worker-type', address), native('wrong-worker-path', address)]);
+    captured.mutations.push('value', 'mount');
+    const tampered = await compare('seat-worker-recheck', [native('wrong-worker-type', address), native('wrong-worker-mount', address)]);
     assert.ok(tampered.result.every(result => result.success === false));
     const dispatched = captured.workers.filter(event => event.mutation);
-    assert.deepEqual(dispatched.map(event => event.mutation), ['value', 'path']);
+    assert.deepEqual(dispatched.map(event => event.mutation), ['value', 'mount']);
     const workerReceipts = captured.receipts.filter(entry => entry.invocationId.startsWith('wrong-worker-'));
     assert.equal(workerReceipts.length, 2);
     assert.ok(workerReceipts.every(({ result }) => result.receipt?.executionPhase === 'not-entered'));
-    assert.ok(JSON.stringify(workerReceipts[0]).includes('$.seat[1]'));
+    assert.deepEqual(workerReceipts.map(({ result }) => result.receipt.outcome.details.result.error.code),
+        ['E_INVALID_ARGS', 'REF_VIEW_UNAVAILABLE']);
     const revoked = await compare('seat-withdraw', [native('withdrawn-ref', address)], async () => {
         const state = await publishSeat(manifest, changed, true);
         await watchUntil(async () => (await cinemaLog(manifest)).find(event => JSON.stringify(event.state) === JSON.stringify(state)));
-        const current = await cinemaClient.observe({ all: true });
+        const current = await cinemaClient.observe();
         assert.equal(current.status, 'observed');
         try { assert.ok(current.observation.refs.every(ref => ref.refId !== 'seat')); }
-        finally { cinemaClient.releaseObservation(current.observation.observationId); }
+        finally { cinemaClient.release(current.observation.observationId); }
     });
     assert.equal(revoked.result[0].success, false);
     const final = await compare('seat-latest');
     assert.ok(views(final.body).every(page => !page.includes(address)));
-    for (const ids of [['old-ref', 'valid-seat', 'seat-number'], ['wrong-worker-type', 'wrong-worker-path', 'withdrawn-ref']]) {
+    for (const ids of [['old-ref', 'valid-seat', 'seat-number'], ['wrong-worker-type', 'wrong-worker-mount', 'withdrawn-ref']]) {
         for (const id of ids) assert.equal(final.body.messages.filter(msg => msg.role === 'tool' && msg.tool_call_id === id).length, 1);
     }
     assert.deepEqual((await cinemaLog(manifest)).filter(event => event.operation), effects);

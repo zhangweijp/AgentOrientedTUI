@@ -13,12 +13,12 @@ function fixture() {
         appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory } });
     cleanups.push(() => { (host as any).snapshotReceiver.close();rmSync(directory, { recursive: true, force: true }); });
     const send = (message: unknown) => (host as any).handleMessage(message);
-    const draft = (seq: number, content = 'current') => ({ schemaVersion: 7, appId: 'app',
+    const draft = (seq: number, content = 'current') => ({ schemaVersion: 8, appId: 'app',
         instanceId: (host as any).appInstanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 1,
         views: [{ toolBindings: [], id: 'file', viewInstanceId: 'view-instance', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value: content } }], refs: {}, tools: {} });
-    const publish = (seq: number, content = 'current', suppressSignal = false) =>
-        send({ type: 'SNAPSHOT_PREPARED', draft: draft(seq, content), suppressSignal });
+    const publish = (seq: number, content = 'current') =>
+        send({ type: 'SNAPSHOT_PREPARED', draft: draft(seq, content) });
     return { host, send, draft, publish };
 }
 
@@ -29,66 +29,66 @@ describe('Semantic commit notifications', () => {
         expect(host).not.toHaveProperty('mountViewByLink');
     });
 
-    it('notifies only after the new state is committed, without a Fragment message', () => {
+    it('accepts only this instance’s newer frame without notifying another reader', () => {
         const f = fixture(), observed: unknown[] = [];
-        f.host.onUpdateRequest = () => observed.push(f.host.getSemanticSnapshotReport());
+        f.host.onUpdate = () => observed.push(f.host.getSemanticSnapshotReport());
         f.publish(1);
-        expect(observed).toMatchObject([{ health: 'ready', revision: 1, lastViewCount: 1 }]);
+        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 1, lastViewCount: 1 });
         f.publish(2);
-        expect(observed).toHaveLength(1);
+        expect(observed).toHaveLength(0);
         f.publish(3, 'changed in the same millisecond');
-        expect(observed).toHaveLength(2);
-        expect(observed[1]).toMatchObject({ health: 'ready', revision: 2 });
+        expect(observed).toHaveLength(0);
+        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2 });
         f.publish(2, 'late');
-        f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(4), instanceId: 'foreign' }, suppressSignal: false });
-        f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(5), appId: 'foreign' }, suppressSignal: false });
-        expect(observed).toHaveLength(2);
+        f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(4), instanceId: 'foreign' } });
+        f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(5), appId: 'foreign' } });
+        expect(observed).toHaveLength(0);
         expect(f.host.getSemanticSnapshotReport()).toMatchObject({
             health: 'ready', revision: 2, published: 2, rejected: 3, wrongSource: 2,
         });
     });
 
     it('keeps passive publications fresh without emitting an update', () => {
-        const f = fixture(), update = vi.fn();f.host.onUpdateRequest = update;
-        f.publish(1, 'passive', true);
+        const f = fixture(), update = vi.fn();f.host.onUpdate = update;
+        f.publish(1, 'passive');
         expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 1 });
         expect(update).not.toHaveBeenCalled();
-        f.publish(2, 'passive changed', true);
+        f.publish(2, 'passive changed');
         expect(f.host.getSemanticSnapshotReport()).toMatchObject({ revision: 2 });
         expect(update).not.toHaveBeenCalled();
     });
 
-    it('wakes once on degradation and again on recovery even when recovered content is unchanged', () => {
+    it('reports one fault while two identical failures are received and accepts an unchanged repair', () => {
         const f = fixture(), health: unknown[] = [];
-        f.host.onUpdateRequest = () => health.push(f.host.getSemanticSnapshotReport()?.health);
+        f.host.onUpdate = () => health.push(f.host.getSemanticSnapshotReport()?.health);
         f.publish(1);
         const fail = (seq: number) => f.send({ type: 'SNAPSHOT_PREPARE_FAILED', appId: 'app',
-            instanceId: f.draft(seq).instanceId, producerSeq: seq, sourceEpoch: seq, suppressSignal: false,
+            instanceId: f.draft(seq).instanceId, producerSeq: seq, sourceEpoch: seq,
             error: { code: 'SNAPSHOT_SERIALIZATION_ERROR', message: 'Cannot serialize capture' } });
         fail(2);fail(3);
-        expect(health).toEqual(['ready', 'degraded']);
+        expect(health).toEqual(['degraded']);
         f.publish(4);
-        expect(health).toEqual(['ready', 'degraded', 'ready']);
+        expect(health).toEqual(['degraded']);
         expect(f.host.getSemanticSnapshotReport()).toMatchObject({ revision: 1, unchanged: 1 });
     });
 
     it('publishes the last View closing as a legal empty state', () => {
-        const f = fixture(), update = vi.fn();f.host.onUpdateRequest = update;
+        const f = fixture(), update = vi.fn();f.host.onUpdate = update;
         f.publish(1);
-        f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(2), views: [] }, suppressSignal: false });
-        expect(update).toHaveBeenCalledTimes(2);
+        f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(2), views: [] } });
+        expect(update).not.toHaveBeenCalled();
         expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastViewCount: 0, lastToolCount: 0 });
     });
 
     it('records unexpected receiver failure instead of silently keeping a usable source', () => {
-        const f = fixture(), update = vi.fn();f.host.onUpdateRequest = update;
+        const f = fixture(), update = vi.fn();f.host.onUpdate = update;
         vi.spyOn((f.host as any).snapshotReceiver, 'acceptPrepared').mockImplementation(() => { throw new Error('receiver'); });
         const log = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
             f.publish(1);
             expect(f.host.getStatus()).toBe('error');
             expect(f.host.getSemanticSnapshotReport()?.health).toBe('stopped');
-            expect(update).toHaveBeenCalledOnce();
+            expect(update).not.toHaveBeenCalled();
         } finally { log.mockRestore(); }
     });
 });

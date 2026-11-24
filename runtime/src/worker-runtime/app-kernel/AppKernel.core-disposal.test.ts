@@ -1,4 +1,4 @@
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { detailFrame, publishedTool } from '../../../tests/fixtures/app-frame.js';
 import { expect, it, vi } from 'vitest';
 import { AppKernel } from './AppKernel.js';
@@ -12,7 +12,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         if (mode === 'async-reject') return Promise.reject(Error('renderer async'));
         if (mode === 'async-held') return unmountGate.promise;
     });
-    const kernel = new AppKernel({ appName: 'test_app', appId: 'a', desktopId: 'd', instanceId: 'run', projectionLimits: DEFAULT_PROJECTION_LIMITS, factory: { async initialize(context: any) {
+    const kernel = new AppKernel({ appId: 'a', desktopId: 'd', instanceId: 'run', projectionLimits: DEFAULT_PROJECTION_LIMITS, factory: { async initialize(context: any) {
         runtime = context;
         const execute = async () => {
             calls++; handlerStarted.resolve(); await handlerGate.promise; return { success: true, data: 19 };
@@ -20,7 +20,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         context.defineViewTypes([{ name: "Detail", multiplicity: 'multiple', tools: [{ name: 'held', description: 'Held', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }] }]);
         context.publishFrame(() => ({ views: [detailFrame({
             bindings: [{ name: 'held', enabled: true, execute }],
-            refs: [{ scope: 'protected', id: 'r', refType: 'Value', value: { value: 19 } }],
+            refs: [{ valueSchema: { type: 'object' }, scope: 'protected', id: 'r', refType: 'Value', value: { value: 19 } }],
         })] }));
         return { close: unmount };
     } } } as any);

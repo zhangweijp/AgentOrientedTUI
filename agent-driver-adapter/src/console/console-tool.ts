@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { jsonSchema, type Tool, type ToolResult } from '@aotui/agent-driver-v2';
-import type { ConsoleInputPath, RequestSources, InvocationReceipt } from '@aotui/runtime';
+import type { ActiveTurn, InvocationReceipt } from '@aotui/runtime';
+import type { PresentedRef } from '@aotui/runtime/adapters';
 import type { PendingAppReceipt } from '../semantic-aotui-driven-source.js';
 import { consoleDeclarations, RUN_CODE, type ConsoleToolDeclaration } from './declarations.js';
 import type { ConsoleExecutor } from './node-process.js';
@@ -29,14 +30,14 @@ function argsSchema(scoped: boolean, strict: boolean) {
     };
 }
 
-export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], paths: readonly ConsoleInputPath[], executor: ConsoleExecutor,
+export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], refs: readonly PresentedRef[], executor: ConsoleExecutor,
     strict = false): {
     schema: ReturnType<typeof argsSchema>;
     tool: Tool;
-    execute(args: unknown, id: string, sources: RequestSources, signal: AbortSignal, dispatch: Dispatch,
+    execute(args: unknown, id: string, turn: Pick<ActiveTurn, 'readConsoleInputs'>, signal: AbortSignal, dispatch: Dispatch,
         remember: (locator: PendingAppReceipt, result: ToolResult) => void): Promise<ToolResult>;
 } {
-    const sdk = consoleDeclarations(tools, paths);
+    const sdk = consoleDeclarations(tools, refs);
     const bindings = new Set(sdk.names);
     const scoped = executor.mode === 'scoped';
     const status = [
@@ -44,7 +45,7 @@ export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], path
             : 'Run a fresh isolated TypeScript async function body. await and return are supported; variables end with this call.',
         ...(scoped ? ['The declaration below describes this request’s refs and tools. Use JavaScript for code. Get tools again each run; saved tool handles expire. Set reset: true to start empty. A lost scope requires recreating local values.'] : []),
         'Use inspect(value) or console.log(value) for bounded output. Use only the declared App tools through tools[name](args).',
-        'refs contains the public paths granted in this request. Provide imports to use a subset. Pass literal values to ordinary parameters and addresses to parameters that require a published Ref.',
+        'refs contains public values from this request. Use imports to select a subset. Pass compatible $ref. addresses to ordinary or published-Ref parameters, and use $$ref. for literal text starting with $ref.',
         'Only the tools already published in this request are callable. Check child receipts before retrying.',
         'A tool failure rejects with ToolCallError. Catch it to read toolName, code and message and continue.',
         ...sdk.issues.map(issue => 'Program binding omitted for ' + JSON.stringify(issue.tool) + ' at ' + issue.path + '. The native Tool remains available.'),
@@ -52,16 +53,16 @@ export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], path
     ].join('\n');
     const calls = new Map<string, { readonly fingerprint: string; readonly result: Promise<ToolResult> }>();
 
-    async function run(code: string, imports: readonly string[] | undefined, reset: boolean, callId: string, sources: RequestSources,
+    async function run(code: string, imports: readonly string[] | undefined, reset: boolean, callId: string, turn: Pick<ActiveTurn, 'readConsoleInputs'>,
         signal: AbortSignal, dispatch: Dispatch, remember: (locator: PendingAppReceipt, result: ToolResult) => void): Promise<ToolResult> {
-        const inputs = sources.readConsoleInputs(imports);
+        const inputs = await turn.readConsoleInputs(imports);
         if (inputs.status === 'rejected') return reject(callId, inputs.issue.code, inputs.issue.message);
         const receipts: Array<{ invocationId: string; toolName: string; status: string; phase: string; code?: string }> = [];
         const pending: PendingAppReceipt[] = [];
         const result = await executor({
             code, ...(reset ? { reset: true } : {}), names: sdk.names, inputs, signal,
-            recheck() {
-                const current = sources.readConsoleInputs(imports);
+            async recheck() {
+                const current = await turn.readConsoleInputs(imports);
                 if (current.status === 'rejected') return current.issue;
             },
             async invoke(name, args, slot, cancellation) {
@@ -89,7 +90,7 @@ export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], path
     const schema = argsSchema(scoped, strict);
     return {
         schema, tool: { description: status, inputSchema: jsonSchema(schema) },
-        execute(args: unknown, id: string, sources: RequestSources, signal: AbortSignal, dispatch: Dispatch,
+        execute(args: unknown, id: string, turn: Pick<ActiveTurn, 'readConsoleInputs'>, signal: AbortSignal, dispatch: Dispatch,
             remember: (locator: PendingAppReceipt, result: ToolResult) => void): Promise<ToolResult> {
             const input = record(args) ? args : {};
             const { code, imports: suppliedImports, reset } = input;
@@ -112,7 +113,7 @@ export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], path
                 Promise.resolve(reject(id, 'INVOCATION_ID_CONFLICT', 'This call ID already ran a different Console program.'));
             if (calls.size >= 16) return Promise.resolve(reject(id, 'CONSOLE_CALL_CAPACITY', 'Prepare a new observation before running more programs.'));
             const selected = imports === undefined ? undefined : [...imports as string[]];
-            const result = run(code, selected, reset === true, id, sources, signal, dispatch, remember)
+            const result = run(code, selected, reset === true, id, turn, signal, dispatch, remember)
                 .catch(() => reject(id, 'CONSOLE_UNAVAILABLE', 'The program environment could not be prepared.'));
             calls.set(id, { fingerprint, result });
             return result;

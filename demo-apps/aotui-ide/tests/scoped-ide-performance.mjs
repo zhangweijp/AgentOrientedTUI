@@ -46,9 +46,9 @@ async function samples(round, name, action) {
 async function observe(x) {
     const snapshotViews = snapshot(x).views;
     const client = scope(x);
-    const result = await client.observe({ all: true });
-    assert.equal(result.status, 'observed', JSON.stringify(result));
-    const observation = result.observation;
+    const result = await client.prepare();
+    assert.equal(result.status, 'prepared', JSON.stringify(result));
+    const observation = result.candidate.observation;
     try {
         assert.deepEqual(observation.views.map(view => view.id), snapshotViews.map(view => view.id));
         for (const [index, view] of observation.views.entries()) {
@@ -60,7 +60,7 @@ async function observe(x) {
             pages: [{ views: observation.views.length, tools: observation.tools.length, contentBytes,
                 bytes: Buffer.byteLength(JSON.stringify(observation)) }],
         };
-    } finally { client.releaseObservation(observation.observationId); }
+    } finally { result.candidate.discard(); }
 }
 function composition(x) { const s = snapshot(x); return { views: s.views.filter(view => view.type !== 'Root').length, instructionViews: s.views.filter(view => view.type === 'Root').length, tools: Object.keys(s.tools).length, refs: Object.keys(s.refs).length,
     contentBytes: s.views.reduce((sum, view) => sum + Buffer.byteLength(view.content.value), 0), refBytes: Buffer.byteLength(JSON.stringify(s.refs)) }; }
@@ -105,7 +105,7 @@ try {
                 stage('longRun-' + i);
                 await invoke(app, 'multi_open_file', { filePaths: [files[i]] });
                 await invoke(app, 'lsp_hover', { file_path: files[i], line: 1, character: 15 }, { view: fileView(app, files[i]).id });
-                await invoke(app, 'close_file_detail', { view_id: fileView(app, files[i]).id }, { view: fileView(app, files[i]).id });
+                await invoke(app, 'close_file_detail', {}, { view: fileView(app, files[i]).id });
                 assert.equal(snapshot(app).views.filter(view => view.type === 'FileDetail').length, 0); loopRSS.push((await memory()).rss);
             }
             round.longRun = { iterations: 60, first20Median: distribution(loopRSS.slice(0, 20)).p50, last20Median: distribution(loopRSS.slice(-20)).p50, rss: loopRSS };

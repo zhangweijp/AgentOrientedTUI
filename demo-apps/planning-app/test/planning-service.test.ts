@@ -7,8 +7,9 @@ const OTHER_DESKTOP = 'planning_test_desktop_2';
 describe('planning service with sqlite', () => {
     beforeAll(async () => {
         await planningService.init();
-        await planningService.clearDesktop(TEST_DESKTOP);
-        await planningService.clearDesktop(OTHER_DESKTOP);
+        for (const desktop of [TEST_DESKTOP, OTHER_DESKTOP]) {
+            for (const plan of await planningService.getPlans(desktop)) await planningService.deletePlan(desktop, plan.id);
+        }
     });
 
     afterAll(() => {
@@ -86,13 +87,27 @@ describe('planning service with sqlite', () => {
         const task = phase.tasks[0];
         const taskCompleted = await planningService.completeTask(TEST_DESKTOP, task.id);
         expect(taskCompleted).toBe(true);
-        const phaseCompleted = await planningService.completePhase(TEST_DESKTOP, phase.id);
-        expect(phaseCompleted).toBe(true);
+        const phaseCompleted = await planningService.completePhase(TEST_DESKTOP, plan.id, phase.id);
+        expect(phaseCompleted).toEqual({ title: phase.title, phaseChanged: true, tasksCompleted: 0 });
 
         const updated = await planningService.getPlans(TEST_DESKTOP);
         const updatedPhase = updated[0].phases[0];
         expect(updatedPhase.status).toBe('completed');
         expect(updatedPhase.tasks.every(item => item.status === 'completed')).toBe(true);
+    });
+
+    it('refuses to complete a phase that is missing or outside the selected plan and desktop', async () => {
+        const plan = await planningService.createPlan(TEST_DESKTOP, 'Completion ownership', '', [
+            { title: 'Owned phase', tasks: [{ title: 'Owned task' }] },
+        ]);
+        const phase = plan.phases[0]!;
+        const other = await planningService.createPlan(TEST_DESKTOP, 'Another plan');
+        expect(await planningService.completePhase(TEST_DESKTOP, other.id, phase.id)).toBeNull();
+        expect(await planningService.completePhase(OTHER_DESKTOP, plan.id, phase.id)).toBeNull();
+        const stored = (await planningService.getPlans(TEST_DESKTOP)).find(item => item.id === plan.id);
+        expect(stored?.phases[0]).toMatchObject({ status: 'pending', tasks: [{ status: 'pending' }] });
+        expect(await planningService.deletePhase(TEST_DESKTOP, phase.id)).toBe(true);
+        expect(await planningService.completePhase(TEST_DESKTOP, plan.id, phase.id)).toBeNull();
     });
 
     it('deletes plan with phases and tasks', async () => {

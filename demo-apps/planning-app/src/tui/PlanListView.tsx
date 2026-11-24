@@ -1,5 +1,9 @@
+import Type from 'typebox';
 import { useArrayRef, useDataRef } from '@aotui/sdk';
 import type { Plan } from '../types.js';
+import { PlanSchema } from './ref-schemas.js';
+
+const PlanList = Type.Array(PlanSchema);
 
 type PlanListViewProps = {
     plans: Plan[];
@@ -9,13 +13,13 @@ type PlanListViewProps = {
 const isPlanCompleted = (plan: Plan) => plan.phases.length > 0 && plan.phases.every(phase => phase.status === 'completed');
 
 function ActivePlan({ plan }: { plan: Plan }) {
-    const planRef = useDataRef('active_plan', plan, { scope: 'private', refType: 'Plan' });
+    const planRef = useDataRef('active_plan', plan, { scope: 'private', refType: 'Plan', schema: PlanSchema });
     return <><h2>Active Plan</h2><p>{planRef(plan.title)}</p></>;
 }
 
 export function PlanListView({ plans, activePlan }: PlanListViewProps) {
     const unfinishedPlans = plans.filter(plan => !isPlanCompleted(plan));
-    const [, unfinishedPlanRef] = useArrayRef('unfinished_plans', unfinishedPlans, { scope: 'private', itemType: 'Plan' });
+    const [, unfinishedPlanRef] = useArrayRef('unfinished_plans', unfinishedPlans, { scope: 'private', itemType: 'Plan', schema: PlanList });
 
     return (
         <>

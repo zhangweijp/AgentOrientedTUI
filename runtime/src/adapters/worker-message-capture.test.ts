@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { captureInvocationJson, captureToolInvocationTerminal, exact, invocationObject, text } from './worker-message-capture.js';
+import { captureAppLifecycleAck } from './app-lifecycle-protocol.js';
+import { captureToolInvocationTerminal, exact, invocationObject, text } from './worker-message-capture.js';
 
 describe('bounded Worker message capture', () => {
-    it('captures detached frozen JSON without invoking accessors and enforces the canonical byte ceiling', () => {
+    it('captures a detached frozen lifecycle acknowledgement within its own bounds', () => {
+        const ack = { protocol: 'app-lifecycle-v2', instanceId: 'i' };
         let reads = 0;
-        const unsafe = Object.defineProperty({}, 'value', { enumerable: true, get() { reads++; return 'x'; } });
-        expect(() => captureInvocationJson(unsafe)).toThrow();
+        const unsafe = { ...ack, get instanceId() { reads++; return ack.instanceId; } };
+        expect(captureAppLifecycleAck(unsafe, ack.instanceId)).toBeNull();
         expect(reads).toBe(0);
 
-        const captured = captureInvocationJson({ value: 'ok' });
-        expect(captured).toEqual({ value: 'ok' });
-        expect(captured).not.toBe(unsafe);
+        const captured = captureAppLifecycleAck(ack, ack.instanceId);
+        expect(captured).toEqual(ack);
+        expect(captured).not.toBe(ack);
         expect(Object.isFrozen(captured)).toBe(true);
-        expect(() => captureInvocationJson({ value: 'x'.repeat(512 * 1024) })).toThrow();
+        const instanceId = '\n'.repeat(1024);
+        expect(captureAppLifecycleAck({ ...ack, instanceId }, instanceId)).toBeNull();
     });
 
     it('accepts only an exact, identity-correlated bounded invocation terminal', () => {

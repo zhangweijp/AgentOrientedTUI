@@ -6,11 +6,11 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { createRuntime, type AppInteractionPolicy, type AppInvocation, type IDesktop, type InvocationContext,
-    type Observation, type RequestSourceSelection } from '@aotui/runtime';
+    type Observation, type ObservationCandidate, type TurnSelection } from '@aotui/runtime';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2, type MessageWithTimestamp } from '@aotui/agent-driver-v2';
 import { fixtureAppPath, appClient, CHANGED, MAIL_TOOL, ORIGINAL, TO_CONTACTS, fixtureProvider, installFixture, journal, modelCall,
-    observe, setContacts, watchUntil } from '../fixtures/batch-two-support.mjs';
+    setContacts, watchUntil } from '../fixtures/batch-two-support.mjs';
 
 const run = promisify(execFile);
 let scratch: string, evidence: string, consumer: string;
@@ -25,6 +25,16 @@ const settle = async (driver: AgentDriverV2) => {
     await driver.trigger();
     await (driver as unknown as { runInFlight?: Promise<void> }).runInFlight;
 };
+async function candidate(running: import('@aotui/runtime').RunningApp) {
+    const result = await running.observe();
+    if (result.status === 'rejected') throw new Error(result.issue.message);
+    return result.candidate;
+}
+function adopted(desktop: IDesktop, selection: TurnSelection) {
+    const result = desktop.adoptTurn(selection);
+    if (result.status === 'rejected') throw new Error(JSON.stringify(result.issue));
+    return result.turn;
+}
 
 beforeAll(async () => {
     scratch = await mkdtemp(join(tmpdir(), 'aotui-batch-two-test-'));
@@ -45,7 +55,6 @@ it('sends the same two-Worker observation through the product Provider and never
     const folder = join(scratch, 'product');
     await setContacts(folder, ORIGINAL);
     const runtime = createRuntime({ worker: { timeoutMs: 1000 } });
-    const desktop = runtime.getDesktop(await runtime.createDesktop());
     const provider = await fixtureProvider();
     const history: MessageWithTimestamp[] = [];
     const auth: ReturnType<typeof recorded>[] = [];
@@ -53,20 +62,10 @@ it('sends the same two-Worker observation through the product Provider and never
     const facts: Record<string, unknown> = { authorize: auth, errors, requests: provider.requests };
     const policy: AppInteractionPolicy = { project: grant, authorize: context => { auth.push(recorded(context)); return true; },
         canReadReceipt: () => true };
-    let captureMailCandidate = false;
-    let candidate: string | undefined;
-    const sourceKernel = { getAppInteraction: (...args: Parameters<typeof runtime.getAppInteraction>) => {
-        const result = runtime.getAppInteraction(...args);
-        if (!captureMailCandidate || args[1] !== 'mail' || result.status !== 'ready') return result;
-        return { ...result, interaction: { ...result.interaction, async observe(selection: { all: true }) {
-            const observed = await result.interaction.observe(selection);
-            if (observed.status === 'observed') candidate = observed.observation.observationId;
-            return observed;
-        } } };
-    } } as typeof runtime;
-    const source = new SemanticAOTUIDrivenSource(desktop, sourceKernel, { policy: () => policy });
-    const bind = desktop.bindRequestSources.bind(desktop);
-    const bindingCalls = vi.spyOn(desktop, 'bindRequestSources');
+    const desktop = await runtime.createDesktop({ policyForApp: () => policy });
+    const source = new SemanticAOTUIDrivenSource(desktop);
+    const adopt = desktop.adoptTurn.bind(desktop);
+    const adoption = vi.spyOn(desktop, 'adoptTurn');
     let beforeAdoption: (() => Promise<unknown>) | undefined;
     const driver = new AgentDriverV2({
         llm: { model: 'batch-two-local', provider: { id: 'fixture', baseURL: provider.url }, apiKey: 'test-only' },
@@ -93,8 +92,8 @@ it('sends the same two-Worker observation through the product Provider and never
         return request!.body;
     };
     try {
-        const contacts = await installFixture(runtime, desktop, 'contacts', 'contacts_install', moduleURL('contacts'), folder);
-        const mail = await installFixture(runtime, desktop, 'mail', 'mail_install', moduleURL('mail'), folder);
+        const contacts = await installFixture(desktop, 'contacts', 'contacts_install', moduleURL('contacts'), folder);
+        const mail = await installFixture(desktop, 'mail', 'mail_install', moduleURL('mail'), folder);
         const take = (label: string) => modelCall(label, MAIL_TOOL, TO_CONTACTS);
         const snapshotOf = async (text: string) => watchUntil(async () => {
             const preview = await contacts.client.preview();
@@ -116,9 +115,9 @@ it('sends the same two-Worker observation through the product Provider and never
         expect(mailSchema(productWire)).toMatchObject({ properties: { to: expect.any(Object) }, required: ['to'] });
         expect(mailSchema(productWire)).not.toHaveProperty('properties.view_id');
         expect(productWire.messages.some((message: { content: unknown }) => typeof message.content === 'string' &&
-            message.content.includes('Public Refs can also be passed to tools in other Apps presented in the current request'))).toBe(true);
+            message.content.includes('public $ref.contacts.list.emails'))).toBe(true);
         expect(auth[0]).toMatchObject({ rawInput: TO_CONTACTS, effectiveInput: { to: ORIGINAL },
-            refSources: [{ appId: 'contacts', scope: 'public', consumerInstanceId: mail.app.appInstanceId }] });
+            source: { instanceId: mail.app.appInstanceId }, refSources: [{ appId: 'contacts', scope: 'public', param: 'to' }] });
         expect(auth[0]!.refSources[0]!.snapshotId).not.toBe(auth[0]!.source.snapshotId);
         expect(await journal(folder, 'draft-writes')).toMatchObject([{ to: ORIGINAL }]);
         facts.originalReceipt = await mail.client.readReceipt({ observationId: auth[0]!.observationId, invocationId: 'cross-original' });
@@ -147,46 +146,45 @@ it('sends the same two-Worker observation through the product Provider and never
         expect(facts.draft).toEqual(independent.draft);
 
         const failureEvidence = [];
-        for (const stage of ['binding', 'adoption', 'window-change']) {
+        for (const stage of ['duplicate-selection', 'discarded-candidate', 'window-change']) {
             const previous = await source.getContext();
             await previous.adopt!();
-            const previouslyBound = bindingCalls.mock.calls.at(-1)![0];
-            expect(previouslyBound.apps).toHaveLength(2);
-            let failedSelection: RequestSourceSelection | undefined;
-            if (stage === 'binding') bindingCalls.mockImplementationOnce(selection => {
-                failedSelection = selection;
-                return bind({ apps: [...selection.apps, selection.apps[0]!] });
+            const prior = adoption.mock.results.at(-1)!.value;
+            const priorApps = adoption.mock.calls.at(-1)![0].apps;
+            expect(priorApps).toHaveLength(2);
+            if (stage === 'duplicate-selection') adoption.mockImplementationOnce(selection => {
+                const priorContacts = priorApps.find(item => item.candidate.observation.source.appId === 'contacts')!;
+                const newContacts = selection.apps.find(item => item.candidate.observation.source.appId === 'contacts')!;
+                expect(priorContacts.candidate).not.toBe(newContacts.candidate);
+                return adopt({ apps: [...selection.apps, priorContacts] });
             });
-            else if (stage === 'adoption') {
-                captureMailCandidate = true;
-                beforeAdoption = async () => {
-                    expect(candidate).toBeDefined();
-                    mail.client.releaseObservation(candidate!);
-                };
-            } else beforeAdoption = () => desktop.closeApp(mail.app.appId, mail.app.appInstanceId);
+            else if (stage === 'discarded-candidate') adoption.mockImplementationOnce(selection => {
+                selection.apps.find(item => item.candidate.observation.source.appId === 'mail')!.candidate.discard();
+                return adopt(selection);
+            });
+            else beforeAdoption = () => mail.running.beginClose().completion;
             const sends = provider.requests.length;
             history.push({ role: 'user', content: stage + '-failure', timestamp: Date.now() });
             await settle(driver);
             beforeAdoption = undefined;
-            captureMailCandidate = false;
             const lastError = errors.at(-1);
             const chain = [lastError?.code, lastError?.cause?.code, lastError?.cause?.cause?.code];
-            expect(chain).toContain(stage === 'binding' ? 'SEMANTIC_BINDING_FAILED'
-                : stage === 'adoption' ? 'SEMANTIC_ADOPTION_PARTIAL' : 'SEMANTIC_WINDOW_CHANGED');
+            expect(chain).toContain(stage === 'window-change' ? 'SEMANTIC_WINDOW_CHANGED' : 'SEMANTIC_ADOPTION_FAILED');
+            if (stage !== 'window-change')
+                expect(chain).toContain(stage === 'discarded-candidate' ? 'OBSERVATION_UNAVAILABLE' : 'TURN_SELECTION_INVALID');
             expect(provider.requests).toHaveLength(sends);
             expect(await journal(folder, 'draft-handler')).toHaveLength(2);
             expect(await journal(folder, 'draft-writes')).toHaveLength(2);
-            const onlyContacts = (selection: RequestSourceSelection) => ({ apps: selection.apps.filter(entry => entry.client === contacts.client) });
-            expect(onlyContacts(previouslyBound).apps).toHaveLength(1);
+            expect(prior.turn.isCurrent).toBe(true);
+            expect(await prior.turn.inspectRef(TO_CONTACTS.to, 'value')).toMatchObject({ status: 'ready', value: CHANGED });
             if (stage === 'window-change') {
-                expect(() => bind(onlyContacts(previouslyBound))).not.toThrow();
-                await previous.release?.();
-            } else {
-                expect(() => bind(onlyContacts(previouslyBound))).toThrow(expect.objectContaining({ code: 'REQUEST_SOURCES_INVALID' }));
-                expect((await previous.executeTool!(MAIL_TOOL, TO_CONTACTS, 'old-' + stage))?.error?.code).toBe('SEMANTIC_CONTEXT_RELEASED');
+                const target = adoption.mock.calls.at(-1)![0].apps.find(item => item.candidate.observation.source.appId === 'mail')!;
+                expect(await prior.turn.invoke('mail', {
+                    observationId: target.candidate.observation.observationId, toolId: target.candidate.observation.tools[0]!.id,
+                    invocationId: 'closed-from-old-turn', input: TO_CONTACTS,
+                })).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
             }
-            if (failedSelection)
-                expect(() => bind(onlyContacts(failedSelection!))).toThrow(expect.objectContaining({ code: 'REQUEST_SOURCES_INVALID' }));
+            await previous.release?.();
             failureEvidence.push({ stage, errorCodes: chain, newRequests: provider.requests.length - sends, newWrites: 0 });
         }
         facts.requestFailures = failureEvidence;
@@ -194,7 +192,7 @@ it('sends the same two-Worker observation through the product Provider and never
         await rm(join(folder, 'park-draft'), { force: true });
         driver.dispose();
         source.dispose();
-        facts.shutdown = await runtime.beginShutdown().completion;
+        facts.shutdown = await runtime.beginClose().completion;
         await provider.close();
         facts.workers = { contacts: await journal(folder, 'contacts-lifecycle'), mail: await journal(folder, 'mail-lifecycle') };
         facts.handler = await journal(folder, 'draft-handler');
@@ -212,8 +210,9 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
     await Promise.all([setContacts(folder, ORIGINAL), setContacts(peerFolder, peerEmails), setContacts(foreignFolder, ['foreign@example.test'])]);
     const runtime = createRuntime();
     const byId = async (desktop: IDesktop, ...ids: string[]) => Promise.all(ids.map(async id => {
-        const access = appClient(runtime, desktop, id, id === 'mail' ? policy : undefined);
-        return { ...access, observation: await observe(access.client, true) as Observation };
+        const access = appClient(desktop, id);
+        const prepared = await candidate(access.running);
+        return { ...access, candidate: prepared, observation: prepared.observation };
     }));
     const auth: ReturnType<typeof recorded>[] = [];
     const outcomes: Record<string, unknown> = {};
@@ -227,13 +226,14 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
             held.entered.resolve(context);
             return held.decision.promise;
         } };
-    const selection = (...apps: { client: import('@aotui/runtime').AppInteraction; observation: Observation }[]) =>
-        ({ apps: apps.map(({ client, observation }) => ({ client, observationId: observation.observationId })) });
+    const selection = (...apps: { candidate: ObservationCandidate }[]): TurnSelection =>
+        ({ apps: apps.map(({ candidate }) => ({ candidate })) });
     const request = (observation: Observation, invocationId: string, to: string | string[] = TO_CONTACTS.to): AppInvocation =>
         ({ invocationId, observationId: observation.observationId, toolId: observation.tools[0]!.id, input: { to } });
-    const invalidBind = (desktop: IDesktop, label: string, selection: RequestSourceSelection) => {
-        try { desktop.bindRequestSources(selection); throw new Error('The invalid request was bound.'); }
-        catch (error) { expect(error).toMatchObject({ code: 'REQUEST_SOURCES_INVALID' }); outcomes[label] = { stage: 'binding', code: 'REQUEST_SOURCES_INVALID' }; }
+    const invalidAdoption = (desktop: IDesktop, label: string, selection: TurnSelection, code = 'TURN_SELECTION_INVALID') => {
+        const result = desktop.adoptTurn(selection);
+        expect(result).toMatchObject({ status: 'rejected', issue: { code } });
+        outcomes[label] = result;
     };
     const rejected = (label: string, result: any, code: string, stage = 'not-dispatched') => {
         outcomes[label] = result;
@@ -243,59 +243,58 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
     };
     let shutdown: unknown;
     try {
-        const desktop = runtime.getDesktop(await runtime.createDesktop('qualification'));
-        const foreign = runtime.getDesktop(await runtime.createDesktop('foreign'));
+        const desktop = await runtime.createDesktop('qualification');
+        const foreign = await runtime.createDesktop('foreign');
         for (const [installationId, sourceFolder] of [['contacts_a', peerFolder], ['contacts_b', folder]]) {
             await desktop.registerPendingApp({ installationId: installationId!, localPath: await fixtureAppPath(moduleURL('contacts'), 'contacts', sourceFolder), config: { folder: sourceFolder } });
         }
-        const launches = [await desktop.openApp('contacts_b'), await desktop.openApp('contacts_a')];
+        const launches = [(await desktop.openApp('contacts_b')).appId, (await desktop.openApp('contacts_a')).appId];
         expect(launches).toEqual(['contacts', 'contacts_1']);
-        const other = await installFixture(runtime, foreign, 'contacts', 'foreign_contacts', moduleURL('contacts'), foreignFolder);
-        const otherObservation = await observe(other.client, true) as Observation;
-        const mail = await installFixture(runtime, desktop, 'mail', 'mail_install', moduleURL('mail'), folder, policy);
-        const unadopted = await observe(mail.client) as Observation;
-        invalidBind(desktop, 'unadopted', selection({ ...mail, observation: unadopted }));
-        mail.client.releaseObservation(unadopted.observationId);
-        invalidBind(desktop, 'released', selection({ ...mail, observation: unadopted }));
+        const other = await installFixture(foreign, 'contacts', 'foreign_contacts', moduleURL('contacts'), foreignFolder);
+        const otherCandidate = await candidate(other.running);
+        const mail = await installFixture(desktop, 'mail', 'mail_install', moduleURL('mail'), folder, policy);
+        const unadopted = await candidate(mail.running);
+        const empty = adopted(desktop, { apps: [] });
+        rejected('unadopted', await empty.invoke('mail', request(unadopted.observation, 'unadopted')), 'OBSERVATION_UNAVAILABLE', 'refused');
+        unadopted.discard();
+        invalidAdoption(desktop, 'released', selection({ candidate: unadopted }), 'OBSERVATION_UNAVAILABLE');
         let [contacts, peer, draft] = await byId(desktop, ...launches, 'mail');
-        const first = desktop.bindRequestSources(selection(contacts!, peer!, draft!));
+        const first = adopted(desktop, selection(contacts!, peer!, draft!));
         expect(Object.isFrozen(first)).toBe(true);
         const preview = await contacts!.client.preview();
         if (preview.status !== 'previewed') throw new Error('Expected a read-only preview');
-        invalidBind(desktop, 'preview', { apps: [{ client: contacts!.client, observationId: preview.source.snapshotId }] });
-        invalidBind(desktop, 'other desktop', selection(draft!, { ...other, observation: otherObservation }));
-        invalidBind(foreign, 'target from other desktop', selection(draft!));
-        invalidBind(desktop, 'duplicated', selection(draft!, contacts!, contacts!));
-        invalidBind(desktop, 'wrong observation for client', selection({ ...peer!, observation: contacts!.observation }));
-        invalidBind(desktop, 'copied client', selection({ ...contacts!, client: { ...contacts!.client } }));
-        rejected('copied binding', await draft!.client.invoke(request(draft!.observation, 'fake'), undefined, { ...first }), 'REQUEST_SOURCES_INVALID', 'refused');
-        rejected('target absent', await draft!.client.invoke(request(draft!.observation, 'no-target'), undefined,
-            desktop.bindRequestSources(selection(contacts!))), 'REQUEST_SOURCES_INVALID', 'refused');
-        rejected('private', await draft!.client.invoke(request(draft!.observation, 'private', '$contacts.list.personal'), undefined, first), 'TOOL_PERMISSION_DENIED');
-        rejected('protected', await draft!.client.invoke(request(draft!.observation, 'protected', '$contacts.list.team'), undefined, first), 'TOOL_PERMISSION_DENIED');
-        rejected('no cohort', await draft!.client.invoke(request(draft!.observation, 'no-cohort')), 'REF_NOT_VISIBLE');
-        rejected('one of two unavailable', await draft!.client.invoke(request(draft!.observation, 'mixed-denied',
-            ['$contacts.list.emails[0]', '$contacts_1.list.team[0]']), undefined, first), 'TOOL_PERMISSION_DENIED');
+        invalidAdoption(desktop, 'preview', selection({ candidate: preview as unknown as ObservationCandidate }));
+        invalidAdoption(desktop, 'other desktop', selection(draft!, { candidate: otherCandidate }));
+        invalidAdoption(foreign, 'target from other desktop', selection(draft!));
+        invalidAdoption(desktop, 'duplicated', selection(draft!, contacts!, contacts!));
+        invalidAdoption(desktop, 'copied candidate', selection({ candidate: { ...contacts!.candidate } }));
+        rejected('wrong app for observation', await first.invoke('mail', {
+            ...request(draft!.observation, 'wrong-observation'), observationId: contacts!.observation.observationId,
+        }), 'TURN_SELECTION_INVALID', 'refused');
+        rejected('private', await first.invoke('mail', request(draft!.observation, 'private', '$ref.contacts.list.personal')), 'TOOL_PERMISSION_DENIED');
+        rejected('protected', await first.invoke('mail', request(draft!.observation, 'protected', '$ref.contacts.list.team')), 'TOOL_PERMISSION_DENIED');
+        rejected('one of two unavailable', await first.invoke('mail', request(draft!.observation, 'mixed-denied',
+            ['$ref.contacts.list.emails[0]', '$ref.contacts_1.list.team[0]'])), 'TOOL_PERMISSION_DENIED');
+        const targetOnly = adopted(desktop, selection(draft!));
+        rejected('no source', await targetOnly.invoke('mail', request(draft!.observation, 'no-source')), 'REF_NOT_VISIBLE');
+        [contacts, peer] = await byId(desktop, ...launches);
+        const sourceOnly = adopted(desktop, selection(contacts!, peer!));
+        rejected('target absent', await sourceOnly.invoke('mail', request(draft!.observation, 'no-target')), 'OBSERVATION_UNAVAILABLE', 'refused');
+        rejected('old turn', await first.invoke('mail', request(draft!.observation, 'superseded')), 'TURN_NOT_ACTIVE', 'refused');
         expect(auth).toHaveLength(0);
         expect(await journal(folder, 'draft-handler')).toEqual([]);
         expect(await journal(folder, 'draft-writes')).toEqual([]);
 
-        const secondContacts = await observe(contacts!.client, true) as Observation;
-        rejected('source superseded', await draft!.client.invoke(request(draft!.observation, 'superseded'), undefined, first), 'OBSERVATION_UNAVAILABLE');
-        invalidBind(desktop, 'superseded at binding', selection(contacts!, draft!));
-        contacts = { ...contacts!, observation: secondContacts };
-        const newerDraft = await observe(draft!.client, true) as Observation;
-        rejected('target binding generation mismatch', await draft!.client.invoke(request(newerDraft, 'different-target-candidate'), undefined, first),
-            'REQUEST_SOURCES_INVALID', 'refused');
-        draft = { ...draft!, observation: newerDraft };
+        invalidAdoption(desktop, 'omitted candidate retired', selection(contacts!, draft!), 'OBSERVATION_UNAVAILABLE');
+        [draft] = await byId(desktop, 'mail');
 
         const inAuthorization = (id: string) => {
             const held = gate();
             gates.set(id, held);
-            const binding = desktop.bindRequestSources(selection(contacts!, draft!));
+            const turn = adopted(desktop, selection(contacts!, draft!));
             const original = request(draft!.observation, id);
-            const result = draft!.client.invoke(original, 5000, binding);
-            return { ...held, binding, original, result };
+            const result = turn.invoke('mail', original, 5000);
+            return { ...held, turn, original, result };
         };
         const waitContactBody = (matches: (body: string) => boolean) => watchUntil(async () => {
             const current = await contacts!.client.preview();
@@ -317,12 +316,12 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
             await waitContactBody(body => body.includes('(public emails:'));
         }
 
-        await desktop.closeApp(peer!.app.appId, peer!.app.appInstanceId);
+        await peer!.running.beginClose().completion;
         const staleSource = inAuthorization('source-reopened');
         await staleSource.entered.promise;
         const originalSource = contacts!;
-        await desktop.closeApp(originalSource.app.appId, originalSource.app.appInstanceId);
-        const reopenedSource = await desktop.openApp('contacts_b');
+        await originalSource.running.beginClose().completion;
+        const reopenedSource = (await desktop.openApp('contacts_b')).appId;
         expect(reopenedSource).toBe('contacts');
         [contacts] = await byId(desktop, reopenedSource);
         expect(contacts!.app.appInstanceId).not.toBe(originalSource.app.appInstanceId);
@@ -332,26 +331,26 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
         const staleTarget = inAuthorization('target-reopened');
         const targetContext = await staleTarget.entered.promise;
         const oldDraft = draft!;
-        const stopping = desktop.closeApp(oldDraft.app.appId, oldDraft.app.appInstanceId);
+        const stopping = oldDraft.running.beginClose().completion;
         await watchUntil(() => targetContext.signal.aborted);
         staleTarget.decision.resolve(true);
         await stopping;
-        expect(await desktop.openApp('mail_install')).toBe('mail');
+        expect((await desktop.openApp('mail_install', { policy })).appId).toBe('mail');
         [draft] = await byId(desktop, 'mail');
         expect(draft!.app.appInstanceId).not.toBe(oldDraft.app.appInstanceId);
         rejected('target closed in authorization', await staleTarget.result, 'APP_INTERACTION_UNAVAILABLE', 'unavailable');
-        rejected('old token on reopened target', await draft!.client.invoke(staleTarget.original, undefined, staleTarget.binding), 'REQUEST_SOURCES_INVALID', 'refused');
+        rejected('old turn on reopened target', await staleTarget.turn.invoke('mail', staleTarget.original), 'OBSERVATION_UNAVAILABLE', 'refused');
         expect(await journal(folder, 'draft-handler')).toEqual([]);
         expect(await journal(folder, 'draft-writes')).toEqual([]);
 
         // The ID of the running source, including its suffix, is the address authority.
-        const reopenedPeer = await desktop.openApp('contacts_a');
+        const reopenedPeer = (await desktop.openApp('contacts_a')).appId;
         expect(reopenedPeer).toBe('contacts_1');
         [peer] = await byId(desktop, reopenedPeer);
-        const input = ['$contacts_1.list.emails[1]', 'literal@example.test', '$contacts.list.emails[0]', '$contacts_1.list.emails[1]'];
+        const input = ['$ref.contacts_1.list.emails[1]', 'literal@example.test', '$ref.contacts.list.emails[0]', '$ref.contacts_1.list.emails[1]'];
         const expected = [peerEmails[1], input[1], ORIGINAL[0], peerEmails[1]];
-        const both = desktop.bindRequestSources(selection(contacts!, peer!, draft!));
-        const valid = await draft!.client.invoke(request(draft!.observation, 'two-origins', input), undefined, both);
+        const both = adopted(desktop, selection(contacts!, peer!, draft!));
+        const valid = await both.invoke('mail', request(draft!.observation, 'two-origins', input));
         expect(valid).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'succeeded' } } });
         expect(auth.at(-1)!.refSources.map(ref => [ref.appId, ref.instanceId, ref.path[0], ref.index])).toEqual([
             ['contacts_1', peer!.app.appInstanceId, 1, 0], ['contacts', contacts!.app.appInstanceId, 0, 2],
@@ -362,9 +361,9 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
         outcomes.sameName = { launches, valid, expected, originalSource, reopenedSource: contacts!.app, peer: peer!.app };
     } finally {
         for (const held of gates.values()) held.decision.resolve(true);
-        shutdown = await runtime.beginShutdown().completion;
+        shutdown = await runtime.beginClose().completion;
         await writeFile(join(evidence, 'qualification.json'), JSON.stringify({ outcomes, authorize: auth, shutdown,
             handlers: await journal(folder, 'draft-handler'), writes: await journal(folder, 'draft-writes') }, null, 2));
     }
-    expect(shutdown).toMatchObject({ ok: true, resourcesReleased: true, interactions: { retainedOperations: 0, retainedBytes: 0 } });
+    expect(shutdown).toMatchObject({ ok: true, resourcesReleased: true, interactions: { retainedOperations: 0 } });
 }, 35_000);

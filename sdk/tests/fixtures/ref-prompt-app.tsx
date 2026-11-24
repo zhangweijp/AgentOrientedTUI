@@ -10,8 +10,8 @@ const description = 'Choose the source.';
 const target = <S extends Type.TSchema>(refType: string, schema: S) =>
   Object.assign(refParam(refType, schema), { description });
 
-const List = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'List' });
-const Editor = defineViewType<{ enabled: boolean; record(value: string): void; reverse(): void }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
+const List = defineViewType({ multiplicity: 'multiple', name: 'List' });
+const Editor = defineViewType<{ enabled: boolean; record(value: string): void; reverse(): void }>()({ multiplicity: 'multiple',
   name: 'Editor',
   tools: {
     select_file: {

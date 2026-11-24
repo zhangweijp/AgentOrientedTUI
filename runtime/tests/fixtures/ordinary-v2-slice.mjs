@@ -43,7 +43,7 @@ function declareTools() {
   const contracts = [['find', 'Find current symbols.', findSchema],
     ['flags', 'Count flags.', flagsSchema], ['open', 'Preserve open input.', openSchema],
     ['zero', 'Read current state without extra parameters.', zeroSchema]];
-  return ['File','OtherFile'].map(name => SDK.defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
+  return ['File','OtherFile'].map(name => SDK.defineViewType()({ multiplicity: 'multiple',
     name,
     tools: Object.fromEntries(contracts.map(([tool, description, inputSchema]) => [tool, {
       description, inputSchema,

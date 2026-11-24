@@ -40,7 +40,7 @@ class MemoryTaskApp {
         for (const [index, id] of this.order.entries()) {
             const task = this.items.get(id)!;
             const refId = 'pending[' + index + ']';
-            refs[refKey('task_list', 'mount_1', refId)] = { scope: 'protected',
+            refs[refKey('task_list', 'mount_1', refId)] = { valueSchema: { type: 'object' }, scope: 'protected',
                 id: refId, ownerViewId: 'task_list', ownerViewInstanceId: 'mount_1',
                 refType: 'Task',
                 target: { kind: 'snapshot-value', payload: { id: task.id, revision: task.revision } },
@@ -48,7 +48,7 @@ class MemoryTaskApp {
             labels.push('[' + task.title + '](' + refId + ')');
         }
         return {
-            schemaVersion: 7, appId: this.appId, instanceId: this.instanceId,
+            schemaVersion: 8, appId: this.appId, instanceId: this.instanceId,
             producerSeq: ++this.producerSeq, sourceEpoch: this.sourceEpoch, capturedAt: this.producerSeq,
             views: [{
                 toolBindings: [{ toolId, activationId: 'active-complete' }], id: 'task_list', viewInstanceId: 'mount_1', type: 'TaskList',
@@ -59,7 +59,7 @@ class MemoryTaskApp {
             tools: {
                 [toolId]: { multiplicity: 'multiple',
                     id: toolId, name: 'complete_task', viewType: 'TaskList',
-                    nameSharedAcrossViewTypes: false, description: 'Complete a task only after business CAS verification',
+                     description: 'Complete a task only after business CAS verification',
                     inputSchema: taskToolSchema.contract.schema,
                 },
             },
@@ -83,11 +83,8 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
         expect(old.status).toBe('resolved');
         if (old.status !== 'resolved') throw Error('Expected historical Ref');
         const observedTarget = old.target.payload as { id: string; revision: number };
-        const publishedTool = core.store.getTool({
-            snapshotId: originalId, appId: app.appId,
-            instanceId: app.instanceId, toolId: JSON.stringify([app.appId, 'TaskList', 'complete_task']),
-        });
-        expect(publishedTool.status).toBe('found');
+        const toolId = JSON.stringify([app.appId, 'TaskList', 'complete_task']);
+        expect(held.hold.snapshot.tools[toolId]).toMatchObject({ id: toolId });
 
         app.reorder(['b', 'a']);
         const next = core.committer.accept(app.draft());

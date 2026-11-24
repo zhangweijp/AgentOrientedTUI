@@ -4,8 +4,8 @@ import Type from 'typebox';
 import { createTUIApp, defineViewType, refParam, DynamicView, StaticView, useDataRef } from '@aotui/sdk';
 
 const FileSchema = Type.Object({ filePath: Type.String(), text: Type.String() }, { additionalProperties: false });
-const Guide = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root' });
-const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Detail', tools: {
+const Guide = defineViewType({ multiplicity: 'multiple', name: 'Root' });
+const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'Detail', tools: {
   ordinary: {
     description: 'Apply text to the selected file. Read the updated Detail.',
     inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
@@ -28,7 +28,7 @@ const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ pre
 const viewTypes = [Guide, FileDetail];
 
 function FileBody({ count, text, filePath }) {
-  const file = useDataRef('file', { filePath, text }, { scope: 'protected', refType: 'File' });
+  const file = useDataRef('file', { filePath, text }, { schema: Type.Object({}), scope: 'protected', refType: 'File' });
   return h('section', {}, h('p', {}, 'Open file: ' + filePath), h('p', {}, file('Current file value')), h('pre', {}, text),
     h('p', {}, 'Completed actions: ' + count));
 }

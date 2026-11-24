@@ -10,15 +10,15 @@ const numericAppId: (id: number) => unknown = createAppId;
 
 export async function closeAndReopen(): Promise<{ desktopReport: DesktopCloseReport; runtimeReport: RuntimeCloseReport }> {
     const runtime: IKernel = createRuntime();
-    const id = await runtime.createDesktop(createDesktopId('installed-owner'));
+    const id = (await runtime.createDesktop(createDesktopId('installed-owner'))).id;
     const desktop: IDesktop = runtime.getDesktop(id);
     if (desktop.isClosing) throw new Error('New Desktop is closing');
     const close: DesktopCloseHandle = desktop.beginClose();
-    if (runtime.beginDesktopShutdown(id) !== close) throw new Error('Different Desktop close handles');
+    if (desktop.beginClose() !== close) throw new Error('Different Desktop close handles');
     const desktopReport = await close.completion;
     if (!desktopReport.resourcesReleased) throw new Error('Desktop resources are still held');
     await runtime.createDesktop(id);
     if (runtime.getDesktop(id) === desktop) throw new Error('Expected a new Desktop');
-    const shutdown: RuntimeCloseHandle = runtime.beginShutdown();
+    const shutdown: RuntimeCloseHandle = runtime.beginClose();
     return { desktopReport, runtimeReport: await shutdown.completion };
 }

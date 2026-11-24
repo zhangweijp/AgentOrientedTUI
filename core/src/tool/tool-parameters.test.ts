@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { compileToolParameters, compileValueSchema, encodeProgramArguments, modelToolSchema, programToolInput, type ToolParameterCompileResult as CompileResult } from './tool-parameters.js';
+import { compileToolParameters, compileValueSchema, type ToolParameterCompileResult as CompileResult } from './tool-parameters.js';
 
 function contract(result: CompileResult) {
   expect(result.ok).toBe(true);
@@ -28,7 +29,7 @@ describe('Console tool parameters', () => {
     expect(c.validateResolvedInput({ pair: [1] }).ok).toBe(false);
     expect(c.validateResolvedInput({ pair: [1, null, 2] }).ok).toBe(false);
     expect(c.validateResolvedInput({ pair: ['1', null] }).ok).toBe(false);
-    expect(encodeProgramArguments(c, { pair: [1, '$price'] })).toEqual({ pair: [1, '$price'] });
+    expect(c.validateResolvedInput({ pair: [1, '$price'] })).toEqual({ ok: true, value: { pair: [1, '$price'] } });
     invalid(compileToolParameters(schema({ pair: { ...tuple, items: { type: 'integer' } } })));
   });
 
@@ -71,45 +72,6 @@ describe('Console tool parameters', () => {
     ] });
   });
 
-  it('derives the routing and nominal slots and escapes only ordinary wire strings', () => {
-    const string = { type: 'string' };
-    const nominal = { ...string, minLength: 1, 'x-aotui-ref-kind': 'Todo', 'x-aotui-ref-value': { type: 'object' } };
-    const c = compile({ literal: string, list: { type: 'array', items: string }, selected: nominal,
-      selections: { type: 'array', items: nominal } });
-    const program = programToolInput(c.schema, 'Todo', 'multiple');
-    expect(program.schema).toMatchObject({ required: ['view_id'], properties: { view_id: { type: 'string' }, literal: string } });
-    expect(program.refOnly).toEqual([{ parameter: 'selected', arrayElement: false, refType: 'Todo' },
-      { parameter: 'selections', arrayElement: true, refType: 'Todo' }]);
-    const selected = '$catalog.rows.item', literal = '$$price';
-    expect(encodeProgramArguments(c, { literal, list: [selected, literal], selected, selections: [selected] })).toEqual({
-      literal: '$$$price', list: ['$$catalog.rows.item', '$$$price'], selected, selections: [selected],
-    });
-  });
-});
-
-describe('Model Ref parameter descriptions', () => {
-  it.each([
-    ['File', { anyOf: [{ type: 'object' }, { type: 'array', items: { type: 'object' } }] },
-      'Ref type "File". Value shape object or array. '],
-    ['File', { anyOf: [{ type: 'object' }, {}] }, 'Ref type "File". '],
-    ['File', { anyOf: [{ type: 'object' }, { type: 'object', properties: { internal: { type: 'string' } } }] },
-      'Ref type "File". Value shape object. '],
-    ['unknown', { type: 'array', items: { type: 'string' } }, 'Value shape array. '],
-    ['unknown', { enum: [{ internal: 'secret' }, []] }, ''],
-    ['File"'.repeat(10), { type: 'object' }, 'Value shape object. '],
-    ['界😀'.repeat(20), { type: 'object' }, 'Value shape object. '],
-    ['File\nOther', { type: 'object' }, 'Value shape object. '],
-  ])('uses bounded information from %s and %j', (refType, value, prefix) => {
-    const description = 'Choose the source.\n';
-    const field = { type: 'string', minLength: 1, description, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': value };
-    const normalized = compile({ target: field }).schema;
-    const model = modelToolSchema(normalized, 'Editor', 'multiple');
-    expect(json(model.properties).target).toEqual({
-      type: 'string', minLength: 1, pattern: '^[$][^$]',
-      description: description + ' ' + prefix + 'Use $app_id.view_id.ref_id or append [index] for an ArrayRef element.',
-    });
-    expect(json(normalized.properties).target['x-aotui-ref-kind']).toBe(refType);
-  });
 });
 
 describe('W07-B1 ordinary parameter contract', () => {
@@ -130,10 +92,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     const compiled = contract(compileToolParameters({ ...expected, required: ['s', 'n'] }));
     expect(compiled.schema).toEqual(expected);
     expect(Object.keys(compiled.schema.properties as object)).toEqual(Object.keys(expected.properties));
-    for (const input of [{ s: 'a😀', n: 0 }, { s: 'x', n: 0 }, { n: 0 }, { s: 'a', n: 0, extra: 1 }]) {
-      expect(compiled.validateModelInput(input)).toEqual(compiled.validateResolvedInput(input));
-    }
-    expect(json(compiled.validateModelInput({ s: 'a😀', n: 0 }))).toEqual({ ok: true, value: { s: 'a😀', n: 0 } });
+    expect(json(compiled.validateResolvedInput({ s: 'a😀', n: 0 }))).toEqual({ ok: true, value: { s: 'a😀', n: 0 } });
   });
 
   it.each([
@@ -143,23 +102,23 @@ describe('W07-B1 ordinary parameter contract', () => {
     ['boolean', 'false', false], ['boolean', 0, false], ['boolean', null, false],
     ['object', {}, true], ['object', { a: [null, {}] }, true], ['object', [], false], ['object', null, false],
   ])('P02 strict %s value %j has expected validity %s', (type, value, valid) => {
-    expect(compile({ v: { type } }).validateModelInput({ v: value }).ok).toBe(valid);
+    expect(compile({ v: { type } }).validateResolvedInput({ v: value }).ok).toBe(valid);
   });
   it('P02 distinguishes optional absence from null/undefined and required absence', () => {
     const c = compile({ v: { type: 'string' } });
-    expect(json(c.validateModelInput({}))).toEqual({ ok: true, value: {} });
-    expect(c.validateModelInput({ v: undefined }).ok).toBe(false);
-    expect(c.validateModelInput({ v: null }).ok).toBe(false);
-    for (const root of [[], null, 1, 'x', false]) expect(c.validateModelInput(root).ok).toBe(false);
-    expect(compile({ v: { type: 'string' } }, { required: ['v'] }).validateModelInput({}).ok).toBe(false);
+    expect(json(c.validateResolvedInput({}))).toEqual({ ok: true, value: {} });
+    expect(c.validateResolvedInput({ v: undefined }).ok).toBe(false);
+    expect(c.validateResolvedInput({ v: null }).ok).toBe(false);
+    for (const root of [[], null, 1, 'x', false]) expect(c.validateResolvedInput(root).ok).toBe(false);
+    expect(compile({ v: { type: 'string' } }, { required: ['v'] }).validateResolvedInput({}).ok).toBe(false);
   });
 
   it('P03 enum is a strict string and never calls user conversion', () => {
     let conversions = 0;
     const c = compile({ e: { type: 'string', enum: ['1', 'true', 'null'] } });
-    for (const value of ['1', 'true', 'null']) expect(c.validateModelInput({ e: value }).ok).toBe(true);
+    for (const value of ['1', 'true', 'null']) expect(c.validateResolvedInput({ e: value }).ok).toBe(true);
     for (const value of [1, true, null, 'missing', { toString() { conversions++; return '1'; } }]) {
-      expect(c.validateModelInput({ e: value }).ok).toBe(false);
+      expect(c.validateResolvedInput({ e: value }).ok).toBe(false);
     }
     expect(conversions).toBe(0);
   });
@@ -173,33 +132,33 @@ describe('W07-B1 ordinary parameter contract', () => {
   ])('P04 validates every %s array item with only array length keywords', (itemType, valid, mixed) => {
     const c = compile({ a: { type: 'array', items: { type: itemType }, minItems: 1, maxItems: 2 } });
     expect((c.schema.properties as any).a).toEqual({ type: 'array', items: { type: itemType }, minItems: 1, maxItems: 2 });
-    expect(c.validateModelInput({ a: valid }).ok).toBe(true);
-    expect(c.validateModelInput({ a: valid.slice(0, 1) }).ok).toBe(true);
-    expect(c.validateModelInput({ a: [] }).ok).toBe(false);
-    expect(c.validateModelInput({ a: [...valid, ...valid] }).ok).toBe(false);
-    expect(c.validateModelInput({ a: mixed }).ok).toBe(false);
+    expect(c.validateResolvedInput({ a: valid }).ok).toBe(true);
+    expect(c.validateResolvedInput({ a: valid.slice(0, 1) }).ok).toBe(true);
+    expect(c.validateResolvedInput({ a: [] }).ok).toBe(false);
+    expect(c.validateResolvedInput({ a: [...valid, ...valid] }).ok).toBe(false);
+    expect(c.validateResolvedInput({ a: mixed }).ok).toBe(false);
   });
   it('P04 permits empty unconstrained arrays and rejects sparse/extra properties', () => {
     const c = compile({ a: { type: 'array', items: { type: 'string' } } });
-    expect(c.validateModelInput({ a: [] }).ok).toBe(true);
-    expect(c.validateModelInput({ a: new Array(2) }).ok).toBe(false);
-    expect(c.validateModelInput({ a: Object.assign(['x'], { secret: true }) }).ok).toBe(false);
+    expect(c.validateResolvedInput({ a: [] }).ok).toBe(true);
+    expect(c.validateResolvedInput({ a: new Array(2) }).ok).toBe(false);
+    expect(c.validateResolvedInput({ a: Object.assign(['x'], { secret: true }) }).ok).toBe(false);
     invalid(compileToolParameters(schema({ a: { type: 'array' } })));
   });
 
   it('P05 counts string code points against supported length bounds', () => {
     const single = compile({ s: { type: 'string', minLength: 1, maxLength: 1 } });
-    for (const s of ['a', '😀', '\ud800']) expect(single.validateModelInput({ s }).ok).toBe(true);
-    for (const s of ['', 'ab', 'e\u0301']) expect(single.validateModelInput({ s }).ok).toBe(false);
+    for (const s of ['a', '😀', '\ud800']) expect(single.validateResolvedInput({ s }).ok).toBe(true);
+    for (const s of ['', 'ab', 'e\u0301']) expect(single.validateResolvedInput({ s }).ok).toBe(false);
     const c = compile({ s: { type: 'string', minLength: 1, maxLength: 3 } });
-    expect(c.validateModelInput({ s: 'cat' }).ok).toBe(true);
-    expect(c.validateModelInput({ s: '😀' }).ok).toBe(true);
-    expect(c.validateModelInput({ s: '' }).ok).toBe(false);
-    expect(c.validateModelInput({ s: 'cats' }).ok).toBe(false);
+    expect(c.validateResolvedInput({ s: 'cat' }).ok).toBe(true);
+    expect(c.validateResolvedInput({ s: '😀' }).ok).toBe(true);
+    expect(c.validateResolvedInput({ s: '' }).ok).toBe(false);
+    expect(c.validateResolvedInput({ s: 'cats' }).ok).toBe(false);
     const e = compile({ e: { type: 'string', enum: ['abc', 'xbc'], maxLength: 3 } });
-    expect(e.validateModelInput({ e: 'abc' }).ok).toBe(true);
-    expect(e.validateModelInput({ e: 'xbc' }).ok).toBe(true);
-    expect(e.validateModelInput({ e: 'other' }).ok).toBe(false);
+    expect(e.validateResolvedInput({ e: 'abc' }).ok).toBe(true);
+    expect(e.validateResolvedInput({ e: 'xbc' }).ok).toBe(true);
+    expect(e.validateResolvedInput({ e: 'other' }).ok).toBe(false);
   });
 
   it.each([
@@ -228,14 +187,14 @@ describe('W07-B1 ordinary parameter contract', () => {
     });
     const input = { pattern: '[', options };
     expect(c.schema).toMatchObject({ properties: { options: { default: options, enum: [options] } } });
-    expect(c.validateModelInput(input)).toEqual({ ok: true, value: input });
+    expect(c.validateResolvedInput(input)).toEqual({ ok: true, value: input });
     expect(c.validateResolvedInput(input)).toEqual({ ok: true, value: input });
   });
 
   it('P06 includes numeric boundaries without conversion', () => {
     const c = compile({ n: { type: 'number', minimum: -1.5, maximum: 2.5 } });
-    for (const n of [-1.5, 0, 1, 2.5]) expect(c.validateModelInput({ n }).ok).toBe(true);
-    for (const n of [-1.51, 2.51, '1']) expect(c.validateModelInput({ n }).ok).toBe(false);
+    for (const n of [-1.5, 0, 1, 2.5]) expect(c.validateResolvedInput({ n }).ok).toBe(true);
+    for (const n of [-1.51, 2.51, '1']) expect(c.validateResolvedInput({ n }).ok).toBe(false);
   });
   it.each([
     { type: 'number', minimum: 2, maximum: 1 }, { type: 'number', minimum: Infinity },
@@ -252,8 +211,8 @@ describe('W07-B1 ordinary parameter contract', () => {
     const properties = { v: { ...field, default: value } };
     const c = compile(properties);
     expect((c.schema.properties as any).v.default).toEqual(value);
-    expect(json(c.validateModelInput({}))).toEqual({ ok: true, value: {} });
-    expect(compile(properties, { required: ['v'] }).validateModelInput({}).ok).toBe(false);
+    expect(json(c.validateResolvedInput({}))).toEqual({ ok: true, value: {} });
+    expect(compile(properties, { required: ['v'] }).validateResolvedInput({}).ok).toBe(false);
   });
   it.each([
     { type: 'number', default: '1' }, { type: 'number', minimum: 2, default: 1 },
@@ -267,18 +226,14 @@ describe('W07-B1 ordinary parameter contract', () => {
     const params = JSON.parse('{"__proto__":{"type":"string"},"constructor":{"type":"number"},"toString":{"type":"boolean"}}');
     const input = JSON.parse('{"__proto__":"safe","constructor":0,"toString":false,"unknown":{"nested":[null,"value"]}}');
     const c = compile(params);
-    const result = c.validateModelInput(input);
+    const result = c.validateResolvedInput(input);
     expect(json(result)).toEqual({ ok: true, value: input });
-    if (result.ok) {
-      expect(Object.getPrototypeOf(result.value)).toBe(null);
-      expect(Object.getPrototypeOf(result.value.unknown)).toBe(null);
-      expect(Object.isFrozen(result.value)).toBe(true);
-    }
+    if (result.ok) expect(result.value).not.toBe(input);
     expect(Object.getPrototypeOf(input)).toBe(Object.prototype);
     const closed = compile(params, { additionalProperties: false });
-    expect(closed.validateModelInput(input).ok).toBe(false);
+    expect(closed.validateResolvedInput(input).ok).toBe(false);
     delete input.unknown;
-    expect(closed.validateModelInput(input).ok).toBe(true);
+    expect(closed.validateResolvedInput(input).ok).toBe(true);
     expect(({} as any).polluted).toBeUndefined();
     invalid(compileToolParameters(schema({}, { required: ['toString'] })));
   });
@@ -290,9 +245,9 @@ describe('W07-B1 ordinary parameter contract', () => {
     const before = JSON.stringify(c.schema);
     properties.e.enum.push('b'); properties.e.minLength = 2; properties.o.default.a[0] = 'changed';
     expect(JSON.stringify(c.schema)).toBe(before);
-    expect(c.validateModelInput({ e: 'a' }).ok).toBe(true);
-    expect(c.validateModelInput({ e: 'b' }).ok).toBe(false);
-    expect(c.validateModelInput({ x: true }).ok).toBe(false);
+    expect(c.validateResolvedInput({ e: 'a' }).ok).toBe(true);
+    expect(c.validateResolvedInput({ e: 'b' }).ok).toBe(false);
+    expect(c.validateResolvedInput({ x: true }).ok).toBe(false);
     expect(contract(compileToolParameters(sourceSchema)).schema).not.toEqual(c.schema);
     expect(Object.isFrozen(properties)).toBe(false);
     expect(Object.isFrozen(properties.o.default.a)).toBe(false);
@@ -302,8 +257,8 @@ describe('W07-B1 ordinary parameter contract', () => {
     const source: any = { type: 'object', properties: { x: { type: 'number', minimum: 0, default: 1 } }, required: ['x'] };
     const captured = contract(compileToolParameters(source));
     source.properties.x.minimum = 10; source.required.length = 0;
-    expect(captured.validateModelInput({ x: 1 }).ok).toBe(true);
-    expect(captured.validateModelInput({}).ok).toBe(false);
+    expect(captured.validateResolvedInput({ x: 1 }).ok).toBe(true);
+    expect(captured.validateResolvedInput({}).ok).toBe(false);
   });
   it('normalizes insertion order and retains schema differences', () => {
     const a = compile({ z: { type: 'number' }, a: { type: 'string' } }, { required: ['a', 'z'] });
@@ -324,37 +279,17 @@ describe('W07-B1 ordinary parameter contract', () => {
     const cycle: any = {}; cycle.self = cycle;
     const c = compile({});
     for (const value of [getter, hidden, symbol, new Custom(), cycle, new Date(0), { x: undefined }, { x: 1n }, { x() {} }, { x: -Infinity }]) {
-      expect(c.validateModelInput(value).ok).toBe(false);
+      expect(c.validateResolvedInput(value).ok).toBe(false);
       invalid(compileToolParameters(value));
     }
     invalid(compileToolParameters(schema({ v: { type: 'object', default: getter } })));
     expect(reads).toBe(0);
   });
-  it('P10 separates shared subobjects and normalizes -0 without freezing originals', () => {
-    const shared = { a: [false, -0] }; const input = { one: shared, two: shared };
-    const result = compile({}).validateModelInput(input);
+  it('checks an already owned argument without allocating a second tree', () => {
+    const input = Object.freeze({ nested: Object.freeze({ values: Object.freeze(['text', null]) }) });
+    const result = compile({}).validateResolvedInput(input);
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.one).not.toBe(result.value.two);
-    expect(result.value.one).not.toBe(shared);
-    expect(Object.is((result.value.one as any).a[1], -0)).toBe(false);
-    expect(Object.is(input.one.a[1], -0)).toBe(true);
-    expect(Object.isFrozen(shared.a)).toBe(false);
-    expect(Reflect.set((result.value.one as any).a, '0', true)).toBe(false);
-  });
-  it('P10 enforces exact input depth/node/approximate-byte and canonical boundaries', () => {
-    const c = compile({});
-    const nested = (depth: number): any => depth ? { x: nested(depth - 1) } : 0;
-    expect(c.validateModelInput({ v: nested(23) }).ok).toBe(true);
-    expect(c.validateModelInput({ v: nested(24) }).ok).toBe(false);
-    expect(c.validateModelInput({ a: Array(9_998).fill(null) }).ok).toBe(true);
-    expect(c.validateModelInput({ a: Array(9_999).fill(null) }).ok).toBe(false);
-    expect(c.validateModelInput({ v: 'a'.repeat(128 * 1024 - 9) }).ok).toBe(true);
-    expect(c.validateModelInput({ v: 'a'.repeat(128 * 1024 - 8) }).ok).toBe(false);
-    const atCanonical = { v: '\0'.repeat(21_844) };
-    expect(new TextEncoder().encode(JSON.stringify(atCanonical)).length).toBe(128 * 1024);
-    expect(c.validateModelInput(atCanonical).ok).toBe(true);
-    expect(c.validateModelInput({ v: atCanonical.v + '\0' }).ok).toBe(false);
+    if (result.ok) expect(result.value).toBe(input);
   });
   it('P10 enforces declaration and normalized Schema depth/node/canonical budgets', () => {
     const nested = (depth: number): any => depth ? { x: nested(depth - 1) } : 0;
@@ -446,7 +381,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     const properties: Record<string, object> = {};
     for (let i = 0; i < 20; i++) properties['declared_' + i + '_'.repeat(200)] = { type: 'string' };
     const c = compile(properties, { required: Object.keys(properties), additionalProperties: false });
-    const result = c.validateModelInput({ UNKNOWN_SECRET_KEY: 'INPUT_SECRET_VALUE' });
+    const result = c.validateResolvedInput({ UNKNOWN_SECRET_KEY: 'INPUT_SECRET_VALUE' });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('PARAMETER_INPUT_INVALID');
@@ -457,7 +392,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     }
     expect(JSON.stringify(result)).not.toMatch(/UNKNOWN_SECRET_KEY|INPUT_SECRET_VALUE/);
     const closed = compile({}, { additionalProperties: false });
-    expect(JSON.stringify(closed.validateModelInput({ UNKNOWN_SECRET_KEY: 'INPUT_SECRET_VALUE' }))).not.toMatch(/UNKNOWN_SECRET_KEY|INPUT_SECRET_VALUE/);
+    expect(JSON.stringify(closed.validateResolvedInput({ UNKNOWN_SECRET_KEY: 'INPUT_SECRET_VALUE' }))).not.toMatch(/UNKNOWN_SECRET_KEY|INPUT_SECRET_VALUE/);
     for (const field of [
       { type: 'string', pattern: '[REGEX_SECRET' },
       { type: 'number', default: 'DEFAULT_SECRET' },
@@ -469,7 +404,64 @@ describe('W07-B1 ordinary parameter contract', () => {
     }
     const name = 'line\n' + 'x'.repeat(200);
     const control = compile({ [name]: { type: 'string' } }, { required: [name] });
-    const failure = control.validateModelInput({});
+    const failure = control.validateResolvedInput({});
     if (!failure.ok) expect(failure.diagnostics[0]!.parameter).not.toContain('\n');
   });
+});
+
+describe('Shared JSON Schema 2020-12 contract vectors', () => {
+  const vectors = JSON.parse(readFileSync(new URL('./schema-contract-vectors.json', import.meta.url), 'utf8')) as {
+    toolSchemas: Array<Record<string, any>>;
+    valueSchemas: Array<Record<string, any>>;
+  };
+
+  it.each(vectors.toolSchemas.map(vector => [vector.name, vector]))(
+    'evaluates tool schema vector %s',
+    (_name, vector) => {
+      const result = compileToolParameters(vector.schema);
+      if (vector.expect !== 'valid') {
+        invalid(result, vector.expect === 'unsupported');
+        return;
+      }
+      const compiled = contract(result);
+      for (const input of vector.validInputs) expect(compiled.validateResolvedInput(input).ok).toBe(true);
+      for (const input of vector.invalidInputs) expect(compiled.validateResolvedInput(input).ok).toBe(false);
+      if (vector.preserveExact !== undefined) {
+        expect(compiled.validateResolvedInput(vector.preserveExact)).toEqual({ ok: true, value: vector.preserveExact });
+      }
+      if (vector.coreExtraOk !== undefined) {
+        expect(compiled.schema.additionalProperties).toBe(true);
+        expect(compiled.validateResolvedInput({ a: 'ok', extra: 1 }).ok).toBe(vector.coreExtraOk);
+      }
+    },
+  );
+
+  it.each(vectors.valueSchemas.map(vector => [vector.name, vector]))(
+    'evaluates value schema vector %s',
+    (_name, vector) => {
+      const result = compileValueSchema(vector.schema);
+      const nominal = compileToolParameters(schema({ item: {
+        'x-aotui-ref-kind': 'Item', 'x-aotui-ref-value': vector.schema,
+      } }));
+      if (vector.expect !== 'valid') {
+        const code = vector.expect === 'unsupported' ? 'PARAMETER_DECLARATION_UNSUPPORTED' : 'PARAMETER_DECLARATION_INVALID';
+        expect(result).toMatchObject({ ok: false, issue: { code } });
+        expect(nominal).toMatchObject({ ok: false, issue: { code } });
+        if (vector.issuePath) {
+          expect(result).toMatchObject({ issue: { path: vector.issuePath } });
+          expect(nominal).toMatchObject({ issue: { path: '$.properties.item["x-aotui-ref-value"]' + vector.issuePath.slice(1) } });
+        }
+        return;
+      }
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw Error('Expected valid value vector');
+      const tool = contract(nominal);
+      for (const [values, ok] of [[vector.validValues, true], [vector.invalidValues, false]] as const) {
+        for (const value of values) {
+          expect(result.validate(value) === undefined).toBe(ok);
+          expect(tool.validateResolvedInput({ item: value }).ok).toBe(ok);
+        }
+      }
+    },
+  );
 });

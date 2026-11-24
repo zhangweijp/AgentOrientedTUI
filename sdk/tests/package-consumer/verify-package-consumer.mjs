@@ -28,6 +28,9 @@ for (const root of host ? [sdkRoot, runtimeRoot] : profile === 'core' ? [path.jo
   await fs.access(path.join(root, 'README.md'));
   await assert.rejects(fs.access(path.join(root, 'docs')), { code: 'ENOENT' });
 }
+const corePackageAnchor = await fs.realpath(path.join(profile === 'core' ? path.join(consumer, 'node_modules/@aotui/core') : sdkRoot, 'package.json'));
+assert.throws(() => createRequire(corePackageAnchor).resolve('@aotui/core/internal'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
+facts.internalBlocked = true;
 if (plain || profile === 'author-plain') {
   const resolve = createRequire(path.join(consumer, 'package.json')).resolve;
   for (const name of ['preact', 'better-sqlite3']) {
@@ -57,7 +60,13 @@ async function stageReadmeExample(root, language, name) {
   const text = await fs.readFile(path.join(root, 'README.md'), 'utf8');
   const source = text.split('```' + language + '\n')[1]?.split('\n```')[0];
   assert.ok(source, 'Missing ' + name + ' in ' + root + '/README.md');
-  await fs.writeFile(path.join(output, name), source + '\n');
+  const target = root === sdkRoot ? path.join('readme-src', name) : name;
+  if (root === sdkRoot) {
+    await fs.mkdir(path.join(output, 'readme-src'), { recursive: true });
+    await fs.writeFile(path.join(output, 'package.json'), JSON.stringify({ type: 'module', aotui: { app_name: 'counter' } }));
+  }
+  await fs.writeFile(path.join(output, target), source + '\n');
+  return target;
 }
 
 const version = JSON.parse(await fs.readFile(path.join(consumer, 'node_modules/typescript/package.json'), 'utf8')).version;
@@ -84,40 +93,71 @@ if (!host) {
   const guardedLoad = `
     import assert from 'node:assert/strict';
     import { registerHooks, builtinModules } from 'node:module';
-    const loaded = [];
+    const loaded = [], loadedFiles = [];
     const native = new Set(builtinModules);
     registerHooks({ resolve(specifier, context, next) {
       loaded.push(specifier);
       if (specifier.startsWith('@aotui/runtime') || ${!jsx} && /^(?:preact|linkedom)(?:\\/|$)/.test(specifier) ||
           ${!jsx} && (specifier.startsWith('node:') || native.has(specifier))) throw new Error('Unexpected import: ' + specifier);
-      return next(specifier, context);
+      const resolved = next(specifier, context);
+      if (resolved?.url) loadedFiles.push(resolved.url);
+      return resolved;
     } });
     assert.equal(typeof globalThis.document, 'undefined');
     const actual = await import(process.argv[1]);
     assert.equal(typeof globalThis.document, 'undefined');
-    console.log(JSON.stringify({ loaded, core: actual.coreFixtureFacts, factory: typeof actual.createApp,
+    let definedViewType = false, builtApp = false;
+    if (${profile !== 'core'}) {
+      const { default: Type } = await import('typebox');
+      const WorkItem = Type.Object({ id: Type.String() }, { additionalProperties: false });
+      const Board = actual.defineViewType()({
+        name: 'Board',
+        multiplicity: 'single',
+        tools: {
+          pick: {
+            description: 'Select one item.',
+            inputSchema: Type.Object({ item: actual.refParam('WorkItem', WorkItem) }),
+            execute: () => ({ success: true }),
+          },
+        },
+      });
+      definedViewType = Board.tools.pick.inputSchema.properties.item['x-aotui-ref-kind'] === 'WorkItem' &&
+        !Object.hasOwn(Board.tools.pick.inputSchema.properties.item, 'type');
+      const factory = ${jsx}
+        ? actual.createTUIApp({ app_name: 'consumer_check', viewTypes: [Board], component: () => null })
+        : actual.createApp({ app_name: 'consumer_check', viewTypes: [Board], initialize() {} });
+      builtApp = typeof factory?.app_name === 'string' && typeof factory.initialize === 'function';
+    }
+    console.log(JSON.stringify({ loaded, loadedFiles, definedViewType, builtApp, core: actual.coreFixtureFacts, factory: typeof actual.createApp,
       componentFactory: typeof actual.createTUIApp }));`;
   const specifier = profile === 'core' ? pathToFileURL(path.join(output, 'core-out/public-core.js')).href
     : jsx ? '@aotui/sdk' : '@aotui/sdk/app';
   facts.load = lastJson(await checked(`${profile}-load`, ['--input-type=module', '--eval', guardedLoad, specifier]));
+  if (profile !== 'core') {
+    const forbiddenUrls = facts.load.loadedFiles.filter(url =>
+      /\/@aotui\/core\/dist\/(?:host|producer|persistence)\b|\/@aotui\/core\/dist\/(?:projection|invocation|snapshot\/store|tool\/tool-projection\.js)|\/node_modules\/acorn\//.test(url) ||
+      (!jsx && /\/node_modules\/(?:preact|linkedom)\//.test(url)));
+    assert.deepEqual(forbiddenUrls, [], `Forbidden transitive files loaded for ${profile}: ${JSON.stringify(forbiddenUrls)}`);
+  }
   if (profile === 'core') {
-    const { handlerEntries, logicalBytes, leases, bindings, observationSlots, witness } = facts.load.core;
-    assert.deepEqual([handlerEntries, logicalBytes, leases, bindings, observationSlots], [3, 0, 0, 0, 0]);
+    const { handlerEntries, leases, bindings, observationSlots, witness } = facts.load.core;
+    assert.deepEqual([handlerEntries, leases, bindings, observationSlots], [3, 0, 0, 0]);
     assert.deepEqual(witness.map(entry => entry.text), ['old!', 'new!']);
   } else {
+    assert.equal(facts.load.definedViewType, true);
+    assert.equal(facts.load.builtApp, true);
     assert.equal(jsx ? facts.load.componentFactory : facts.load.factory, 'function');
-    const readme = jsx ? 'readme-app.tsx' : 'readme-app.ts';
-    await stageReadmeExample(sdkRoot, jsx ? 'tsx' : 'ts', readme);
-    await compile(`${profile}-readme`, { lib: jsx ? ['ES2022', 'DOM'] : ['ES2022'], types: [], declaration: true,
+    const readme = await stageReadmeExample(sdkRoot, jsx ? 'tsx' : 'ts', jsx ? 'readme-app.tsx' : 'readme-app.ts');
+    await compile(`${profile}-readme`, { lib: jsx ? ['ES2022', 'DOM'] : ['ES2022'], types: [], declaration: true, resolveJsonModule: true,
       outDir: './readme-out', ...(jsx ? { jsx: 'react-jsx', jsxImportSource: 'preact' } : {}) }, [readme]);
     const app = path.join(output, 'app');
     await fs.mkdir(app, { recursive: true });
     const names = [jsx ? 'author-jsx.tsx' : 'author-plain.ts', 'files.ts', 'file-io.mjs', 'file-io.d.mts'];
-    for (const name of names) await fs.copyFile(new URL('delivery/' + name, sdkFixtures), path.join(app, name));
+    for (const name of names) await fs.copyFile(path.join(sdkRoot, 'examples', 'files', name), path.join(app, name));
     const sdk = JSON.parse(await fs.readFile(path.join(sdkRoot, 'package.json'), 'utf8'));
     const metadata = { name: `aotui-delivered-files-${jsx ? 'jsx' : 'plain'}`, version: '0.1.0', type: 'module',
       main: `./dist/${jsx ? 'author-jsx' : 'author-plain'}.js`, types: `./dist/${jsx ? 'author-jsx' : 'author-plain'}.d.ts`,
-      files: ['dist', 'aoapp.json'], dependencies: { [sdk.name]: sdk.version, typebox: sdk.peerDependencies.typebox,
+      files: ['dist', 'aoapp.json'], aotui: { app_name: 'delivered_files' }, dependencies: { [sdk.name]: sdk.version, typebox: sdk.peerDependencies.typebox,
         ...(jsx ? { preact: sdk.peerDependencies.preact } : {}) } };
     await fs.writeFile(path.join(app, 'package.json'), JSON.stringify(metadata, null, 2));
     const config = path.join(app, 'tsconfig.json');
@@ -160,15 +200,15 @@ if (!plain) {
   await stageFixtures(sdkFixtures, ['preact-sdk-copies.tsx']);
   await stageFixtures(sdkFixtures, ['ref-prompt-app.tsx', 'ref-prompt-consumer.mjs', 'scripted-provider-turn.mjs']);
   await stageFixtures(runtimeFixtures, ['managed-host.ts', 'managed-host-app.mjs']);
-  await stageReadmeExample(sdkRoot, 'tsx', 'readme-app.tsx');
+  const counterSource = await stageReadmeExample(sdkRoot, 'tsx', 'readme-app.tsx');
   await stageReadmeExample(runtimeRoot, 'js', 'readme-host.mjs');
-  await compile('full', { lib: ['ES2022', 'DOM'], types: ['node'], jsx: 'react-jsx', jsxImportSource: 'preact', outDir: './full-out' },
-    ['readme-app.tsx', 'file-app.tsx', 'ref-app.tsx', 'ref-prompt-app.tsx', 'work-items-preact.tsx', 'preact-sdk-copies.tsx', 'managed-host.ts']);
+  await compile('full', { lib: ['ES2022', 'DOM'], types: ['node'], jsx: 'react-jsx', jsxImportSource: 'preact', resolveJsonModule: true, outDir: './full-out' },
+    [counterSource, 'file-app.tsx', 'ref-app.tsx', 'ref-prompt-app.tsx', 'work-items-preact.tsx', 'preact-sdk-copies.tsx', 'managed-host.ts']);
   const readmeApp = path.join(output, 'readme-counter');
   await fs.mkdir(path.join(readmeApp, 'dist'), { recursive: true });
-  await fs.copyFile(path.join(output, 'full-out/readme-app.js'), path.join(readmeApp, 'dist/app.js'));
+  await fs.copyFile(path.join(output, 'full-out/readme-src/readme-app.js'), path.join(readmeApp, 'dist/app.js'));
   await fs.writeFile(path.join(readmeApp, 'package.json'), JSON.stringify({ name: 'aotui-readme-counter',
-    version: '0.1.0', type: 'module', main: './dist/app.js' }));
+    version: '0.1.0', type: 'module', main: './dist/app.js', aotui: { app_name: 'counter' } }));
   await checked('readme-manifest', [readmeApp], path.join(consumer, 'node_modules/.bin/generate-aoapp'));
   const readme = await checked('readme-execution', [path.join(output, 'readme-host.mjs'), readmeApp]);
   const counter = lastJson(readme);

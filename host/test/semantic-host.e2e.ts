@@ -119,7 +119,7 @@ try {
     const info = await manager.createDesktop('semantic-default-e2e' as any, { projectPath: project });
     const { desktop } = info;
     assert.equal(info.thirdPartyAppCount, 3);
-    source = new SemanticAOTUIDrivenSource(desktop, runtime, { includeInstruction: true });
+    source = new SemanticAOTUIDrivenSource(desktop, { includeInstruction: true });
     const preview = async () => {
         const { applications, diagnostics } = await readDesktopPreview(desktop);
         assert.deepEqual(diagnostics, []);
@@ -144,7 +144,7 @@ try {
     assert.ok(!initial.tools['system_ide-batch_edit']);
     assert.ok(!initial.tools['system_ide-close_search_view']);
     const terminalInstruction = instruction(initial, 'terminal');
-    assert.match(terminalInstruction, /selects a live Terminal/);
+    assert.match(terminalInstruction, /Select a live Terminal/);
     assert.ok(content(initial).includes('## System Logs'));
     facts.initialProjection = { messages: initial.messages, tools: Object.keys(initial.tools) };
     const initialPreview = await preview();
@@ -267,12 +267,12 @@ try {
     const createdTerminal = await call(terminalTool('new_terminal_and_send_command'), { command: "printf 'SEMANTIC_TERMINAL_OK\\n'" });
     const terminal = await eventually(context => content(context).includes('SEMANTIC_TERMINAL_OK') &&
         !!context.tools[terminalTool('send_command_to_exist_terminal')], 'terminal completion');
-    const terminalId = (createdTerminal.result as any).terminal_id;
+    const terminalId = (createdTerminal.result as any).view_id;
     assert.equal(instruction(terminal, 'terminal'), terminalInstruction);
     assert.equal(typeof terminalId, 'string');
     assert.ok(modelViews(terminal.messages).some(page => page.appId === 'terminal' && page.type === 'Terminal' && page.id === terminalId));
     const createdSecond = await invoke(terminal, terminalTool('new_terminal_and_send_command'), { command: "printf 'SECOND_TERMINAL_OK\\n'" });
-    const secondId = (createdSecond.result as any).terminal_id;
+    const secondId = (createdSecond.result as any).view_id;
     const twoTerminals = await eventually(context => content(context).includes('SECOND_TERMINAL_OK') &&
         !!context.tools[terminalTool('send_command_to_exist_terminal')], 'second terminal completion');
     assert.equal(instruction(twoTerminals, 'terminal'), terminalInstruction);
@@ -297,7 +297,7 @@ try {
     release(terminalsClosed);
     pass('Terminal runs through View-local tools and rejects a closed terminal binding');
 
-    const installedBrowser = () => desktop.getInstalledApps().find(app => app.installationId === browserInstallation);
+    const installedBrowser = () => desktop.listApps().find(app => app.installationId === browserInstallation);
     assert.equal(installedBrowser()?.status, 'pending');
     assert.equal(installedBrowser()?.appId, undefined);
     const launched = await call('system-open_app', { installation_id: browserInstallation });
@@ -346,7 +346,7 @@ try {
 } finally {
     for (const context of contexts) release(context);
     await source?.dispose();
-    const shutdown = await runtime.beginShutdown().completion;
+    const shutdown = await runtime.beginClose().completion;
     facts.shutdown = shutdown;
     if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     const factsFile = process.argv[2];

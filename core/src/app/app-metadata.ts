@@ -1,6 +1,6 @@
 import { isInstanceName } from '../snapshot/types.js';
 
-/** Author metadata shared by the generated manifest, factory and registration. */
+/** App identity and catalog metadata from the manifest or Host registration. */
 export interface AppMetadata {
     readonly app_name: string;
     readonly description?: string;

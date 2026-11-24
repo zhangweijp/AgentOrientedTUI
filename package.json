@@ -5,7 +5,6 @@
       "esbuild",
       "@heroui/shared-utils",
       "electron-winstaller",
-      "phantomjs-prebuilt",
       "protobufjs"
     ],
     "overrides": {

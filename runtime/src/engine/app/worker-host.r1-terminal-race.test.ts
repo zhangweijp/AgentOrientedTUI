@@ -6,7 +6,7 @@ import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost, type WorkerStatus } from './worker-host.js';
 
-const methods = ['start', 'open', 'reinitialize'] as const;
+const methods = ['start', 'open'] as const;
 type Request = { type: string; requestId?: string };
 const managedInstances = new WeakMap<EventEmitter, string>();
 const settle = (task: Promise<void>) => task.then(
@@ -14,19 +14,19 @@ const settle = (task: Promise<void>) => task.then(
     (error: Error) => ({ status: 'rejected' as const, message: error.message }),
 );
 
-function respond(worker: EventEmitter, request: Request) {
+function respond(worker: EventEmitter, request: Request, storage = false) {
     const init = request.type === 'INIT' ? request : undefined;
     const instanceId = init ? (init as any).appInstanceId : managedInstances.get(worker);
     if (init && typeof instanceId === 'string') managedInstances.set(worker, instanceId);
-    const closesApp = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(request.type);
-    const closesPersistence = ['APP_SHUTDOWN', 'APP_CLOSE'].includes(request.type);
+    const closesApp = ['APP_STOP', 'APP_CLOSE'].includes(request.type);
+    const closesPersistence = storage && request.type === 'APP_CLOSE';
     const fullyClosed = request.type === 'APP_CLOSE';
     worker.emit('message', {
         type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
         requestId: request.requestId, success: true,
         ...(init ? {
-            appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
-            persistence: { protocol: 'state-session-v2', version: 2, instanceId },
+            appLifecycle: { protocol: 'app-lifecycle-v2', instanceId },
+            ...(storage ? { persistence: { protocol: 'state-session-v2', version: 2, instanceId } } : {}),
             protocol: (init as any).protocol, toolsEnabled: (init as any).toolsEnabled,
             projectionLimits: (init as any).projectionLimits,
             appInstanceId: instanceId,
@@ -59,24 +59,20 @@ const workerSource = `
     parentPort.on('message', message => {
         const init = message.type === 'INIT';
         if (init) appInstanceId = message.appInstanceId;
-        const closesApp = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
-        const closesPersistence = ['APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
+        const closesApp = ['APP_STOP', 'APP_CLOSE'].includes(message.type);
         const fullyClosed = message.type === 'APP_CLOSE';
         parentPort.postMessage({
             type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
             requestId: message.requestId, success: true,
             ...(init ? {
-                appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
-                persistence: { protocol: 'state-session-v2', version: 2, instanceId: message.appInstanceId },
+                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: message.appInstanceId },
                 protocol: message.protocol, toolsEnabled: message.toolsEnabled,
                 projectionLimits: message.projectionLimits,
                 appInstanceId: message.appInstanceId,
             } : {}),
             ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId: appInstanceId,
                 state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
-            ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v2', instanceId: appInstanceId,
-                ok: fullyClosed, unmount: fullyClosed ? 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
-                ...(fullyClosed ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}),
+
         });
     });
 `;
@@ -101,24 +97,6 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             expect(terminalStatus).toBe(terminal === 'terminate' ? 'closed' : 'error');
             expect(await pending).toMatchObject({ status: 'rejected' });
             expect(host.getStatus()).toBe(terminalStatus);
-        } finally {
-            host.terminate();
-            await pending;
-        }
-    });
-
-    it('rejects reinitialize even when a second error leaves the same Worker and error status', async () => {
-        const { host, worker, sent } = controlledHost();
-        vi.spyOn(console, 'error').mockImplementation(() => {});
-        worker.emit('error', new Error('First failure'));
-        const pending = settle(host.reinitialize());
-        try {
-            respond(worker, sent[0]);
-            expect((host as any).pendingRequests.size).toBe(0);
-            worker.emit('error', new Error('Second failure'));
-            expect((host as any).worker).toBe(worker);
-            expect(await pending).toMatchObject({ status: 'rejected' });
-            expect(host.getStatus()).toBe('error');
         } finally {
             host.terminate();
             await pending;
@@ -170,16 +148,14 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
                 queueMicrotask(() => worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2,
                     instanceId: managedInstances.get(worker), sequence: 1, action: 'release' }));
             } else if (message.type === 'STATE_STORAGE_RESPONSE' && waitingForRelease) {
-                const request = waitingForRelease;waitingForRelease = undefined;queueMicrotask(() => respond(worker, request));
-            } else queueMicrotask(() => respond(worker, message));
+                const request = waitingForRelease;waitingForRelease = undefined;queueMicrotask(() => respond(worker, request, true));
+            } else queueMicrotask(() => respond(worker, message, true));
         };
         let next: AppWorkerHost | undefined;
         try {
             await host.start();
-            expect(host.getPersistenceReport().support).toBe('managed');
+            expect(host.getPersistenceReport()).toBeDefined();
             await host.open();
-            expect(host.getStatus()).toBe('running');
-            await host.reinitialize();
             expect(host.getStatus()).toBe('running');
             await host.close();
             const count = sent.length;
@@ -268,7 +244,7 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             expect(host.getStatus()).toBe('closed');
             expect(nextHost!.getStatus()).toBe('ready');
             expect(nextHost!.appInstanceId).not.toBe(host.appInstanceId);
-            expect(nextHost!.getPersistenceReport().support).toBe('managed');
+            expect(nextHost!.getPersistenceReport()).toBeUndefined();
             expect((nextHost as any).worker).toBe(replacement);
         } finally {
             host?.terminate();

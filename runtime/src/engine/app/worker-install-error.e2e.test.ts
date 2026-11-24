@@ -37,7 +37,7 @@ describe('installation errors across a real Worker and AppManager', () => {
             installationId: id, name: 'diagnostics',
             config: { AOTUI_APP_KEY: id, AOTUI_DATA_DIR: data },
         });
-        return { manager, installing, data, sandbox: manager.getWorkerSandbox('diagnostics' as any) };
+        return { manager, installing, data, sandbox: manager.getManagedApp('diagnostics' as any) };
     }
 
     function app(renderBody: string) {
@@ -46,7 +46,7 @@ import { createTUIApp, defineViewType } from '@aotui/sdk';
 export default {
     persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2',
     toolAuthoringProtocol: 'view-type-tools-v7',
-    kernelConfig: { appName: 'diagnostics' },
+    app_name: 'diagnostics',
     initialize(context) {
         function InitialRender() { ${renderBody} }
         return createTUIApp({viewTypes:[],  app_name: 'diagnostics', component: () => h(InitialRender, {}) }).initialize(context);
@@ -59,7 +59,7 @@ export default {
             app("throw new TypeError('initial-render-sentinel');")],
         ['INIT', 'E_INIT_FAILED', 'SyntaxError', 'module-import-sentinel',
             "throw new SyntaxError('module-import-sentinel'); export default {};"],
-    ])('preserves the original %s exception through both INSTALL_FAILED wrappers and releases resources',
+    ])('preserves the original %s exception with the installation error and releases resources',
         async (phase, code, name, message, source) => {
             const id = 'broken_' + phase.toLowerCase();
             const f = await fixture(id, source);
@@ -68,32 +68,25 @@ export default {
                 expect(error).toBeInstanceOf(Error);
                 expect(error).toMatchObject({
                     code: 'INSTALL_FAILED', message: 'INSTALL_FAILED',
-                    cause: { code: 'INSTALL_FAILED', cause: {
-                        code, appId: 'diagnostics', phase,
-                        cause: { name, message, stack: expect.stringContaining(message) },
-                    } },
+                    cause: { code, appId: 'diagnostics', phase,
+                        cause: { name, message, stack: expect.stringContaining(message) } },
                 });
-                expect(error.cause.cause.code).not.toBe('PERSISTENCE_CLOSE_FAILED');
-                expect(error.cause.cause.cause.stack).toContain(id + '.mjs');
-                for (const wrapper of [error, error.cause, error.cause.cause]) {
+                expect(error.cause.code).not.toBe('PERSISTENCE_CLOSE_FAILED');
+                expect(error.cause.cause.stack).toContain(id + '.mjs');
+                for (const wrapper of [error, error.cause]) {
                     expect(Object.getOwnPropertyDescriptor(wrapper, 'cause')?.enumerable).toBe(false);
                 }
                 expect(JSON.stringify(error)).not.toContain(message);
-                const released = f.sandbox!.getCloseReport();
+                const released = error.closeReport;
                 expect(released).toMatchObject({ state: 'settled', resourcesReleased: true });
-                expect(released.host?.interactions).toMatchObject({ closed: true, retainedOperations: 0, retainedBytes: 0 });
+                expect(released.interactions).toMatchObject({ verified: true, retainedOperations: 0 });
                 // Developer diagnostics stay on the rejected Error, not in bounded cleanup summaries.
                 expect(JSON.stringify(released)).not.toContain(message);
-                if (phase === 'OPEN') {
-                    expect(released.host?.storage.unsafe).toBe(false);
-                    expect(released.host?.storage.lifecycle).toMatchObject({
-                        ok: true, unmount: 'completed', dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } },
-                    });
-                    expect(released.host?.storage.lifecycle?.flush).toMatchObject({ status: 'completed', ok: true, entries: [] });
-                } else expect(released.host?.storage).toMatchObject({ support: 'rejected', unsafe: false });
-                expect(f.manager.getWorkerSandbox('diagnostics' as any)).toBeUndefined();
+                if (phase === 'OPEN') expect(released.persistence).toMatchObject({ confirmedFlushes: 1, failedFlushes: 0 });
+                else expect(released).not.toHaveProperty('persistence');
+                expect(f.manager.getManagedApp('diagnostics' as any)).toBeUndefined();
             } finally {
-                expect((await f.manager.cleanupAsync()).resourcesReleased).toBe(true);
+                f.manager.clearInactiveInstallations();
             }
         });
 
@@ -117,30 +110,29 @@ export default createApp({ app_name: 'diagnostics', persistence: true, viewTypes
             } } };
         } });
         try {
-            await expect(f.installing).rejects.toMatchObject({ code: 'INSTALL_FAILED', cause: { code: 'INSTALL_FAILED',
-                cause: { code: 'E_OPEN_FAILED', cause: { name: 'TypeError', message: 'original open error' } } } });
+            const error = await f.installing.catch(error => error);
+            expect(error).toMatchObject({ code: 'INSTALL_FAILED',
+                cause: { code: 'E_OPEN_FAILED', cause: { name: 'TypeError', message: 'original open error' } } });
             expect(writes).toBe(1);
             const stored = readSqliteState(join(f.data, 'app-state'), 'diagnostics', id, 'draft');
             if (rejectWrite) expect(stored).toBeUndefined();
             else expect(JSON.parse(stored!).value).toBe('written during open');
-            expect(f.sandbox!.getCloseReport()).toMatchObject({ ok: false, resourcesReleased: true,
-                host: { worker: 'exited', storage: { unsafe: rejectWrite, actualIO: 0, ownerRetained: false,
-                    lifecycle: { ok: !rejectWrite, unmount: 'completed', flush: { ok: !rejectWrite,
-                        entries: [{ status: rejectWrite ? 'failed' : 'saved' }] }, dispose: { release: { status: 'released' } } } } } });
+            expect(error.closeReport).toMatchObject({ ok: false, resourcesReleased: true, worker: 'exited',
+                persistence: { confirmedFlushes: rejectWrite ? 0 : 1, failedFlushes: rejectWrite ? 1 : 0 } });
             expect(backend.getStats().ownerSlots).toBe(0);
-        } finally { await f.manager.cleanupAsync(); }
+        } finally { f.manager.clearInactiveInstallations(); }
     });
 
     it('keeps successful first render, installation and close working without diagnostic wrappers', async () => {
         const f = await fixture('healthy_render', app("return h('section', {}, 'ready');"));
         try {
-            await expect(f.installing).resolves.toBe('diagnostics');
-            expect(f.manager.getInstalledApps()).toMatchObject([{ installationId: 'healthy_render', appId: 'diagnostics', status: 'running' }]);
+            await expect(f.installing).resolves.toMatchObject({ appId: 'diagnostics', instanceId: expect.any(String) });
+            expect(f.manager.listApps()).toMatchObject([{ installationId: 'healthy_render', appId: 'diagnostics', status: 'running' }]);
         } finally {
-            const report = await f.manager.cleanupAsync();
+            const report = await f.sandbox!.beginClose().completion;
             expect(report).toMatchObject({ ok: true, resourcesReleased: true,
-                interactions: { retainedOperations: 0, retainedBytes: 0 },
-                resources: { retainedStorageOwners: 0, storageActualIO: 0 } });
+                interactions: { retainedOperations: 0 },
+                resources: { retainedOwners: 0, pendingOperations: 0 } });
         }
     });
 });

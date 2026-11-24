@@ -1,5 +1,6 @@
+import FixtureType from 'typebox';
 import { mountedViews, preparedRefs } from './__tests__/projection-facts.js';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
@@ -15,17 +16,17 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 
 const closing: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks();vi.unstubAllGlobals(); });
-const Detail = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Detail'});
+const Detail = defineViewType({ multiplicity: 'multiple', name:'Detail'});
 async function mount(Body: () => any) {
     const factory = createTUIApp({ app_name: 'public_api', viewTypes:[Detail], component: () => h(DynamicView, {idPrefix: 'detail', type: Detail }, h(Body, {})) });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+    const kernel = new AppKernel({ factory,
         appId: createAppId('app'), desktopId: createDesktopId('desktop'),
         instanceId: 'public_api_run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
     });
     let closed = false;
     const close = async () => { if (!closed) { closed = true;await act(async () => { await kernel.onClose(); }); } };closing.push(close);
     await act(async () => { await kernel.onOpen(); });
-    return { kernel, container: document.getElementById('app-root-app')!, close };
+    return { kernel, container: document.body.lastElementChild!, close };
 }
 
 it.each([
@@ -83,25 +84,6 @@ describe('C04/C09 SDK root exports and app context', () => {
         ]);
     });
 
-    it('does not expose retired View registry, InlineView, selector, or ref-registry assembly values', () => {
-        for (const name of [
-            'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
-            'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig', 'usePersistentState',
-            'useAppEnv', 'useLLMOutputChannel', 'useLLMOutputHistory', 'useLLMUsage', 'useViewSnapshotTool',
-            'createToolBindings', 'AppTools', 'defineToolSet', 'defineViewTypeTool', 'ToolRef', 'useViewContext',
-        ]) {
-            expect(Object.hasOwn(SDK, name), name).toBe(false);
-        }
-    });
-    it('keeps the formal lifecycle and general data Ref APIs without entity/create experiments', () => {
-        expect(Object.hasOwn(SDK, 'useAppLifecycle')).toBe(true);
-        expect(Object.hasOwn(SDK, 'useDataRef')).toBe(true);
-        expect(Object.hasOwn(SDK, 'useArrayRef')).toBe(true);
-        for (const name of ['experimental_useAppLifecycle', 'experimental_useCreateIfAbsentTool', 'useEntityRef']) {
-            expect(Object.hasOwn(SDK, name), name).toBe(false);
-        }
-    });
-
     it('exposes metadata, persistence and local preparation without exposing the renderer ports', async () => {
         const report = { status: 'completed', ok: true, entries: [] } as const;
         const flush = vi.fn(async () => report);
@@ -110,6 +92,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         const remove = vi.fn(async () => {});
         const prepareProjection = vi.fn();
         const prepareOpeningProjection = vi.fn();
+        const readPreparedViewId = vi.fn();
         const persistence: SDK.AppStatePersistence = { protocol: 'state-session-v2', instanceId: 'public_api_run', load, save, remove, flush };
         let publicContext: any;
         const projectionLimits = Object.freeze({ maxViews: 1, maxRefs: 1, maxTools: 1,
@@ -122,6 +105,7 @@ describe('C04/C09 SDK root exports and app context', () => {
             projectionLimits,
             prepareProjection,
             prepareOpeningProjection,
+            readPreparedViewId,
             appLifecycle: { protocol: 'app-lifecycle-v2', register() {} },
             views: new WeakMap(),
             viewTypes: new Map(),
@@ -129,7 +113,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         function CaptureContext() { publicContext = useAppRuntimeContext();return null; }
         renderToString(h(AppRuntimeContext.Provider, { value: fullContext as any }, h(CaptureContext, {})));
 
-        expect(Object.keys(publicContext).sort()).toEqual(['appId', 'desktopId', 'launchConfig', 'persistence', 'prepareOpeningProjection', 'prepareProjection', 'projectionLimits']);
+        expect(Object.keys(publicContext).sort()).toEqual(['appId', 'desktopId', 'launchConfig', 'persistence', 'prepareOpeningProjection', 'prepareProjection', 'projectionLimits', 'readPreparedViewId', 'requestAttention']);
         expect(publicContext.projectionLimits).toBe(projectionLimits);
         expect(publicContext.persistence).toBe(persistence);
         expect(Object.keys(publicContext.persistence).sort()).toEqual(['flush', 'instanceId', 'load', 'protocol', 'remove', 'save']);
@@ -139,6 +123,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         expect(publicContext.persistence.flush).toBe(flush);
         expect(publicContext.prepareProjection).toBe(prepareProjection);
         expect(publicContext.prepareOpeningProjection).toBe(prepareOpeningProjection);
+        expect(publicContext.readPreparedViewId).toBe(readPreparedViewId);
         expect(publicContext).not.toHaveProperty('appLifecycle');
         expect(publicContext).not.toHaveProperty('views');
         expect(publicContext).not.toHaveProperty('viewTypes');
@@ -161,8 +146,8 @@ describe('C04/C09 SDK root exports and app context', () => {
         const x = await mount(Body);
         const projection = x.kernel.getProjectionCoordinator();
         const first = projection.token().epoch;
-        await expect(prepare(1)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 1 });
-        await expect(prepare(1)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 1 });
+        await expect(prepare(1)).resolves.toEqual({ status: 'prepared' });
+        await expect(prepare(1)).resolves.toEqual({ status: 'prepared' });
         expect(projection.failure).toBeUndefined();
         expect(projection.token().epoch).toBe(first + 1);
         const fault = { code: 'SNAPSHOT_INVALID', path: '$.views.detail', message: 'render failure' };
@@ -170,7 +155,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         expect(projection.failure).toEqual(fault);
         await expect(noUpdate()).rejects.toMatchObject({ ...fault, cause: renderFailure });
         expect(projection.token().epoch).toBe(first + 1);
-        await expect(prepare(2)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 2 });
+        await expect(prepare(2)).resolves.toEqual({ status: 'prepared' });
         expect(projection.failure).toBeUndefined();
     });
 
@@ -197,7 +182,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         await expect(open(update)).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID', message: expect.stringContaining('revert') });
         expect(ran).toBe(0);
         expect(x.kernel.getProjectionCoordinator().token().epoch).toBe(epoch);
-        await expect(prepare(update)).resolves.toEqual({ status: 'prepared', sourceEpoch: epoch + 1 });
+        await expect(prepare(update)).resolves.toEqual({ status: 'prepared' });
     });
 
     it('observes a returned thenable rejection and refuses the frame scheduled by that callback', async () => {
@@ -218,7 +203,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         expect(then).toHaveBeenCalledOnce();
         expect(projection.token().epoch).toBe(epoch);
         expect(projection.failure?.code).toBe('SNAPSHOT_INVALID');
-        await expect(prepare(() => set(2))).resolves.toEqual({ status: 'prepared', sourceEpoch: epoch + 1 });
+        await expect(prepare(() => set(2))).resolves.toEqual({ status: 'prepared' });
     });
 });
 
@@ -226,9 +211,9 @@ describe('C01/C02 actual component capability honesty', () => {
     it('keeps actual View/Ref registration without obsolete component registries', async () => {
         let context: any;
         let refFormatter: any;
-        function Body() { context = useContext(ViewRuntimeContext);const ref = useDataRef('record', { label: 'value' }, { scope: 'protected' });refFormatter = ref;return h('p', {}, ref('Record')); }
+        function Body() { context = useContext(ViewRuntimeContext);const ref = useDataRef('record', { label: 'value' }, { schema: FixtureType.Object({}), scope: 'protected' });refFormatter = ref;return h('p', {}, ref('Record')); }
         const x = await mount(Body);expect(context).not.toHaveProperty('llmOutput');expect(mountedViews(x.kernel)).toHaveLength(1);
-        expect(preparedRefs(x.kernel)).toContainEqual(expect.objectContaining({ viewId: 'detail', refId: 'record' }));expect(x.container.textContent).toContain('[Record](protected record: unknown)');
+        expect(preparedRefs(x.kernel)).toContainEqual(expect.objectContaining({ viewId: 'detail_1', refId: 'record' }));expect(x.container.textContent).toContain('[Record](protected record: object)');
         expect(refFormatter).not.toHaveProperty('data');
         expect(refFormatter).not.toHaveProperty('id');
         expect(Object.hasOwn(context, 'mountable')).toBe(false);

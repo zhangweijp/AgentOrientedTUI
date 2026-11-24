@@ -10,7 +10,7 @@ export const summary = <StaticView idPrefix="summary" type={Detail} />;
 export const session = <DynamicView id="session" type={Guide} />;
 // @ts-expect-error A ViewType without a region requires a region in direct JSX.
 export const noRegion = <Detail />;
-// @ts-expect-error Multiple pages choose an ID by prefix or the type's createId.
+// @ts-expect-error Multiple pages choose an ID prefix, not an explicit ID.
 export const multipleId = <DynamicView id="report" type={Detail} />;
 // @ts-expect-error Single pages may supply an ID, but do not take a prefix.
 export const singlePrefix = <Guide idPrefix="instructions" />;

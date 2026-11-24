@@ -24,7 +24,7 @@ async function prepareTools(type, viewId, context) {
 }
 
 const prepareFileTools = (owner, path, viewId, diagnostics = true) =>
-  prepareTools(FileDetailType, viewId, { owner, file: { observed: { path }, viewId }, diagnostics });
+  prepareTools(FileDetailType, viewId, { owner, file: { observed: { path }, key: 'slot:' + path }, diagnostics });
 
 async function main() {
   let createResult = { success: true, data: { filePath: '/work/new.txt' } };
@@ -38,7 +38,7 @@ async function main() {
   const owner = {
     roots: ['/work'], files: loadedViews, live: true, ready: true,
     invoke: async (name, args, receiver) => {
-      const path = [...loadedViews].find(([, id]) => id === receiver)?.[0];
+      const path = receiver?.startsWith('slot:') ? receiver.slice('slot:'.length) : undefined;
       if (name === 'lsp_hover') return success({ documentVersion: 1, value: hoverValue });
       if (name === 'search_files_by_pattern') return success({ paths: ['/work/a.ts'], total: 1 });
       if (name === 'search_files_by_content') return success({ paths: ['/work/a.ts'], matches: [{ line: 1, text: 'secret match payload' }] });
@@ -55,7 +55,7 @@ async function main() {
         return success({ filePath: args.newPath, diskCommitted: true, warnings: [] });
       }
       if (name === 'close_file_detail') {
-        for (const [filePath, viewId] of loadedViews) if (viewId === receiver) loadedViews.delete(filePath);
+        loadedViews.delete(path);
         return success({ closed: 1 });
       }
       return success({});

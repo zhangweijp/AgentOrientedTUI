@@ -1,5 +1,5 @@
 import { mountedViews } from './__tests__/projection-facts.js';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { Component, type ComponentChildren, h } from 'preact';
 import { useState } from 'preact/hooks';
@@ -19,7 +19,7 @@ const increment = { description:'Increment the counter', inputSchema:Type.Object
 
 it('keeps the close action with the actual direct and explicit JSX mounts', async () => {
     const Direct = defineJSXViewType({ name: 'Direct', multiplicity: 'single', region: 'dynamic' });
-    const Explicit = defineViewType({ name: 'Explicit', multiplicity: 'multiple', createId: ({ prefix }) => prefix });
+    const Explicit = defineViewType({ name: 'Explicit', multiplicity: 'multiple' });
     const called: string[] = [];
     function App() {
         const [open, setOpen] = useState(['Direct', 'static_page', 'dynamic_page']);
@@ -35,7 +35,7 @@ it('keeps the close action with the actual direct and explicit JSX mounts', asyn
         </>;
     }
     const factory = createTUIApp({ app_name: 'closable', component: App, viewTypes: [Direct, Explicit] });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory, appId: createAppId('closable'), desktopId: createDesktopId('desktop'),
+    const kernel = new AppKernel({ factory, appId: createAppId('closable'), desktopId: createDesktopId('desktop'),
         instanceId: 'closable-run', projectionLimits: DEFAULT_PROJECTION_LIMITS });
     const frame = () => {
         const publication = kernel.getProjectionCoordinator().nextPublication();
@@ -46,7 +46,7 @@ it('keeps the close action with the actual direct and explicit JSX mounts', asyn
         await act(async () => kernel.onOpen());
         const mounts = frame().views.slice();
         expect(mounts.map(view => [view.id, view.region, view.canClose])).toEqual([
-            ['Direct', 'dynamic', true], ['static_page', 'static', true], ['dynamic_page', 'dynamic', true],
+            ['Direct', 'dynamic', true], ['static_page_1', 'static', true], ['dynamic_page_1', 'dynamic', true],
         ]);
         for (const view of mounts) {
             await act(async () => {
@@ -67,7 +67,7 @@ type CounterContext = {
 
 it('commits Preact body, Ref and context-derived tools as one frame', async () => {
     const entered = vi.fn();
-    const Counter = defineViewType<CounterContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Counter', tools:{
+    const Counter = defineViewType<CounterContext>()({ multiplicity: 'multiple', name:'Counter', tools:{
         increment: {
             ...increment,
             execute({ input, context: { id, generation, setCount } }) {
@@ -88,7 +88,7 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
         return <DynamicView idPrefix={id}  type={Counter} context={context}>{content}</DynamicView>;
     }
     function Content({count, broken}: {count:number;broken:boolean}) {
-        const mark = useDataRef('count',{value:count},{ scope: 'protected',refType:'Count'});
+        const mark = useDataRef('count',{value:count},{ schema: Type.Object({}), scope: 'protected',refType:'Count'});
         if (broken) throw Error('failed-render');
         return <p>{mark(String(count))}</p>;
     }
@@ -108,7 +108,7 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
         </>;
     }
     const factory = createTUIApp({ app_name:'counter',viewTypes:[Counter],component:App });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+    const kernel = new AppKernel({ factory,
         appId: createAppId('counter'), desktopId: createDesktopId('desktop'),
         instanceId: 'counter-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
     });
@@ -127,44 +127,44 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
             const view = draft.views.find(view => view.id === id)!;
             return {viewId:id,viewInstanceId:view.viewInstanceId,activationId:view.toolBindings[0]!.activationId};
         };
-        const a = receiver(first,'a'), b = receiver(first,'b');
+        const a = receiver(first,'a_1'), b = receiver(first,'b_1');
         expect(a.activationId).not.toBe(b.activationId);
         const call = (target = a,args = {}) => kernel.invokeBoundTypeTool(tool!,target,args);
         expect(await call(a,{amount:'invalid'})).toMatchObject({phase:'not-entered'});
-        expect(await call(a,{view_id:'b'})).toMatchObject({phase:'not-entered'});
+        expect(await call(a,{view_id:'b_1'})).toMatchObject({phase:'not-entered'});
         await act(async () => { expect(await call(b,{observed:{value:2}})).toMatchObject({phase:'entered-returned'}); });
         expect(entered).toHaveBeenLastCalledWith('b',0,{observed:{value:2}},true,true);
-        expect(frame().views.find(view => view.id === 'b')!.content.value).toContain('[12](protected count: Count)');
-        expect(frame().views.find(view => view.id === 'a')!.content.value).toContain('[0](protected count: Count)');
+        expect(frame().views.find(view => view.id === 'b_1')!.content.value).toContain('[12](protected count: Count)');
+        expect(frame().views.find(view => view.id === 'a_1')!.content.value).toContain('[0](protected count: Count)');
         await act(async () => advance(1));
-        expect(receiver(frame(),'a')).toEqual(a);
+        expect(receiver(frame(),'a_1')).toEqual(a);
         await act(async () => { await call(); });
         expect(entered).toHaveBeenLastCalledWith('a',1,{},true,true);
 
         await act(async () => advance(2)).catch(() => {});
         expect(projection.failed).toBe(true);
         expect(await call()).toMatchObject({phase:'not-entered'});
-        expect(mountedViews(kernel).find(view => view.viewId === 'a')?.viewInstanceId).toBe(a.viewInstanceId);
+        expect(mountedViews(kernel).find(view => view.viewId === 'a_1')?.viewInstanceId).toBe(a.viewInstanceId);
 
         await act(async () => advance(3));
         const restricted = frame();
         expect(Object.keys(restricted.tools)).toHaveLength(1);
-        expect(restricted.views.find(view => view.id === 'a')!.toolBindings).toEqual([]);
+        expect(restricted.views.find(view => view.id === 'a_1')!.toolBindings).toEqual([]);
         expect(await call()).toMatchObject({phase:'not-entered'});
-        expect(receiver(restricted,'b')).toEqual(b);
+        expect(receiver(restricted,'b_1')).toEqual(b);
         await act(async () => advance(4));
-        const enabled = receiver(frame(),'a');
+        const enabled = receiver(frame(),'a_1');
         expect(enabled.viewInstanceId).toBe(a.viewInstanceId);
         expect(enabled.activationId).not.toBe(a.activationId);
         expect(await call()).toMatchObject({phase:'not-entered'});
 
         await act(async () => advance(5));
-        const replaced = receiver(frame(),'a');
+        const replaced = receiver(frame(),'a_2');
         expect(replaced.viewInstanceId).not.toBe(a.viewInstanceId);
         expect(await call(enabled)).toMatchObject({phase:'not-entered'});
         await act(async () => advance(6));
-        expect(frame().views.map(view => view.id)).toEqual(['b']);
-        expect(receiver(frame(),'b')).toEqual(b);
+        expect(frame().views.map(view => view.id)).toEqual(['b_1']);
+        expect(receiver(frame(),'b_1')).toEqual(b);
     } finally {
         await act(async () => kernel.onClose());
     }

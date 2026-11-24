@@ -80,7 +80,6 @@ export class HostManagerV2 {
         
         // 创建 SessionManagerV3
         this.sessionManager = new SessionManagerV3(
-            kernel,
             desktopManager,
             this.llmConfigService,
             this.messageService
@@ -280,7 +279,7 @@ export class HostManagerV2 {
         const binding = session && this.imAppReceipts.get(session.source);
         if (!session || !binding) return Promise.resolve({ kind: 'unavailable', code: 'RECEIPT_LOCATOR_UNAVAILABLE',
             message: 'The owning IM session is unavailable.' });
-        return binding.receipts.read(query, { desktop: session.desktop, kernel: this.requireKernel(),
+        return binding.receipts.read(query, { desktop: session.desktop,
             isCurrent: () => this.imSessionManager?.getSession(sessionKey) === session,
             isAppEnabled: installationId => binding.source.isAppEnabled(installationId) }, timeoutMs);
     }
@@ -386,13 +385,6 @@ export class HostManagerV2 {
         return this.desktopManager;
     }
 
-    private requireKernel(): IKernel {
-        if (!this.kernel) {
-            throw new Error('Kernel not initialized. Call initAgentDriver first.');
-        }
-        return this.kernel;
-    }
-
     private emitGuiUpdate(event: GuiUpdateEvent): void {
         console.log(`[HostManagerV2] Forward message: topic=${event.topicId}, type=${event.type}, listeners=${this.events.listenerCount('gui-update')}`);
         this.events.emit('gui-update', {
@@ -416,7 +408,7 @@ export class HostManagerV2 {
             systemPrompt,
         });
         const receipts = new PendingAppReceipts();
-        const aotuiSource = new SemanticAOTUIDrivenSource(input.desktop, this.requireKernel(), {
+        const aotuiSource = new SemanticAOTUIDrivenSource(input.desktop, {
             includeInstruction: true,
             onReceiptPending: (locator, result, subcallId) => receipts.remember(locator, result, subcallId),
         });

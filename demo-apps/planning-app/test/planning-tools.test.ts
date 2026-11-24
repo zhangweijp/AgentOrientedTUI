@@ -23,12 +23,13 @@ describe('planning app type-level tool handlers', () => {
         const previousPlan = plan('plan-a', 'phase-a', 'task-a');
         const addPhase = vi.fn(async () => 'phase-new');
         const deletePhase = vi.fn(async () => true);
-        const completeTask = vi.fn(async () => true);
+        const completeTask = vi.fn(async () => null);
+        const completePhase = vi.fn(async () => null);
         const tools = pageTools(PlanDetailType, {
             activePlan,
             addPhase,
             deletePhase,
-            completePhase: vi.fn(async () => true),
+            completePhase,
             addTask: vi.fn(async () => 'task-new'),
             updateTask: vi.fn(async () => true),
             deleteTask: vi.fn(async () => true),
@@ -37,13 +38,16 @@ describe('planning app type-level tool handlers', () => {
 
         const stalePlan = await tools.add_phase.execute({ plan: previousPlan, title: 'Wrong plan' });
         const stalePhase = await tools.delete_phase.execute({ phase: previousPlan.phases[0]! });
+        const staleCompletion = await tools.complete_phase.execute({ phase: previousPlan.phases[0]! });
         const staleTask = await tools.complete_task.execute({ task: previousPlan.phases[0]!.tasks[0]! });
 
         expect(addPhase).not.toHaveBeenCalled();
         expect(deletePhase).not.toHaveBeenCalled();
+        expect(completePhase).not.toHaveBeenCalled();
         expect(completeTask).not.toHaveBeenCalled();
         expect(stalePlan).toMatchObject({ success: false, error: { code: 'PLAN_NOT_ACTIVE' } });
         expect(stalePhase).toMatchObject({ success: false, error: { code: 'PHASE_NOT_FOUND' } });
+        expect(staleCompletion).toMatchObject({ success: false, error: { code: 'PHASE_NOT_FOUND' } });
         expect(staleTask).toMatchObject({ success: false, error: { code: 'TASK_NOT_FOUND' } });
     });
 
@@ -56,11 +60,11 @@ describe('planning app type-level tool handlers', () => {
             activePlan,
             addPhase: vi.fn(async () => 'phase-new'),
             deletePhase: vi.fn(async () => true),
-            completePhase: vi.fn(async () => true),
+            completePhase: vi.fn(async () => null),
             addTask,
             updateTask: vi.fn(async () => true),
             deleteTask,
-            completeTask: vi.fn(async () => true),
+            completeTask: vi.fn(async () => null),
         });
 
         const wrongPhase = await tools.add_task.execute({ phase: otherPlan.phases[0]!, title: 'wrong' });
@@ -108,15 +112,31 @@ describe('planning app type-level tool handlers', () => {
             activePlan: null,
             addPhase: vi.fn(async () => 'new-phase'),
             deletePhase: vi.fn(async () => true),
-            completePhase: vi.fn(async () => true),
+            completePhase: vi.fn(async () => null),
             addTask,
             updateTask: vi.fn(async () => true),
             deleteTask: vi.fn(async () => true),
-            completeTask: vi.fn(async () => true),
+            completeTask: vi.fn(async () => null),
         });
         const result = await tools.add_task.execute({ phase: previousPlan.phases[0]!, title: 'Must not be added' });
         expect(addTask).not.toHaveBeenCalled();
         expect(result).toMatchObject({ success: false, error: { code: 'PLAN_NOT_ACTIVE' } });
+    });
+
+    it('keeps the successful completion receipt when the saved state could not be projected', async () => {
+        const activePlan = plan('current', 'phase', 'task');
+        const projectionWarning = 'The completion was saved. The Planning pages could not be refreshed.';
+        const tools = pageTools(PlanDetailType, {
+            activePlan,
+            completePhase: async () => ({ title: 'Phase phase', phaseChanged: false, tasksCompleted: 1, projectionWarning }),
+            completeTask: async () => ({ projectionWarning }),
+        });
+        expect(await tools.complete_phase.execute({ phase: activePlan.phases[0]! })).toEqual({ success: true, data: {
+            message: 'Phase "Phase phase" was already complete. Completed 1 remaining task.', tasksCompleted: 1, projectionWarning,
+        } });
+        expect(await tools.complete_task.execute({ task: activePlan.phases[0]!.tasks[0]! })).toEqual({ success: true, data: {
+            message: 'Task "Task task" completed.', projectionWarning,
+        } });
     });
 
     it('creates a plan with optional initial tasks', async () => {

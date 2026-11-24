@@ -1,8 +1,19 @@
+import { compileToolParameters, compileValueSchema } from '@aotui/core';
 import { describe, expect, it } from 'vitest';
 import Type from 'typebox';
+import schemaContractVectors from '../../../core/src/tool/schema-contract-vectors.json' with { type: 'json' };
 import { exportTypeBoxSchema, exportTypeBoxValueSchema } from './typebox-schema.js';
+import { refParam } from './view-type-tool.js';
 
 describe('exportTypeBoxSchema', () => {
+  it('accepts an arbitrary JSON field and requires a declared shape for refParam', () => {
+    const ordinary = compileToolParameters(exportTypeBoxSchema(Type.Object({ body: Type.Unknown() })));
+    expect(ordinary).toMatchObject({ ok: true, contract: { schema: { properties: { body: {} } } } });
+    const ref = compileToolParameters(exportTypeBoxSchema(Type.Object({ item: refParam('Item', Type.Unknown()) })));
+    expect(ref).toMatchObject({ ok: false, issue: {
+      code: 'PARAMETER_DECLARATION_INVALID', path: '$.properties.item["x-aotui-ref-value"]',
+    } });
+  });
   it('removes only TypeBox node metadata and keeps JSON Schema fields and descriptions', () => {
     const input = Type.Object({
       filePath: Type.String({ description: 'Absolute path of an opened file.', minLength: 1 }),
@@ -98,7 +109,7 @@ describe('exportTypeBoxSchema', () => {
   });
 
   it('charges structural commas only for validated exported keys at the byte boundary', () => {
-    const input = Type.Object({ entry: Type.Readonly(Type.Optional(Type.String({ description: '' }))) });
+    const input = Type.Object({ entry: Type.Readonly(Type.Optional(Type.String({ description: '' }))) }, { additionalProperties: true });
     const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
     input.properties.entry!.description = 'x'.repeat(64 * 1024 - bytes(input));
     const exported = exportTypeBoxSchema(input);
@@ -114,7 +125,7 @@ describe('exportTypeBoxSchema', () => {
   });
 
   it('counts a synthesized string type as one value at the exact node boundary', () => {
-    const values = Array.from({ length: 4_994 }, (_, index) => index.toString(36));
+    const values = Array.from({ length: 4_993 }, (_, index) => index.toString(36));
     const input = { type: 'object', properties: { choice: { enum: values } } };
     expect(exportTypeBoxSchema(input).properties).toEqual({ choice: { enum: values, type: 'string' } });
     values.push('extra');
@@ -135,11 +146,12 @@ describe('exportTypeBoxSchema', () => {
         contexts: { type: 'array', items: { type: 'object' } },
         restricted: { type: 'object', properties: {}, additionalProperties: false },
       },
+      additionalProperties: false,
     });
   });
 
   it('keeps the export cost of fields removed during opaque object normalization', () => {
-    const input = Type.Object({ opaque: Type.Object({}), after: Type.String({ description: '' }) });
+    const input = Type.Object({ opaque: Type.Object({}), after: Type.String({ description: '' }) }, { additionalProperties: false });
     const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
     const exportedBytes = bytes(exportTypeBoxSchema(input));
     input.properties.after!.description = 'x'.repeat(64 * 1024 - exportedBytes);
@@ -214,4 +226,65 @@ describe('exportTypeBoxSchema', () => {
     expect(Object.isFrozen(input)).toBe(false);
     expect(Object.isFrozen(input.properties.path)).toBe(false);
   });
+
+  const vectors = schemaContractVectors as {
+    toolSchemas: Array<Record<string, any>>;
+    valueSchemas: Array<Record<string, any>>;
+  };
+
+  it.each(vectors.toolSchemas.map(vector => [vector.name, vector]))(
+    'matches shared tool schema vector %s',
+    (_name, vector) => {
+      if (vector.expect !== 'valid') {
+        const exported = exportTypeBoxSchema(vector.schema);
+        const compiled = compileToolParameters(exported);
+        expect(compiled).toMatchObject({
+          ok: false,
+          issue: { code: vector.expect === 'unsupported' ? 'PARAMETER_DECLARATION_UNSUPPORTED' : 'PARAMETER_DECLARATION_INVALID' },
+        });
+        return;
+      }
+      const exported = exportTypeBoxSchema(vector.schema);
+      const compiled = compileToolParameters(exported);
+      expect(compiled.ok).toBe(true);
+      if (!compiled.ok) throw new Error('Expected valid tool schema vector');
+      for (const input of vector.validInputs) expect(compiled.contract.validateResolvedInput(input).ok).toBe(true);
+      for (const input of vector.invalidInputs) expect(compiled.contract.validateResolvedInput(input).ok).toBe(false);
+      if (vector.preserveExact !== undefined) {
+        expect(compiled.contract.validateResolvedInput(vector.preserveExact)).toEqual({ ok: true, value: vector.preserveExact });
+      }
+      if (vector.sdkExtraOk !== undefined) {
+        expect(exported.additionalProperties).toBe(vector.sdkExtraOk);
+        expect(compiled.contract.validateResolvedInput({ a: 'ok', extra: 1 }).ok).toBe(vector.sdkExtraOk);
+      }
+    },
+  );
+
+  it.each(vectors.valueSchemas.map(vector => [vector.name, vector]))(
+    'matches shared value schema vector %s',
+    (_name, vector) => {
+      const exported = exportTypeBoxValueSchema(vector.schema);
+      const compiled = compileValueSchema(exported);
+      const nominal = compileToolParameters(exportTypeBoxSchema(Type.Object({ item: refParam('Item', vector.schema) })));
+      if (vector.expect !== 'valid') {
+        const code = vector.expect === 'unsupported' ? 'PARAMETER_DECLARATION_UNSUPPORTED' : 'PARAMETER_DECLARATION_INVALID';
+        expect(compiled).toMatchObject({ ok: false, issue: { code } });
+        expect(nominal).toMatchObject({ ok: false, issue: { code } });
+        if (vector.issuePath) {
+          expect(compiled).toMatchObject({ issue: { path: vector.issuePath } });
+          expect(nominal).toMatchObject({ issue: { path: '$.properties.item["x-aotui-ref-value"]' + vector.issuePath.slice(1) } });
+        }
+        return;
+      }
+      expect(compiled.ok).toBe(true);
+      expect(nominal.ok).toBe(true);
+      if (!compiled.ok || !nominal.ok) throw new Error('Expected valid value schema vector');
+      for (const [values, ok] of [[vector.validValues, true], [vector.invalidValues, false]] as const) {
+        for (const value of values) {
+          expect(compiled.validate(value) === undefined).toBe(ok);
+          expect(nominal.contract.validateResolvedInput({ item: value }).ok).toBe(ok);
+        }
+      }
+    },
+  );
 });

@@ -4,7 +4,7 @@ import { createViewOwnedTools } from './view-owned-tools.js';
 const definition = { name:'add',description:'Add',inputSchema:{
     type:'object',properties:{amount:{type:'integer'}},required:['amount'],additionalProperties:false,
 } };
-const a = {createId: () => 'a',type:'Counter',owner:{}}, b = {createId: () => 'b',type:'Counter',owner:{}};
+const a = {idPrefix:'a',type:'Counter',owner:{}}, b = {idPrefix:'b',type:'Counter',owner:{}};
 const execute = () => ({success:true as const});
 const bind = (view: typeof a, enabled=true, handler=execute) => ({
     ...view,bindings:[{name:'add',enabled,execute:handler}],
@@ -92,45 +92,64 @@ describe('View instances and bounded committed Tool bindings', () => {
     });
 
     it('keeps the old owner live until a same-ID replacement is accepted', () => {
-        const registry=fixture(), previous=registry.prepareFrame([bind(a)]);
+        const registry = createViewOwnedTools('app', 'run');
+        registry.defineViewTypes([{ name: 'SingleCounter', multiplicity: 'single', tools: [definition] }]);
+        const singleView = { id: 'a', type: 'SingleCounter', owner: {}, bindings: [{ name: 'add', enabled: true, execute }] };
+        const previous = registry.prepareFrame([singleView]);
         previous.accept();
-        const next=registry.prepareFrame([bind({...a,owner:{}})]);
+        const next = registry.prepareFrame([{ ...singleView, owner: {} }]);
         expect(registry.getView('a')?.viewInstanceId).toBe(previous.instances[0]!.viewInstanceId);
         next.accept();
         expect(registry.getView('a')?.viewInstanceId).toBe(next.instances[0]!.viewInstanceId);
         expect(receiver(next.instances[0]!).viewInstanceId).not.toBe(receiver(previous.instances[0]!).viewInstanceId);
     });
 
-    it('skips an occupied default ID and does not rerun accepted naming', () => {
-        const registry = createViewOwnedTools('app', 'run');
-        registry.defineViewTypes([
-            { name: 'Tab', multiplicity: 'multiple', tools: [] },
-            { name: 'Guide', multiplicity: 'single', tools: [] },
-        ]);
-        const guide = { type: 'Guide', id: '3view_1', owner: {}, bindings: [] };
-        const tab = { type: 'Tab', idPrefix: '3view', owner: {}, bindings: [] };
-        const first = registry.prepareFrame([guide, tab]);
-        expect(first.instances.map(view => view.viewId)).toEqual(['3view_1', '3view_2']);
-        first.accept();
-        const reordered = registry.prepareFrame([tab, guide]);
-        expect(reordered.instances).toEqual([...first.instances].reverse());
+    it('skips occupied fixed single IDs in either frame order, stays stable on reorder, and never leaks sequence numbers on reject', () => {
+        for (const singleFirst of [true, false]) {
+            const registry = createViewOwnedTools('app', 'run');
+            registry.defineViewTypes([
+                { name: 'Tab', multiplicity: 'multiple', tools: [] },
+                { name: 'Guide', multiplicity: 'single', tools: [] },
+            ]);
+            const guide = { type: 'Guide', id: '3view_1', owner: {}, bindings: [] };
+            const tab = { type: 'Tab', idPrefix: '3view', owner: {}, bindings: [] };
+            const first = registry.prepareFrame(singleFirst ? [guide, tab] : [tab, guide]);
+            expect(first.instances.map(view => view.viewId)).toEqual(singleFirst ? ['3view_1', '3view_2'] : ['3view_2', '3view_1']);
+            first.accept();
+            const reordered = registry.prepareFrame(singleFirst ? [tab, guide] : [guide, tab]);
+            expect(reordered.instances).toEqual([...first.instances].reverse());
+            reordered.accept();
+
+            // A frame rejected during prepareFrame (without accept()) must not advance sequences.
+            const collidingSingle = { type: 'Guide', id: 'bad', owner: {}, bindings: [] };
+            const nextTab = { type: 'Tab', idPrefix: '3view', owner: {}, bindings: [] };
+            expect(() => registry.prepareFrame([tab, nextTab, guide, collidingSingle])).toThrow();
+            const recovered = registry.prepareFrame([guide, tab, nextTab]);
+            expect(recovered.instances.map(view => view.viewId)).toEqual(['3view_1', '3view_2', '3view_3']);
+            registry.dispose();
+        }
     });
 
-    it.each([
-        ['collision', () => 'a'],
-        ['numeric', () => '123'],
-        ['promise', () => Promise.reject(new Error('must not escape'))],
-        ['throw', () => { throw new Error('invalid app naming'); }],
-    ] as const)('reports custom naming %s once and preserves the committed owner', (_label, create) => {
-        const registry = fixture();
-        const accepted = registry.prepareFrame([bind(a)]);
-        accepted.accept();
-        const createId = vi.fn(create) as unknown as () => string;
-        expect(() => registry.prepareFrame([bind(a), bind({ ...b, createId })])).toThrow(expect.objectContaining({
-            code: 'SNAPSHOT_INVALID', path: 'ViewType Counter.createId',
-        }));
-        expect(createId).toHaveBeenCalledOnce();
-        expect(registry.getView('a')?.viewInstanceId).toBe(accepted.instances[0]!.viewInstanceId);
+    it('rejects ViewType names without an ASCII letter while preserving ID naming rules', () => {
+        for (const badType of ['4_2', '___', '123', '']) {
+            const registry = createViewOwnedTools('app', 'run');
+            expect(() => registry.defineViewTypes([{ name: badType, multiplicity: 'single', tools: [] }]))
+                .toThrow(expect.objectContaining({ code: 'VIEW_INVALID' }));
+            registry.dispose();
+        }
+        const registry = createViewOwnedTools('app', 'run');
+        registry.defineViewTypes([
+            { name: 'x_y', multiplicity: 'single', tools: [] },
+            { name: 'x_4', multiplicity: 'single', tools: [] },
+            { name: 'xy', multiplicity: 'multiple', tools: [] },
+        ]);
+        const frame = registry.prepareFrame([
+            { type: 'x_y', id: '4_2', owner: {}, bindings: [] },
+            { type: 'x_4', id: '___', owner: {}, bindings: [] },
+            { type: 'xy', idPrefix: '4_2', owner: {}, bindings: [] },
+        ]);
+        expect(frame.instances.map(v => v.viewId)).toEqual(['4_2', '___', '4_2_1']);
+        registry.dispose();
     });
 
     it.each(['success','failure','throw'])('lets a running %s settle after the registry is disposed', async kind => {

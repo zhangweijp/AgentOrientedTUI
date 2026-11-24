@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { createRuntime, type AppInteraction, type AppInvocation, type InvocationReceipt } from '@aotui/runtime';
+import { createRuntime, type AppInvocation, type InvocationReceipt } from '@aotui/runtime';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from '@aotui/runtime/adapters';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2, type MessageWithTimestamp } from '@aotui/agent-driver-v2';
@@ -72,7 +72,7 @@ it('uses the same packaged file App through an independent Host and the product 
         await mkdir(data);
         await writeFile(join(data, 'A.txt'), 'original A');
         await writeFile(join(data, 'B.txt'), 'original B');
-        const desktopId = await runtime.createDesktop();
+        const desktopId = (await runtime.createDesktop()).id;
         const desktop = runtime.getDesktop(desktopId);
         const localPath = await fixtureAppPath(join(folder, 'dist/batch-one-files.js'), 'batch_files', data);
         const register = (installationId: string) => desktop.registerPendingApp({
@@ -82,25 +82,18 @@ it('uses the same packaged file App through an independent Host and the product 
         await register('files_install');
         await register('OtherInstall');
         const receipts: { request: AppInvocation; receipt: InvocationReceipt }[] = [];
-        const interaction = runtime.getAppInteraction.bind(runtime);
-        const originals = new WeakMap<AppInteraction, AppInteraction>();
-        const bind = desktop.bindRequestSources.bind(desktop);
-        vi.spyOn(desktop, 'bindRequestSources').mockImplementation(({ apps }) => bind({ apps: apps.map(
-            ({ client, observationId }) => ({ client: originals.get(client) ?? client, observationId }),
-        ) }));
-        vi.spyOn(runtime, 'getAppInteraction').mockImplementation((...args) => {
-            const access = interaction(...args);
-            if (access.status !== 'ready') return access;
-            const client = access.interaction;
-            const instrumented: AppInteraction = { ...client, async invoke(request, timeout, sources) {
-                const result = await client.invoke(request, timeout, sources);
+        const adopt = desktop.adoptTurn.bind(desktop);
+        vi.spyOn(desktop, 'adoptTurn').mockImplementation(selection => {
+            const result = adopt(selection);
+            if (result.status === 'rejected') return result;
+            const active = result.turn;
+            return { ...result, turn: { ...active, get isCurrent() { return active.isCurrent; }, async invoke(appId, request, timeout, signal) {
+                const result = await active.invoke(appId, request, timeout, signal);
                 if (result.kind === 'receipt') receipts.push({ request, receipt: result.receipt });
                 return result;
-            } };
-            originals.set(instrumented, client);
-            return { ...access, interaction: instrumented };
+            } } };
         });
-        source = new SemanticAOTUIDrivenSource(desktop, runtime, { instruction: DEFAULT_AOTUI_SYSTEM_INSTRUCTION });
+        source = new SemanticAOTUIDrivenSource(desktop, { instruction: DEFAULT_AOTUI_SYSTEM_INSTRUCTION });
         source.setAppEnabled('OtherInstall', false);
         const sent: ProviderRequest[] = [];
         const productRequests: Record<string, { request: ProviderRequest; calls: readonly ModelCall[] }> = {};
@@ -169,30 +162,30 @@ it('uses the same packaged file App through an independent Host and the product 
         expect(home.tools.find(tool => tool.function.name === 'batch_files-open_file')?.function.parameters).toMatchObject({ required: ['name'] });
         const oneFile = await step('one-file', [modelCall('open-b', 'batch_files-open_file', { name: 'B.txt' })]);
         expect(oneFile.tools.filter(tool => tool.function.name === 'batch_files-edit')).toHaveLength(1);
-        const address = '$batch_files.doc_A.content';
-        const opened = await step('two-files', [modelCall('literal-edit', 'batch_files-edit', { view_id: 'doc_B', text: '$' + address })]);
+        const address = '$ref.batch_files.doc_1.content';
+        const opened = await step('two-files', [modelCall('literal-edit', 'batch_files-edit', { view_id: 'doc_2', text: '$' + address })]);
         expect(opened.tools.filter(tool => tool.function.name === 'batch_files-edit')).toHaveLength(1);
         const prompt = JSON.stringify(opened.messages);
-        expect(prompt).toContain('view_id=\\"doc_A\\" view_type=\\"file\\" app_id=\\"batch_files\\" app_name=\\"batch_files\\"');
-        expect(prompt).toContain('view_id=\\"doc_B\\"');
+        expect(prompt).toContain('view_id=\\"doc_1\\" view_type=\\"file\\" app_id=\\"batch_files\\" app_name=\\"batch_files\\"');
+        expect(prompt).toContain('view_id=\\"doc_2\\"');
         expect(await readFile(join(data, 'B.txt'), 'utf8')).toBe(address);
         const updatedA = 'new A outside the app';
         const afterLiteral = await step('after-literal', [
             modelCall('reload', 'batch_files-reload_source', {}),
-            modelCall('ref-edit', 'batch_files-edit', { view_id: 'doc_B', text: address }),
+            modelCall('ref-edit', 'batch_files-edit', { view_id: 'doc_2', text: address }),
         ], () => writeFile(join(data, 'A.txt'), updatedA));
         const modelViews = (request: ProviderRequest, id: string) =>
             userText(request).filter(text => text.startsWith('<view view_id="' + id + '"'));
-        expect(modelViews(afterLiteral, 'doc_B')).toHaveLength(1);
-        expect(modelViews(afterLiteral, 'doc_B')[0]).toContain('[' + address.replaceAll('_', '\\_') + '](protected content: string)');
+        expect(modelViews(afterLiteral, 'doc_2')).toHaveLength(1);
+        expect(modelViews(afterLiteral, 'doc_2')[0]).toContain('[' + address.replaceAll('_', '\\_') + '](protected content: string)');
         expect(await readFile(join(data, 'B.txt'), 'utf8')).toBe('original A');
         await step('before-authorization', [modelCall('disable-a', 'batch_files-mark_a_readonly', {})]);
-        await step('authorization', [modelCall('disabled-a', 'batch_files-edit', { view_id: 'doc_A', text: 'must be rejected' })]);
-        await step('close-a', [modelCall('close-a', 'batch_files-close', { view_id: 'doc_A' })]);
-        const after = await step('one-remaining', [modelCall('close-b', 'batch_files-close', { view_id: 'doc_B' })]);
-        expect(JSON.stringify(after.messages)).not.toContain('<view view_id=\\"doc_A\\"');
-        expect(modelViews(after, 'doc_B')).toHaveLength(1);
-        expect(modelViews(after, 'doc_B')[0]).toContain('[original A](protected content: string)');
+        await step('authorization', [modelCall('disabled-a', 'batch_files-edit', { view_id: 'doc_1', text: 'must be rejected' })]);
+        await step('close-a', [modelCall('close-a', 'batch_files-close', { view_id: 'doc_1' })]);
+        const after = await step('one-remaining', [modelCall('close-b', 'batch_files-close', { view_id: 'doc_2' })]);
+        expect(JSON.stringify(after.messages)).not.toContain('<view view_id=\\"doc_1\\"');
+        expect(modelViews(after, 'doc_2')).toHaveLength(1);
+        expect(modelViews(after, 'doc_2')[0]).toContain('[original A](protected content: string)');
         expect(after.tools.some(tool => tool.function.name === 'batch_files-edit')).toBe(true);
         const homeAgain = await step('directory-again');
         expect(homeAgain.tools.some(tool => tool.function.name === 'batch_files-edit')).toBe(false);
@@ -217,9 +210,10 @@ it('uses the same packaged file App through an independent Host and the product 
             expect(productPages).toHaveLength(independentPages.length);
             for (const message of independentPages) {
                 expect(message.role).toBe('user');
-                // The product also appends a directory of the observed Refs to the authored body.
                 const authored = message.content.slice(0, -'\n</view>'.length);
-                expect(productPages.filter(text => text.startsWith(authored))).toHaveLength(1);
+                const expectedPage = authored.replace('<view view_id="doc_3" ', '<view view_id="doc_2" ')
+                    .replaceAll('$ref.batch_files.doc_3', '$ref.batch_files.doc_2') + '\n</view>';
+                expect(productPages).toContain(expectedPage);
             }
             const appTools = request.tools.filter(tool => tool.function.name.startsWith('batch_files-'));
             expect(appTools.map(tool => tool.function).sort((a, b) => a.name.localeCompare(b.name)))
@@ -231,6 +225,12 @@ it('uses the same packaged file App through an independent Host and the product 
             const other = facts.calls.find((entry: { request: AppInvocation }) => entry.request.invocationId === id);
             expect(product, id).toBeDefined();
             expect(product!.request.input).toEqual(other.request.input);
+            if (id === 'close-b') {
+                expect(product!.request.viewId).toBe('doc_2');
+                expect(other.request.viewId).toBe('doc_3');
+            } else {
+                expect(product!.request.viewId).toEqual(other.request.viewId);
+            }
             expect(product!.receipt.executionPhase).toBe(other.result.receipt.executionPhase);
             expect(product!.receipt.outcome).toEqual(other.result.receipt.outcome);
         }
@@ -243,7 +243,7 @@ it('uses the same packaged file App through an independent Host and the product 
         driver?.stop(); driver?.dispose(); source?.dispose();
         const server = provider;
         if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-        const closed = await runtime.beginShutdown().completion;
+        const closed = await runtime.beginClose().completion;
         await rm(folder, { recursive: true, force: true });
         expect(closed).toMatchObject({ ok: true, resourcesReleased: true });
     }

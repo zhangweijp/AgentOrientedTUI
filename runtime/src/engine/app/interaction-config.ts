@@ -1,11 +1,10 @@
-import { AOTUIError } from '@aotui/core';
-import { normalizeProjectionLimits } from '@aotui/core/internal';
-import type { ProjectionLimits } from '@aotui/core';
+import { AOTUIError, copyJson, normalizeProjectionLimits, SnapshotDataError } from '@aotui/core';
+import type { AppInteractionPolicy, ProjectionLimits } from '@aotui/core';
 
 export const appInteractionFields = { toolsEnabled: 'boolean', projectionLimits: 'object' } as const;
 export const appInstallFields = {
     installationId: 'string', name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string',
-    config: 'object', ...appInteractionFields,
+    config: 'object', policy: 'object', ...appInteractionFields,
 } as const;
 
 function isRecord(value: unknown): boolean {
@@ -32,10 +31,26 @@ function captureLimits(input: unknown, path: string): ProjectionLimits {
     }
 }
 
+const capturedConfigs = new WeakSet<object>();
+const capturedPolicies = new WeakSet<object>();
+function captureLaunchConfig(value: object, path: string): object {
+    if (capturedConfigs.has(value)) return value;
+    try {
+        const config = copyJson(value, { maxDepth: 48, maxNodes: 100_000, maxApproxBytes: 4 * 1024 * 1024 }) as object;
+        capturedConfigs.add(config);
+        return config;
+    } catch (error) {
+        throw new AOTUIError('CONFIG_INVALID', {
+            path: error instanceof SnapshotDataError ? path + error.path.slice(1) : path,
+            reason: error instanceof Error ? error.message : 'Expected JSON launch configuration',
+        });
+    }
+}
+
 /** Validate and capture Host options before allocating or transferring ownership. */
 export function captureOptions<T extends object>(
     options: T | undefined,
-    fields: Readonly<Record<string, 'boolean' | 'string' | 'object'>>,
+    fields: Readonly<Record<string, 'boolean' | 'string' | 'object' | 'function'>>,
     path = 'options',
 ): T | undefined {
     if (options === undefined) return undefined;
@@ -54,9 +69,25 @@ export function captureOptions<T extends object>(
             if (key === 'toolsEnabled') throw invalidToolsEnabled();
             throw new AOTUIError('CONFIG_INVALID', { path: fieldPath, reason: `Expected an enumerable ${expected} data property` });
         }
-        captured[key] = key === 'projectionLimits' ? captureLimits(descriptor.value, fieldPath) : descriptor.value;
+        const value = descriptor.value;
+        captured[key] = key === 'projectionLimits' ? captureLimits(value, fieldPath)
+            : key === 'config' && value !== undefined ? captureLaunchConfig(value, fieldPath) : value;
     }
     return captured as T;
+}
+
+export function capturePolicy(policy: AppInteractionPolicy | undefined): AppInteractionPolicy | undefined {
+    if (policy === undefined) return;
+    if (capturedPolicies.has(policy)) return policy;
+    try {
+        const captured = captureOptions(policy, { project: 'function', authorize: 'function', canReadReceipt: 'function' }, 'options.policy');
+        if (captured && typeof captured.project === 'function' && typeof captured.authorize === 'function' &&
+            typeof captured.canReadReceipt === 'function') {
+            capturedPolicies.add(policy);
+            return policy;
+        }
+    } catch { /* Report the invalid policy at the lifecycle boundary. */ }
+    throw Object.assign(new TypeError('Provide project, authorize and canReadReceipt policy functions.'), { code: 'APP_INTERACTION_POLICY_INVALID' });
 }
 
 export function captureToolsEnabled(options?: object): boolean | undefined {

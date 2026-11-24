@@ -20,10 +20,9 @@ const owned = [];
 function pidGone(pid) { assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }); }
 
 async function session(id, track = false) {
-    const desktop = runtime.getDesktop(await runtime.createDesktop(id));
+    const desktop = await runtime.createDesktop({ id: id, policyForApp: () => policy });
     const executor = track ? createNodeScopedConsoleExecutor({ timeoutMs: 1_800 }) : undefined;
-    const source = createScopedSource(runtime, desktop, {
-        policy: () => policy,
+    const source = createScopedSource(desktop, {
         ...(executor ? { consoleExecutor: Object.assign(async program => {
             const result = await executor(program);
             calls.push(result);
@@ -101,7 +100,7 @@ try {
         const childId = output(result).subcalls[0].invocationId;
         const locator = pending.get(JSON.stringify([call.id, childId]));
         assert.ok(locator);
-        const { client } = appClient(runtime, a.desktop, TASKS);
+        const { client } = appClient(a.desktop, TASKS);
         const receipt = await client.readReceipt({ observationId: locator.observationId, invocationId: locator.invocationId });
         assert.equal(receipt.kind, 'receipt');
         assert.equal(receipt.receipt.outcome.status, 'succeeded');
@@ -126,7 +125,7 @@ try {
     facts.passed = true;
 } finally {
     await Promise.all(owned.map(close => close()));
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();
     await writeFile(evidence, JSON.stringify(facts, null, 2));
 }

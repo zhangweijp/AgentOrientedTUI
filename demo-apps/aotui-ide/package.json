@@ -2,6 +2,12 @@
   "name": "@agentina/aotui-ide",
   "version": "0.1.2",
   "description": "AOTUI IDE app for agent-oriented code browsing, search, editing, and LSP-assisted analysis.",
+  "aotui": {
+    "app_name": "system_ide",
+    "whatItIs": "An IDE with file actions, per-App sessions and language servers, and scoped View-owned tools.",
+    "whenToUse": "Explore authorized workspaces, read and change loaded files, search source, and inspect language information.",
+    "persistence": true
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

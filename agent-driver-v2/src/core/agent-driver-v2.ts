@@ -676,18 +676,8 @@ export class AgentDriverV2 {
             } : undefined);
             if (response.toolCalls.length) this.toolTurn = turn = createToolTurn();
             if (assistant && this.config.onAssistantMessage) {
-                console.log('\n=== AgentDriver calling onAssistantMessage ===');
-                console.log('Message:', JSON.stringify(assistant, null, 2));
-                console.log('Callback exists:', !!this.config.onAssistantMessage);
-                console.log('=============================================\n');
-                
                 this.logger.debug('Emitting onAssistantMessage event');
                 this.config.onAssistantMessage(assistant);
-            } else {
-                console.log('\n⚠️  onAssistantMessage NOT called!');
-                console.log('assistantMessage:', response.assistantMessage);
-                console.log('callback exists:', !!this.config.onAssistantMessage);
-                console.log('\n');
             }
 
             const { usage } = response;
@@ -790,11 +780,9 @@ export class AgentDriverV2 {
         } catch (error) {
             turn?.failed(error);
             if (error === REQUEST_SKIPPED) return;
-            this.logger.error('Error in run loop:', error);
-            if (this.config.onRunError) {
-                const normalizedError = error instanceof Error ? error : new Error(String(error));
-                this.config.onRunError(normalizedError);
-            }
+            const normalizedError = error instanceof Error ? error : new Error(String(error));
+            this.logger.error('Error in run loop:', normalizedError.stack ?? normalizedError.message);
+            this.config.onRunError?.(normalizedError);
             await this.setState('idle');
         } finally {
             await this.releaseContexts(retained);

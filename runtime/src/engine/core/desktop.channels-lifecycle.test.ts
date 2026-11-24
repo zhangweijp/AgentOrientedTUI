@@ -1,29 +1,67 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { Desktop } from './desktop.js';
-import { SignalBus } from './signal-bus.js';
-import { DesktopLogger } from './desktop-logger.js';
 
-describe('Desktop lifetime-bound channels', () => {
-    it('caches output; duplicate listener is idempotent and old unsubscribe cannot touch a successor', async () => {
-        const bus = new SignalBus(), first = new Desktop('same', { signalBus: bus }), listener = vi.fn(), output = first.output;
-        expect(first.output).toBe(output);output.subscribe(listener);output.subscribe(listener);expect(bus.getListenerCount('same')).toBe(1);
-        const handle = first.beginClose();expect(() => output.subscribe(listener)).toThrowError(expect.objectContaining({ code: 'DESKTOP_DISPOSED' }));await handle.completion;
-        const successor = new Desktop('same', { signalBus: bus });successor.output.subscribe(listener);output.unsubscribe(listener);
-        successor.emitSignal('manual_refresh');expect(listener).toHaveBeenCalledOnce();expect(bus.getListenerCount('same')).toBe(1);await successor.dispose();
-    });
-    it('revokes a subscription created during a synchronous reentrant close', async () => {
-        const bus = new SignalBus(), original = bus.subscribe.bind(bus);let desktop!: Desktop;let cancelCount = 0;
-        vi.spyOn(bus, 'subscribe').mockImplementation((id, listener) => {
-            const cancel = original(id, listener);listener({ desktopId: id, reason: 'manual_refresh', timestamp: 0 });
-            return () => { cancelCount++;cancel(); };
-        });
-        desktop = new Desktop('reentrant', { signalBus: bus });desktop.output.subscribe(() => { desktop.beginClose(); });
-        await desktop.beginClose().completion;expect(cancelCount).toBe(1);expect(bus.getListenerCount('reentrant')).toBe(0);
-    });
-    it('late log/emit diagnostics create no successor records', async () => {
-        const bus = new SignalBus(), logger = new DesktopLogger(), old = new Desktop('x:y', { signalBus: bus, logger });
-        await old.dispose();const next = new Desktop('x:y', { signalBus: bus, logger });const listen = vi.fn();next.output.subscribe(listen);
-        const before = next.getSystemLogs();old.logSystem('late');old.emitSignal('manual_refresh');
-        expect(next.getSystemLogs()).toEqual(before);expect(listen).not.toHaveBeenCalled();await next.dispose();
-    });
+const update = { appId: 'app', instanceId: 'run', reason: 'view_updated' } as const;
+
+afterEach(() => vi.restoreAllMocks());
+
+it('isolates Desktop signals, deduplicates subscriptions and binds unsubscribe to the original owner', async () => {
+    const first = new Desktop('same'), neighbor = new Desktop('same:neighbor');
+    const listen = vi.fn(), other = vi.fn(), output = first.output;
+    expect(first.output).toBe(output);
+    output.subscribe(listen);
+    output.subscribe(listen);
+    neighbor.output.subscribe(other);
+
+    const before = Date.now();
+    first.emitSignal(update);
+    expect(listen).toHaveBeenCalledExactlyOnceWith({ ...update, desktopId: 'same', timestamp: expect.any(Number) });
+    const signal = listen.mock.calls[0]![0];
+    expect(signal.timestamp).toBeGreaterThanOrEqual(before);
+    expect(signal.timestamp).toBeLessThanOrEqual(Date.now());
+    expect(other).not.toHaveBeenCalled();
+
+    await first.beginClose().completion;
+    expect(() => output.subscribe(listen)).toThrowError(expect.objectContaining({ code: 'DESKTOP_DISPOSED' }));
+    const successor = new Desktop('same');
+    successor.output.subscribe(listen);
+    output.unsubscribe(listen);
+    first.emitSignal(update);
+    successor.emitSignal(update);
+    neighbor.emitSignal(update);
+    expect(listen).toHaveBeenCalledTimes(2);
+    expect(other).toHaveBeenCalledExactlyOnceWith({ ...update, desktopId: 'same:neighbor', timestamp: expect.any(Number) });
+
+    await Promise.all([successor.beginClose().completion, neighbor.beginClose().completion]);
+});
+
+it('isolates a failing subscriber and stops delivering to listeners after unsubscribe', async () => {
+    const desktop = new Desktop('listeners');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failed = vi.fn(() => { throw Error('fixture'); }), listen = vi.fn();
+    desktop.output.subscribe(failed);
+    desktop.output.subscribe(listen);
+    desktop.emitSignal(update);
+    desktop.output.unsubscribe(failed);
+    desktop.output.unsubscribe(listen);
+    desktop.emitSignal(update);
+
+    expect(log).toHaveBeenCalledOnce();
+    expect(failed).toHaveBeenCalledOnce();
+    expect(listen).toHaveBeenCalledOnce();
+    await desktop.beginClose().completion;
+});
+
+it('stops delivery when a listener closes its Desktop in the same dispatch', async () => {
+    const desktop = new Desktop('reentrant'), following = vi.fn();
+    const close = vi.fn(() => { desktop.beginClose(); });
+    desktop.output.subscribe(close);
+    desktop.output.subscribe(following);
+    desktop.emitSignal(update);
+    expect(desktop.isClosing).toBe(true);
+    await desktop.beginClose().completion;
+    desktop.emitSignal(update);
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(following).not.toHaveBeenCalled();
 });

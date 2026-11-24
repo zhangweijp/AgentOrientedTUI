@@ -1,9 +1,9 @@
 /**
- * SPI Core Layer - Error System
+ * Core Error System
  * 
  * 统一的错误处理机制，提供类型安全的错误码和结构化错误类。
  * 
- * @module @aotui/runtime/spi/core/errors
+ * @module @aotui/core
  */
 
 const ERROR_MESSAGES = {

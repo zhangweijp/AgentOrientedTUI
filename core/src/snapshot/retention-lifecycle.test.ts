@@ -6,10 +6,10 @@ import { canonicalJson, utf8Size } from './json.js';
 import type { JsonValue } from './types.js';
 
 function draft(appId = 'a', instanceId = 'i', seq = 1, value = 'old') {
-    return { schemaVersion: 7 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
+    return { schemaVersion: 8 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
         views: [{ toolBindings: [], id: 'v', viewInstanceId: 'g', type: 'Detail', name: value, region: 'dynamic' as const,
             content: { format: 'markdown-v1' as const, value } }],
-        refs: { [refKey('v', 'g', 'r')]: { scope: 'protected', id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'g', refType: 'Value',
+        refs: { [refKey('v', 'g', 'r')]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'g', refType: 'Value',
             target: { kind: 'snapshot-value' as const, payload: { value } } } }, tools: {} };
 }
 const size = (d: ReturnType<typeof draft>) => utf8Size(canonicalJson(d as unknown as JsonValue));
@@ -159,7 +159,6 @@ describe('W09-A Snapshot finite retention', () => {
         expect(c.store.getById(snapshot.id)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         expect(c.store.acquire(snapshot.id)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         expect(c.store.resolveRef(hostile as any)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
-        expect(c.store.getTool(hostile as any)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         const stats = c.store.inspect(); expect(stats.state).toBe('disposed');
         for (const [key, value] of Object.entries(stats)) if (key !== 'state') expect(value).toBe(0);
         expect(Object.isFrozen(stats)).toBe(true); expect(c.store.inspect()).not.toBe(stats); expect(reads).toBe(before);

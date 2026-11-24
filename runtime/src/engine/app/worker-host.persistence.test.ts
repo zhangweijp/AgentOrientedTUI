@@ -5,8 +5,7 @@ import { AppWorkerHost } from './worker-host.js';
 
 class TestWorker extends EventEmitter {
     sent: any[] = [];terminated = 0;shutdownFailed = false;openFailed = false;
-    ack: 'valid' | 'missing' | 'invalid' | 'undefined' | 'accessor' = 'valid';
-    ackReads = 0;
+    ack: 'valid' | 'missing' | 'invalid' | 'undefined' | 'wrong-type' = 'valid';
     contactStorage = true;
     pendingCloseResponse: any;
     postMessage(message: any) {
@@ -18,13 +17,12 @@ class TestWorker extends EventEmitter {
         queueMicrotask(() => {
             if (message.type === 'INIT') {
                 const reply = { type: 'INIT_RESPONSE', requestId: message.requestId, success: true,
-                appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
+                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: message.appInstanceId },
                 protocol: message.protocol, toolsEnabled: message.toolsEnabled,
                 projectionLimits: message.projectionLimits,
                 appInstanceId: message.appInstanceId,
-                ...(this.ack === 'missing' ? {} : { persistence: this.ack === 'undefined' ? undefined :
+                ...(this.ack === 'missing' ? {} : { persistence: this.ack === 'undefined' ? undefined : this.ack === 'wrong-type' ? true :
                     { protocol: 'state-session-v2', version: 2, instanceId: this.ack === 'invalid' ? 'other' : message.appInstanceId } }) };
-                if (this.ack === 'accessor') Object.defineProperty(reply, 'persistence', { get: () => { this.ackReads++; return undefined; } });
                 this.emit('message', reply);
             }
             else if (message.type === 'APP_OPEN' && this.openFailed) {
@@ -37,7 +35,7 @@ class TestWorker extends EventEmitter {
                         dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } });
             } else {
                 const instanceId = this.sent[0].appInstanceId, closing = message.type === 'APP_CLOSE';
-                const lifecycleRequest = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
+                const lifecycleRequest = ['APP_STOP', 'APP_CLOSE'].includes(message.type);
                 const cleanupFailed = this.shutdownFailed && lifecycleRequest;
                 const response = { type: 'LIFECYCLE_RESPONSE', requestId: message.requestId,
                     success: !closing || !cleanupFailed,
@@ -61,12 +59,12 @@ const setup = (worker = new TestWorker(), options: Partial<ConstructorParameters
     worker, host: new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any,
         appModulePath: '/unused', timeout: 1000, config: { AOTUI_DATA_DIR: '/unused' }, existingWorker: worker as any, ...options }),
 });
-it.each(['missing', 'invalid', 'undefined', 'accessor', 'valid'] as const)('B02: separate persistence ACK %s; no backend opens merely from negotiation', async ack => {
+it.each(['missing', 'invalid', 'undefined', 'wrong-type', 'valid'] as const)('B02: separate persistence ACK %s; no backend opens merely from negotiation', async ack => {
     const { worker, host } = setup();worker.ack = ack;
     if (ack === 'valid' || ack === 'missing') await host.start();
     else await expect(host.start()).rejects.toThrow('PERSISTENCE_UNAVAILABLE');
-    expect(worker.ackReads).toBe(0);
-    expect(host.getPersistenceReport()).toMatchObject({ support: ack === 'valid' ? 'managed' : ack === 'missing' ? 'not-used' : 'rejected', actualIO: 0, ownerRetained: false });
+    if (ack === 'valid') expect(host.getPersistenceReport()).toMatchObject({ actualIO: 0, ownerRetained: false });
+    else expect(host.getPersistenceReport()).toBeUndefined();
     host.terminate();
 });
 it('ignores unsolicited storage and a bad directory for an unnegotiated App, then confirms App cleanup', async () => {
@@ -82,14 +80,12 @@ it('ignores unsolicited storage and a bad directory for an unnegotiated App, the
     await host.close();
     expect(opens).toBe(0);
     const report = await host.waitForResourceRelease();
-    expect(report).toMatchObject({ resourcesReleased: true, appCleanup: { report: { state: 'completed' } },
-        storage: { support: 'not-used', highWater: 0, ownerRetained: false, actualIO: 0 } });
-    expect(report.storage).not.toHaveProperty('release');
-    expect(report.storage).not.toHaveProperty('lifecycle');
+    expect(report).toMatchObject({ resourcesReleased: true, appCleanup: { report: { state: 'completed' } } });
+    expect(report).not.toHaveProperty('storage');
     expect(worker.sent.filter(message => message.type === 'STATE_STORAGE_RESPONSE')).toHaveLength(0);
 });
 
-it('does not allocate new storage for an ACK that arrives during close', async () => {
+it('does not open a backend for an ACK that arrives during close', async () => {
     const { worker, host } = setup();
     worker.contactStorage = false;
     const starting = host.start();
@@ -98,8 +94,8 @@ it('does not allocate new storage for an ACK that arrives during close', async (
     await closed;
     const report = await host.waitForResourceRelease();
     expect(report).toMatchObject({ resourcesReleased: true, appCleanup: { report: { state: 'completed' } } });
-    expect(report.storage.support).not.toBe('managed');
-    expect(report.storage).not.toHaveProperty('release');
+    expect(report.storage).toMatchObject({ pending: 0, ownerRetained: false, release: { status: 'released' } });
+    expect(worker.sent.some(message => message.type === 'APP_OPEN')).toBe(false);
 });
 
 it('captures a relative directory and backend before negotiation', async () => {
@@ -141,8 +137,13 @@ it('B18: shutdown lifecycle failure still reaches APP_CLOSE and cannot pool', as
     expect(host.getPersistenceReport()).toMatchObject({ unsafe: false, lifecycle: { ok: true, unmount: 'failed' }, release: { status: 'released' } });
     expect((await host.waitForResourceRelease()).worker).toBe('exited');expect(worker.terminated).toBe(1);
 });
-it('B13: a storage type accessor never falls through into the legacy message router', async () => {
-    const { host } = setup();await host.start();let calls = 0;
-    const input = Object.defineProperty({}, 'type', { enumerable: true, get() { calls++;return 'STATE_STORAGE_REQUEST'; } });
-    (host as any).handleMessage(input);expect(calls).toBe(0);expect(host.getPersistenceReport().actualIO).toBe(0);host.terminate();
+it('B13: a storage request with the wrong version performs no I/O', async () => {
+    const { host, worker } = setup();
+    await host.start();
+    worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: '2', instanceId: host.appInstanceId,
+        sequence: 1, action: 'read', address: { namespace: '["d","a"]', key: 'value' } });
+    await Promise.resolve();
+    expect(host.getPersistenceReport()).toMatchObject({ actualIO: 0, ownerRetained: false });
+    expect(worker.sent.some(message => message.type === 'STATE_STORAGE_RESPONSE')).toBe(false);
+    host.terminate();
 });

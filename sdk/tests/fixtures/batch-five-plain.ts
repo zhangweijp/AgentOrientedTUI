@@ -4,7 +4,7 @@ import Type from 'typebox';
 import { createApp, createView, defineViewType } from '@aotui/sdk/app';
 import { DIAGRAM, PLAIN_APP, RAW_VIEWS } from './batch-five-content.js';
 
-const Raw = defineViewType({ name: 'raw_markdown', multiplicity: 'multiple', createId: ({ prefix }) => prefix });
+const Raw = defineViewType({ name: 'raw_markdown', multiplicity: 'multiple' });
 const Healthy = defineViewType<{ ping(): void }>()({ name: 'healthy', multiplicity: 'single', region: 'dynamic', tools: {
     ping: { description: 'Record an independent health check.', inputSchema: Type.Object({}), execute: ({ context }) => {
         context.ping();

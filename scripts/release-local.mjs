@@ -175,8 +175,11 @@ function build(name) {
             }
             const payload = recordInventory(extracted, path.join(target, 'payload.json'));
             if (pkg === 'runtime') {
-                assert.equal(metadata.bin, undefined);
-                assert.ok(!Object.keys(read(path.join(out, payload.file))).some(file => /^dist\/cli(?:\/|[.-])/.test(file)));
+                assert.deepEqual(metadata.bin, { 'aotui-stdio': 'dist/stdio.js' });
+                const files = read(path.join(out, payload.file));
+                for (const file of ['dist/stdio.js', 'dist/examples/files/app.mjs', 'examples/files/aoapp.json', 'examples/python-host.py'])
+                    assert.ok(Object.hasOwn(files, file), 'Missing Runtime package file ' + file);
+                assert.ok(!Object.keys(files).some(file => /^dist\/cli(?:\/|[.-])/.test(file)));
             }
             built[pkg] = { name: metadata.name, version: metadata.version, tar: relative(tar), sha256: hashFile(tar), payload, compiler: tsc,
                 dependencies: metadata.dependencies, peerDependencies: metadata.peerDependencies, optionalDependencies: metadata.optionalDependencies };

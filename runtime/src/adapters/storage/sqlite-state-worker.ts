@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { parentPort, workerData } from 'node:worker_threads';
-import { failedMutation, failedRead, stateIssue, unknownMutation } from '@aotui/core/internal';
+import { failedMutation, failedRead, stateIssue, unknownMutation } from '@aotui/core/persistence';
 import type { StateIssueCode } from '@aotui/core';
 import { sqliteStateFile } from './sqlite-state-storage.js';
 import type { SqliteOperation, SqliteStateStorageLimits } from './sqlite-state-storage.js';

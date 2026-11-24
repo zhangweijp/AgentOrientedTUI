@@ -279,7 +279,7 @@ try {
         },
         contextCompaction: { enabled: false },
     });
-    manager = new SessionManagerV3(runtime, desktopManager,
+    manager = new SessionManagerV3(desktopManager,
         new InMemoryLLMConfigService(new ModelRegistry()), new PrivateTestMessageService(),
         { maxSessions: 1, idleTimeoutMs: MAX_DURATION_MS * 2, cleanupIntervalMs: MAX_DURATION_MS * 2 });
     manager.on('message', (event: GuiUpdateEvent) => {
@@ -315,7 +315,7 @@ try {
     requireFact(session.agentDriver instanceof AgentDriverV2, 'DEFAULT_AGENT_DRIVER_MISSING');
     facts.defaultSemanticSource = session.sources.aotui instanceof SemanticAOTUIDrivenSource;
     requireFact(facts.defaultSemanticSource, 'DEFAULT_SEMANTIC_SOURCE_MISSING');
-    requireFact(session.desktop.getInstalledApps().length === 1, 'DEFAULT_IDE_INSTALLATION_FAILED');
+    requireFact(session.desktop.listApps().length === 1, 'DEFAULT_IDE_INSTALLATION_FAILED');
 
     // Readiness only; the script never invokes app tools on the model's behalf.
     const readyDeadline = Date.now() + 20_000;

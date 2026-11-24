@@ -16,7 +16,7 @@ const healthyManifest = await readAppManifest(healthy);
 const theatreManifest = await readAppManifest(theatre);
 const provider = await fixtureProvider();
 const runtime = createRuntime();
-const captured = captureAdmission(runtime);
+const captured = captureAdmission();
 const facts = { wire: provider.requests, adoptions: captured.events, workers: captured.workers, receipts: captured.receipts, passed: false };
 
 function responsesFrames(calls) {
@@ -37,7 +37,7 @@ function responsesFrames(calls) {
 async function runMode(id, mode, exercise, { scenario = 'cinema', responses = false, oneShot = false } = {}) {
     if (scenario === 'cinema') await publishSeat(cinemaManifest, original);
     else if (scenario !== 'empty') await setPolicyScenario(theatreManifest, scenario);
-    const desktop = runtime.getDesktop(await runtime.createDesktop(id));
+    const desktop = await runtime.createDesktop(id);
     captured.attach(desktop);
     const apps = scenario === 'empty' ? [] : [scenario === 'cinema' ? ['cinema_install', cinema] : ['theatre_install', theatre], ['healthy_install', healthy]];
     for (const [installationId, localPath] of apps) {
@@ -47,7 +47,7 @@ async function runMode(id, mode, exercise, { scenario = 'cinema', responses = fa
     const beta = id === 'deepseek';
     const providerId = beta ? id : 'openai';
     const url = beta ? provider.url.replace(/\/v1$/, '/beta') : responses ? 'https://api.openai.com/v1' : provider.url;
-    const source = new SemanticAOTUIDrivenSource(desktop, runtime, oneShot ? { consoleExecutor: createNodeConsoleExecutor() } : {});
+    const source = new SemanticAOTUIDrivenSource(desktop, oneShot ? { consoleExecutor: createNodeConsoleExecutor() } : {});
     if (scenario === 'empty') source.setAppsEnabled(false);
     const history = [], delivered = [], errors = [];
     const limits = { contextWindow: 120_000, maxOutputTokens: 1_000, ...(mode === 'blocked' ? { capabilities: { toolCall: false } } : {}) };
@@ -85,7 +85,7 @@ async function runMode(id, mode, exercise, { scenario = 'cinema', responses = fa
         return { body: request.body, message, errors };
     };
     try {
-        if (mode !== 'blocked') return await exercise(turn, desktop);
+        if (mode !== 'blocked') return await exercise(turn, desktop, source);
         const before = [provider.requests.length, captured.events.length, captured.workers.length, (await healthyLog(healthyManifest)).length];
         history.push({ role: 'user', content: 'Require management tools', timestamp: 1, region: 'session' });
         driver.resume(); await driver.trigger();
@@ -105,7 +105,7 @@ async function runMode(id, mode, exercise, { scenario = 'cinema', responses = fa
 
 try {
     facts.native = await runMode('native', 'ordinary', (turn, desktop) => exerciseCinema(turn, cinemaManifest,
-        appClient(runtime, desktop, 'cinema').client, captured));
+        appClient(desktop, 'cinema').client, captured));
     facts.openai = await runMode('openai', 'strict', turn => exerciseStrict(turn, 'strict-openai', healthyManifest, captured));
     facts.deepseek = await runMode('deepseek', 'strict', async turn => {
         const result = await exerciseStrict(turn, 'strict-deepseek', healthyManifest, captured, false);
@@ -118,8 +118,8 @@ try {
     facts.blocked = await runMode('blocked', 'blocked');
     const repair = facts.repair = {};
     for (const scenario of ['window', 'twins', 'at', 'over', 'split-over', 'empty']) {
-        repair[scenario] = await runMode('provider_' + scenario, 'strict', (turn, desktop) => {
-            if (scenario === 'window' || scenario === 'twins') return exercisePolicyWindows(turn, desktop, captured, theatreManifest, scenario === 'twins');
+        repair[scenario] = await runMode('provider_' + scenario, 'strict', (turn, _desktop, source) => {
+            if (scenario === 'window' || scenario === 'twins') return exercisePolicyWindows(turn, source, captured, theatreManifest, scenario === 'twins');
             if (scenario === 'empty') return exerciseEmptyConsole(turn);
             return exerciseStationBudget(turn, scenario, theatreManifest, healthyManifest, captured);
         }, { scenario });
@@ -131,7 +131,7 @@ try {
     assert.deepEqual(provider.failures, []);
     facts.passed = true;
 } finally {
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     captured.restore();
     await provider.close();
     await writeFile(evidence, JSON.stringify(facts, null, 2));

@@ -1,7 +1,7 @@
 import { it, expect, vi } from 'vitest';
 import { createAppStatePersistence } from './state-persistence.js';
 import { createMemoryStateStorage } from '../adapters/storage/memory-state-storage.js';
-import { failedMutation } from '@aotui/core/internal';
+import { failedMutation } from '@aotui/core/persistence';
 import type { StateStorage } from '@aotui/core';
 
 function fixture(wrap: (storage: StateStorage) => StateStorage = storage => storage) {

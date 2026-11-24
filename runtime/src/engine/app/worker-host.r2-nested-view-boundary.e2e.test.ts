@@ -1,4 +1,5 @@
-import { projectCompleteViews } from '@aotui/core/internal';
+import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
+import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,13 +21,13 @@ function appSource(): string {
         import Type from 'typebox';
         import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
         const inputSchema = Type.Object({}, { additionalProperties: false });
-        const ParentType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Parent', tools: {
+        const ParentType = defineViewType()({ multiplicity: 'multiple', name: 'Parent', tools: {
             parent_action: {
                 description: 'Run the parent action', inputSchema,
                 execute: async () => ({ success: true, data: { owner: 'parent' } }),
             },
         } });
-        const SiblingType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Sibling', tools: {
+        const SiblingType = defineViewType()({ multiplicity: 'multiple', name: 'Sibling', tools: {
             sibling_action: {
                 description: 'Run the sibling action', inputSchema,
                 execute: async () => ({ success: true, data: { owner: 'sibling' } }),
@@ -34,7 +35,7 @@ function appSource(): string {
         } });
 
         function Parent({ state }) {
-            const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []), { scope: 'protected' });
+            const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []), { schema: { type: 'object' }, scope: 'protected' });
             return h('section', {}, [
                 h('div', {}, h('article', {}, 'ORDINARY_NESTED_DOM_MARKER')),
                 h('p', {}, ref('PARENT_REF_MARKER')),
@@ -47,7 +48,7 @@ function appSource(): string {
         }
 
         function Sibling() {
-            const ref = useDataRef('sibling_ref', useMemo(() => ({ owner: 'sibling' }), []), { scope: 'protected' });
+            const ref = useDataRef('sibling_ref', useMemo(() => ({ owner: 'sibling' }), []), { schema: { type: 'object' }, scope: 'protected' });
             return h('section', {}, [
                 h('p', {}, ref('SIBLING_REF_MARKER')),
             ]);
@@ -154,7 +155,7 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
         try {
             const { app, workerScript } = await buildFixture(directory);
             worker = new Worker(workerScript);
-            host = new AppWorkerHost({
+            host = new AppWorkerHost({ policy: policyForSelection(),
                 appId: 'nested_app' as any,
                 desktopId: 'nested_desktop' as any,
                 appModulePath: app,
@@ -164,7 +165,7 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
             });
             const captures: Capture[] = [];
             const healthNotifications: Array<string | undefined> = [];
-            host.onUpdateRequest = () => healthNotifications.push(host!.getSemanticSnapshotReport()?.health);
+            host.onUpdate = reason => healthNotifications.push(reason);
             worker.on('message', message => {
                 if (message?.type === 'SNAPSHOT_PREPARED' || message?.type === 'SNAPSHOT_PREPARE_FAILED') {
                     captures.push(message);
@@ -184,57 +185,40 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 const after = sequence(captures.at(-1));
                 const capture = waitForCapture(worker!, captures, after);
                 worker!.postMessage({ type: 'TEST_COMMAND', command: eventType });
+                if (eventType === 'close-sibling' || eventType === 'open-sibling' || eventType === 'repair') {
+                    const opened = host!.getAppInteraction();
+                    if (opened.status !== 'ready') throw Error(opened.issue.code);
+                    expect((await opened.interaction.preview()).status).toBe('previewed');
+                }
                 return capture;
-            };
-            const policy = policyForSelection();
-            const invoke = async (viewId: string, name: string, invocationId: string) => {
-                const scope = host!.getAppInteraction(policy);
-                expect(scope.status).toBe('ready');
-                if (scope.status !== 'ready') throw new Error(scope.issue.code);
-                const observed = await scope.interaction.observe({ all: true });
-                expect(observed.status).toBe('observed');
-                if (observed.status !== 'observed') throw new Error(observed.issue.code);
-                expect(scope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
-                const tool = observed.observation.tools.find(candidate => candidate.name === name);
-                expect(tool).toBeDefined();
-                const target = observed.observation.views.find(view => view.type === tool?.viewType);
-                expect(target).toBeDefined();
-                const result = await scope.interaction.invoke({
-                    invocationId,
-                    observationId: observed.observation.observationId,
-                    toolId: tool!.id,
-                    input: { view_id: target!.id },
-                });
-                scope.interaction.releaseObservation(observed.observation.observationId);
-                return result;
             };
 
             const initial = readySnapshot();
-            expect(initial.views.map((view: any) => view.id).sort()).toEqual(['parent', 'sibling']);
-            const parent = initial.views.find((view: any) => view.id === 'parent');
+            expect(initial.views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_1']);
+            const parent = initial.views.find((view: any) => view.id === 'parent_1');
             expect(parent.content.value).toContain('ORDINARY_NESTED_DOM_MARKER');
             expect(parent.content.value).toContain('PARENT_INITIAL_MARKER');
             expect(parent.content.value).not.toContain('RAW_NESTED_VIEW_MARKER');
             expect(Object.values(initial.refs).find((ref: any) => ref.id === 'parent_ref'))
-                .toMatchObject({ ownerViewId: 'parent', target: { payload: { owner: 'parent' } } });
+                .toMatchObject({ ownerViewId: 'parent_1', target: { payload: { owner: 'parent' } } });
             expect(Object.values(initial.refs).find((ref: any) => ref.id === 'sibling_ref'))
-                .toMatchObject({ ownerViewId: 'sibling', target: { payload: { owner: 'sibling' } } });
-            expect(await invoke('parent', 'parent_action', 'parent-before-nesting'))
+                .toMatchObject({ ownerViewId: 'sibling_1', target: { payload: { owner: 'sibling' } } });
+            expect(await invokeObservedTool(host!, 'parent_action', {}, 'parent_1'))
                 .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true, data: { owner: 'parent' } } } } });
-            expect(await invoke('sibling', 'sibling_action', 'sibling-before-close'))
+            expect(await invokeObservedTool(host!, 'sibling_action', {}, 'sibling_1'))
                 .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true, data: { owner: 'sibling' } } } } });
 
             expect((await sendEvent('close-sibling')).type).toBe('SNAPSHOT_PREPARED');
             await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready' &&
                 host!.getSemanticSnapshotReport()?.lastViewCount === 1);
-            expect(readySnapshot().views.map((view: any) => view.id)).toEqual(['parent']);
-            expect(await invoke('parent', 'parent_action', 'parent-after-close'))
+            expect(readySnapshot().views.map((view: any) => view.id)).toEqual(['parent_1']);
+            expect(await invokeObservedTool(host!, 'parent_action', {}, 'parent_1'))
                 .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
 
             expect((await sendEvent('open-sibling')).type).toBe('SNAPSHOT_PREPARED');
             await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready' &&
                 host!.getSemanticSnapshotReport()?.lastViewCount === 2);
-            expect(readySnapshot().views.map((view: any) => view.id).sort()).toEqual(['parent', 'sibling']);
+            expect(readySnapshot().views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_2']);
 
             const beforeInvalid = host.getSemanticSnapshotReport()!;
             const previousGood = readySnapshot();
@@ -254,27 +238,27 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 lastIssueCode: 'SNAPSHOT_INVALID',
                 lastViewCount: 2,
             });
-            expect(healthNotifications.at(-1)).toBe('degraded');
-            expect(previousGood.views.map((view: any) => view.id).sort()).toEqual(['parent', 'sibling']);
+            expect(healthNotifications.at(-1)).toBe('projection_failed');
+            expect(previousGood.views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_2']);
             expect(previousGood.views.some((view: any) => view.content.value.includes('RAW_NESTED_VIEW_MARKER'))).toBe(false);
 
             const recovery = await sendEvent('repair');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');
             await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready' &&
                 host!.getSemanticSnapshotReport()?.lastViewCount === 2);
-            expect(readySnapshot().views.find((view: any) => view.id === 'parent').content.value)
+            expect(readySnapshot().views.find((view: any) => view.id === 'parent_1').content.value)
                 .toContain('PARENT_RECOVERED_MARKER');
-            expect(healthNotifications.at(-1)).toBe('ready');
-            expect(await invoke('parent', 'parent_action', 'parent-after-recovery'))
+            expect(healthNotifications.at(-1)).toBe('projection_recovered');
+            expect(await invokeObservedTool(host!, 'parent_action', {}, 'parent_1'))
                 .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
 
             await host.close();
             expect(host.getResourceReport()).toMatchObject({ interactions: {
-                closed: true, retainedOperations: 0, retainedBytes: 0,
+                closed: true, retainedOperations: 0,
             }, appCleanup: { support: 'managed', report: { state: 'completed', issues: [] } } });
             expect(worker.threadId).toBe(-1);
             expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'exited',
-                resourcesReleased: true, interactions: { closed: true, retainedOperations: 0, retainedBytes: 0 } });
+                resourcesReleased: true, interactions: { closed: true, retainedOperations: 0 } });
         } finally {
             host?.terminate();
             if (worker) await worker.terminate();

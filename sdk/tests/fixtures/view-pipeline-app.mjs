@@ -4,7 +4,7 @@ import Type from 'typebox';
 import { StaticView, DynamicView, createTUIApp, defineViewType, refParam, useDataRef } from '@aotui/sdk';
 
 const File = Type.Object({ id: Type.String(), text: Type.String() }, { additionalProperties: false });
-const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'FileDetail', tools: {
+const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
   update: {
     description: 'Update the displayed text.',
     inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
@@ -37,7 +37,7 @@ export const initialText = '    first line  \r\n```\r\n<view id="literal">&lt;or
 export const displayName = 'A > B & "C"\nnext';
 
 function FileBody({ text }) {
-  useDataRef('current', { id: 'internal-file', text }, { scope: 'protected', refType: 'File' });
+  useDataRef('current', { id: 'internal-file', text }, { schema: Type.Object({}), scope: 'protected', refType: 'File' });
   return h('section', {}, [
     h('span', { 'data-role': 'application-instruction' }),
     h('pre', {}, h('code', { class: 'language-text' }, text)),

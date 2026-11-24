@@ -12,10 +12,11 @@ Install Runtime, SDK and IDE packages from a compatible delivery. Published pack
 import { createDesktopId, createRuntime } from '@aotui/runtime';
 
 const runtime = createRuntime();
-const desktopId = await runtime.createDesktop(createDesktopId('dt_my-ide'));
+const desktop = await runtime.createDesktop(createDesktopId('dt_my-ide'));
 const appModulePath = import.meta.resolve('@agentina/aotui-ide');
-const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
+const app = await desktop.installDynamicWorkerApp(appModulePath, {
     installationId: 'my-ide',
+    name: 'system_ide',
     config: {
         projectPath: '/absolute/project',
         ideSessionKey: 'my-project',
@@ -27,7 +28,7 @@ const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
 });
 ```
 
-Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Ordinary and Ref parameters share `view-type-parameters-v1` and use the `view-tool-parameters-invoke/v6` Worker capability. When the Host finishes, await `runtime.beginShutdown().completion` and inspect its report.
+Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Runtime validates ordinary and Ref parameters under the same ViewType contract. It uses `app-worker/v10` with its bundled Worker. When the Host finishes, await `runtime.beginClose().completion` and inspect its report.
 
 The normal Host supplies App identity, Desktop identity, project path and managed persistence through AppContext. By default, the IDE derives its session key from the Desktop ID and the assigned App ID, and stores history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/history.json`. A different App installation order can change the assigned ID and the default path. Explicit `ideSessionKey` values use 1–128 ASCII letters, digits, underscores, dots or hyphens. Explicit `ideHistoryPath` values must be absolute. Give concurrent independent Apps distinct session keys. Recent history uses a cooperative lock/CAS and reports conflicts and warnings.
 

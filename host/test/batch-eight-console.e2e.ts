@@ -8,7 +8,7 @@ import type { AgentDriverV2, LLMConfig } from '@aotui/agent-driver-v2';
 import type { DesktopManager } from '../src/core/desktop-manager.js';
 import type { GuiUpdateEvent } from '../src/types/session.js';
 import { fixtureProvider, journal, watchUntil } from '../../tests/fixtures/batch-two-support.mjs';
-import { attachConsolePolicy, CATALOG, codeCall, exerciseConsole, installConsoleFixtures, savedResult, system, TASKS } from '../../tests/fixtures/batch-eight-support.mjs';
+import { consolePolicy, CATALOG, codeCall, exerciseConsole, installConsoleFixtures, savedResult, system, TASKS } from '../../tests/fixtures/batch-eight-support.mjs';
 
 const [consumer, evidence] = process.argv.slice(2);
 assert.ok(consumer, 'Provide the installed batch-eight consumer directory.');
@@ -27,14 +27,14 @@ const configuration = mock.method(Config, 'get', async () => ({
 const runtime = createRuntime({ worker: { timeoutMs: 25_000 } });
 const provider = await fixtureProvider();
 const hooks = { authorized: [], receipts: [] };
-attachConsolePolicy(runtime, hooks);
+const policy = consolePolicy(hooks);
 const facts: Record<string, unknown> = { requests: provider.requests, hooks, passed: false };
 const folders = new Map<string, string>();
 const desktops = {
     async createDesktop(id: DesktopID) {
         const folder = join(project, 'desktop-' + folders.size);
         folders.set(id, folder);
-        const desktop = runtime.getDesktop(await runtime.createDesktop(id));
+        const desktop = await runtime.createDesktop({ id: id, policyForApp: () => policy });
         const hidden = id === 'console-hidden-topic' || id.startsWith('agent:blank:');
         if (id.startsWith('agent:') || hidden) await installConsoleFixtures(desktop, consumer, folder);
         else await mkdir(folder, { recursive: true });
@@ -111,7 +111,7 @@ try {
     assert.equal(hiddenResult.code, 'INVALID_APP_TARGET');
     const hiddenRequest = provider.requests.find(entry => entry.label === 'enable directory without enabling its Apps');
     assert.doesNotMatch(JSON.stringify(hiddenRequest.body), /<view |console_catalog|console_tasks/);
-    const stillRunning = hiddenTopic.desktop.getInstalledApps().find(entry => entry.appId === TASKS);
+    const stillRunning = hiddenTopic.desktop.listApps().find(entry => entry.appId === TASKS);
     assert.equal(stillRunning?.status, 'running');
     facts.disabledAgents = { cases: hiddenCases, hiddenResult, appStatus: stillRunning.status };
     await host.shutdownSession(hiddenTopicId);
@@ -235,7 +235,7 @@ try {
 } finally {
     unsubscribe();
     await host.dispose();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();configuration.mock.restore();db.closeDatabase();
     if (evidence) await writeFile(resolve(evidence), JSON.stringify(facts, null, 2));
     await rm(project, { recursive: true, force: true });

@@ -20,6 +20,7 @@
     "dev": "vite",
     "build:all": "npm run build && npm run build:gui",
     "build:gui": "vite build",
+    "prepack": "npm run build:all 1>&2",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",

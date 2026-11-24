@@ -1,5 +1,5 @@
 export const MARKDOWN_VIEW_FORMAT = 'markdown-v1' as const;
-export const SNAPSHOT_SCHEMA_VERSION = 7 as const;
+export const SNAPSHOT_SCHEMA_VERSION = 8 as const;
 
 export const ViewRegion = Object.freeze({ Static: 'static', Dynamic: 'dynamic' } as const);
 export type ViewRegion = typeof ViewRegion[keyof typeof ViewRegion];
@@ -9,6 +9,9 @@ export type RefScope = 'private' | 'protected' | 'public';
 
 export function isInstanceName(value: unknown): value is string {
     return typeof value === 'string' && /[A-Za-z_]/.test(value) && !/[^A-Za-z0-9_]/.test(value);
+}
+export function isViewTypeName(value: unknown): value is string {
+    return typeof value === 'string' && /[A-Za-z]/.test(value) && !/[^A-Za-z0-9_]/.test(value);
 }
 /**
  * Runtime Core semantic snapshot types.
@@ -51,7 +54,7 @@ export interface RefDescriptor {
     readonly refType: string;
     readonly scope: RefScope;
     readonly array?: true;
-    readonly valueSchema?: JsonValue;
+    readonly valueSchema: JsonValue;
     readonly target: RefTarget;
 }
 export interface ToolDescriptor {
@@ -59,12 +62,11 @@ export interface ToolDescriptor {
     readonly name: string;
     readonly viewType: string;
     readonly multiplicity: ViewMultiplicity;
-    /** Another registered ViewType in this App declares the same tool name. */
-    readonly nameSharedAcrossViewTypes: boolean;
     readonly description: string;
     readonly inputSchema: JsonValue;
 }
-export type ToolInvocationDescriptor = Omit<ToolDescriptor, 'nameSharedAcrossViewTypes'>;
+
+export type ToolRoute = Pick<ToolDescriptor, 'id' | 'name' | 'viewType'>;
 export interface PreparedAppSnapshotDraft {
     readonly schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
     readonly appId: string;
@@ -119,7 +121,6 @@ export type SnapshotIssueCode =
     | 'TOOL_UNAVAILABLE'
     | 'TOOL_SOURCE_STALE'
     | 'TOOL_SOURCE_CONFLICT'
-    | 'REF_DECLARATION_INVALID'
     | 'REF_CONTRACT_UNSUPPORTED';
 
 export interface SnapshotIssue {
@@ -161,10 +162,6 @@ export type RefLookup =
     | Readonly<{ status: 'resolved'; ref: RefDescriptor; target: RefTarget }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
-export type ToolLookup =
-    | Readonly<{ status: 'found'; tool: ToolDescriptor }>
-    | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
-
 export interface RefSelector {
     snapshotId: string;
     appId: string;
@@ -172,13 +169,6 @@ export interface RefSelector {
     viewId: string;
     refId: string;
     viewInstanceId: string;
-}
-
-export interface ToolSelector {
-    readonly snapshotId: string;
-    readonly appId: string;
-    readonly instanceId: string;
-    readonly toolId: string;
 }
 
 export interface SnapshotLimits {
@@ -223,7 +213,6 @@ export interface SnapshotStore {
     getById(snapshotId: string): SnapshotLookup;
     acquire(snapshotId: string): HoldResult;
     resolveRef(selector: RefSelector): RefLookup;
-    getTool(selector: ToolSelector): ToolLookup;
     inspect(): SnapshotStoreStats;
 }
 

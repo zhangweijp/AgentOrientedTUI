@@ -5,7 +5,8 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Window } from 'happy-dom';
 import { createRuntime } from '@aotui/runtime';
-import { createSnapshotCore, createAppInteraction, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core';
+import { createAppInteraction, createSnapshotCore, createTurnCoordinator } from '@aotui/core/host';
+import { createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core/producer';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 
 /** The same public consumer runs in workspace regression and a normal tar installation. */
@@ -25,10 +26,10 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     return { node: document.documentElement, body: text.slice(1, -1) };
   };
   try {
-    const desktopId = await runtime.createDesktop('view-pipeline');
-    await runtime.installDynamicWorkerApp(desktopId, appURL, { name: 'pipeline',
+    const desktop = await runtime.createDesktop('view-pipeline');
+    const running = await desktop.installDynamicWorkerApp(appURL, { name: 'pipeline',
       config: { AOTUI_DATA_DIR: data } });
-    source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktopId), runtime, { includeInstruction: false });
+    source = new SemanticAOTUIDrivenSource(desktop, { includeInstruction: false });
     async function observe() {
       const context = await source.getContext();
       held.push(context);
@@ -36,14 +37,14 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
       return context;
     }
     async function call(context, type, tool, input) {
-      const args = type === 'Guide' ? input : { view_id: 'file_a', ...input };
+      const args = type === 'Guide' ? input : { view_id: 'file_a_1', ...input };
       const result = await context.executeTool(`pipeline-${tool}`, args, `pipeline-${facts.calls.length}`);
       facts.calls.push({ type, tool, input, result });
       return result;
     }
     let current = await observe();
     const initial = current;
-    const initialFile = message(current, 'file_a');
+    const initialFile = message(current, 'file_a_1');
     const guide = message(current, 'guide');
     assert.equal(initialFile.region, 'dynamic');
     assert.equal(guide.region, 'static');
@@ -55,34 +56,34 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     assert.equal(parsed.node.getAttribute('app_name'), 'pipeline');
     const raw = '    first line  \r\n```\r\n<view id="literal">&lt;original&gt;</view>\r\n</application>\r\nlast line  \r\n';
     const expectedBody = '\n````text\n' + raw + '````\n';
-    assert.equal(parsed.body, expectedBody + '\n\nAvailable references\n- protected current: File');
+    assert.equal(parsed.body, expectedBody + '\n\nAvailable references\n- protected $ref.pipeline.file_a_1.current (File)');
     assert.ok(!String(initialFile.content).includes('<view id="literal">'));
-    assert.equal((await call(current, 'FileDetail', 'inspect', { file: '$pipeline.file_a.current' })).result.matches, true);
-    const desktop = runtime.getDesktop(desktopId);
-    const app = desktop.getInstalledApps().find(candidate => candidate.appId === 'pipeline');
-    const interaction = runtime.getAppInteraction(desktopId, app.appId, app.appInstanceId).interaction;
-    const previewFile = async () => (await interaction.preview()).views.find(view => view.id === 'file_a');
+    assert.equal((await call(current, 'FileDetail', 'inspect', { file: '$ref.pipeline.file_a_1.current' })).result.matches, true);
+    const previewFile = async () => (await running.preview()).views.find(view => view.id === 'file_a_1');
     const originalMount = (await previewFile()).viewInstanceId;
     await call(current, 'Guide', 'move', {});
     current = await observe();
-    const pinned = message(current, 'file_a');
+    const pinned = message(current, 'file_a_1');
     assert.equal(pinned.region, 'static');
     assert.ok(pinned.timestamp > message(current, 'note_1').timestamp);
     assert.equal(message(current, 'guide').timestamp, guide.timestamp);
-    assert.equal(current.messages.filter(item => item.content.startsWith('<view view_id="file_a"')).length, 1);
+    assert.equal(current.messages.filter(item => item.content.startsWith('<view view_id="file_a_1"')).length, 1);
     assert.equal((await previewFile()).viewInstanceId, originalMount);
     await call(current, 'Guide', 'move', {});
     current = await observe();
-    assert.equal(message(current, 'file_a').region, 'dynamic');
+    assert.equal(message(current, 'file_a_1').region, 'dynamic');
     assert.equal((await previewFile()).viewInstanceId, originalMount);
 
     // A plain TypeScript Producer publishes the same metadata and body through the public Core.
     const core = createSnapshotCore({ appId: 'pipeline', instanceId: 'plain-run' });
     const registry = createViewOwnedTools('pipeline', 'plain-run');
-    registry.defineViewTypes(['Guide', 'FileDetail'].map(name => ({ name, multiplicity: 'multiple', tools: [] })));
+    registry.defineViewTypes([
+      { name: 'Guide', multiplicity: 'single', tools: [] },
+      { name: 'FileDetail', multiplicity: 'multiple', tools: [] },
+    ]);
     const frame = registry.prepareFrame([
-      { createId: () => 'guide', type: 'Guide', owner: {}, bindings: [] },
-      { createId: () => 'file_a', type: 'FileDetail', owner: {}, bindings: [] },
+      { id: 'guide', type: 'Guide', owner: {}, bindings: [] },
+      { idPrefix: 'file_a', type: 'FileDetail', owner: {}, bindings: [] },
     ]);
     const [guideView, fileView] = frame.instances;
     const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId: 'pipeline', instanceId: 'plain-run' }) });
@@ -95,15 +96,21 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     assert.equal(published.status, 'published');
     const authority = createAppInteraction(core.store, { namespace: 'plain-pipeline', now: Date.now, appId: 'pipeline', instanceId: 'plain-run',
       policy: { project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => null } });
-    const plainDesktop = { id: 'plain', getInstalledApps: () => [{ installationId: 'pipeline_install', appId: 'pipeline', appInstanceId: 'plain-run', name: 'pipeline', status: 'running' }], getAppWindows: () => undefined, bindRequestSources: () => undefined, getSystemLogs: () => [], output: { subscribe() {}, unsubscribe() {} } };
-    const plainSource = new SemanticAOTUIDrivenSource(plainDesktop, {
-      getAppInteraction: () => ({ status: 'ready', interaction: authority }),
-    }, { includeInstruction: false });
+    const turns = createTurnCoordinator();
+    const plainDesktop = {
+      id: 'plain', listApps: () => [{ installationId: 'pipeline_install', appId: 'pipeline', appInstanceId: 'plain-run', name: 'pipeline', status: 'running' }],
+      getAppWindows: () => undefined, adoptTurn: turns.adoptTurn, getSystemLogs: () => [],
+      getRunningApp: () => ({ status: 'ready', app: {
+        observe: () => turns.prepareObservation(authority, () => true),
+      } }),
+      output: { subscribe() {}, unsubscribe() {} },
+    };
+    const plainSource = new SemanticAOTUIDrivenSource(plainDesktop, { includeInstruction: false });
     try {
       const plain = await plainSource.getContext();
       try {
         await plain.adopt();
-        const plainFile = message(plain, 'file_a');
+        const plainFile = message(plain, 'file_a_1');
         assert.equal(plainFile.region, initialFile.region);
         assert.equal(message(plain, 'guide').content, guide.content);
         assert.equal(decode(String(plainFile.content)).body, expectedBody);
@@ -112,34 +119,34 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
       } finally { await plain.release(); }
     } finally {
       await plainSource.dispose(); authority.close(); await authority.whenClosed();
-      assert.equal(authority.inspect().combinedBytes, 0); assert.equal(core.store.inspect().activeHolds, 0);
+      assert.equal(core.store.inspect().activeHolds, 0);
       projection.close(); registry.dispose(); core.lifecycle.dispose();
     }
 
     const updatedText = '  UPDATED\r`````\r</view><view id="forged">literal</view> & done  \r';
     assert.equal((await call(current, 'FileDetail', 'update', { text: updatedText })).outcomeStatus, 'succeeded');
     current = await observe();
-    const updated = decode(String(message(current, 'file_a').content));
-    assert.equal(updated.body, '\n``````text\n' + updatedText + '\n``````\n\n\nAvailable references\n- protected current: File');
+    const updated = decode(String(message(current, 'file_a_1').content));
+    assert.equal(updated.body, '\n``````text\n' + updatedText + '\n``````\n\n\nAvailable references\n- protected $ref.pipeline.file_a_1.current (File)');
     assert.equal(message(current, 'guide').content, guide.content);
-    assert.equal((await call(initial, 'FileDetail', 'inspect', { file: '$pipeline.file_a.current' })).outcomeStatus, 'rejected');
-    assert.equal((await call(current, 'FileDetail', 'inspect', { file: '$pipeline.file_a.current' })).result.matches, true);
+    assert.equal((await call(initial, 'FileDetail', 'inspect', { file: '$ref.pipeline.file_a_1.current' })).outcomeStatus, 'rejected');
+    assert.equal((await call(current, 'FileDetail', 'inspect', { file: '$ref.pipeline.file_a_1.current' })).result.matches, true);
     assert.equal((await call(current, 'Guide', 'close', {})).outcomeStatus, 'succeeded');
     current = await observe();
-    assert.equal(message(current, 'file_a'), undefined);
+    assert.equal(message(current, 'file_a_1'), undefined);
     assert.equal(current.tools['pipeline-inspect'], undefined);
     assert.equal((await call(current, 'Guide', 'open', {})).outcomeStatus, 'succeeded');
     current = await observe();
     assert.ok(current.tools['pipeline-inspect']);
-    assert.equal((await call(initial, 'FileDetail', 'inspect', { file: '$pipeline.file_a.current' })).outcomeStatus, 'rejected');
-    assert.equal((await call(current, 'FileDetail', 'inspect', { file: '$pipeline.file_a.current' })).result.matches, true);
-    facts.messages = { initial: initialFile, guide, updated: message(current, 'file_a') };
+    assert.equal((await call(initial, 'FileDetail', 'inspect', { file: '$ref.pipeline.file_a_1.current' })).outcomeStatus, 'rejected');
+    assert.equal((await current.executeTool('pipeline-inspect', { view_id: 'file_a_2', file: '$ref.pipeline.file_a_2.current' }, `pipeline-${facts.calls.length}`)).result.matches, true);
+    facts.messages = { initial: initialFile, guide, updated: message(current, 'file_a_2') };
   } finally {
     for (const context of held) await context.release();
     await source?.dispose();
-    facts.close = await runtime.beginShutdown().completion;
+    facts.close = await runtime.beginClose().completion;
     assert.equal(facts.close.ok, true); assert.equal(facts.close.resourcesReleased, true);
-    assert.equal(facts.close.interactions.retainedOperations, 0); assert.equal(facts.close.interactions.retainedBytes, 0);
+    assert.equal(facts.close.interactions.retainedOperations, 0);
     await window.happyDOM.abort();
     await rm(data, { recursive: true, force: true });
     if (outputFile) await writeFile(outputFile, JSON.stringify(facts, null, 2) + '\n');

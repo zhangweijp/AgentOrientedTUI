@@ -20,7 +20,7 @@ function Counter({ owner, id, generation, enabled }) {
 }
 
 
-const CounterType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'Counter', tools: {
+const CounterType = defineViewType()({ multiplicity: 'multiple', name:'Counter', tools: {
     increment: {
         description:'Increment the selected Counter.', inputSchema:incrementInput,
         enabled: ({ id, view }) => id === 'counter2' || view.enabled,

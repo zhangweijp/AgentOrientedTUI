@@ -64,7 +64,7 @@ try {
 } finally {
     unsubscribe();
     await host.dispose();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     tracked?.restore();
     await provider.close();
     db.closeDatabase();

@@ -1,7 +1,7 @@
-import { isInstanceName, MARKDOWN_VIEW_FORMAT, SNAPSHOT_SCHEMA_VERSION } from './types.js';
+import { isInstanceName, isViewTypeName, MARKDOWN_VIEW_FORMAT, SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import { canonicalJson, checkJsonLimits, copyJson, SnapshotDataError, utf8Size } from './json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS, REF_VALUE_LIMITS, VIEW_METADATA_BYTES, refKey } from './snapshot-support.js';
-import { compileCapturedToolParameters } from '../tool/tool-parameters.js';
+import { compileCapturedToolParameters, compileValueSchema } from '../tool/tool-parameters.js';
 import type { SnapshotDraftEnvelope } from './types.js';
 import type {
     JsonValue, PreparedAppSnapshotDraft, SnapshotIssue, SnapshotLimits, ToolDescriptor,
@@ -131,7 +131,7 @@ export function validatePreparedSnapshot(
             if (!isInstanceName(id)) fail(path + '.id', 'Invalid View ID');
             const instanceId = str(view.viewInstanceId, path + '.viewInstanceId');
             const type = str(view.type, path + '.type');
-            if (!isInstanceName(type)) fail(path + '.type', 'Invalid ViewType name');
+            if (!isViewTypeName(type)) fail(path + '.type', 'Invalid ViewType name');
             if (mounted.has(id) || ids.has(instanceId)) fail(path + '.id', 'Duplicate View instance or viewId');
             const name = str(view.name, path + '.name');
             if (view.region !== 'static' && view.region !== 'dynamic') fail(path + '.region', 'Unknown View region');
@@ -152,8 +152,8 @@ export function validatePreparedSnapshot(
         for (const [key, value] of Object.entries(refs)) {
             const path = '$.refs[' + JSON.stringify(key) + ']';
             const ref = obj(value, path);
-            exact(ref, ['id', 'ownerViewId', 'ownerViewInstanceId', 'refType', 'scope', 'target',
-                ...(Object.hasOwn(ref, 'array') ? ['array'] : []), ...(Object.hasOwn(ref, 'valueSchema') ? ['valueSchema'] : [])], path);
+            exact(ref, ['id', 'ownerViewId', 'ownerViewInstanceId', 'refType', 'scope', 'target', 'valueSchema',
+                ...(Object.hasOwn(ref, 'array') ? ['array'] : [])], path);
             const id = str(ref.id, path + '.id');
             const owner = str(ref.ownerViewId, path + '.ownerViewId');
             const instanceId = str(ref.ownerViewInstanceId, path + '.ownerViewInstanceId');
@@ -167,13 +167,23 @@ export function validatePreparedSnapshot(
             exact(target, ['kind', 'payload'], path + '.target');
             if (Object.hasOwn(ref, 'array') && (ref.array !== true || !Array.isArray(target.payload)))
                 fail(path + '.array', 'ArrayRef requires an array payload');
-            if (ref.valueSchema !== undefined) withinBytes(obj(ref.valueSchema, path + '.valueSchema'), limits.maxToolSchemaBytes, path + '.valueSchema');
             const payloadPath = path + '.target.payload';
             withinBytes(target.payload!, Math.min(limits.maxRefPayloadBytes, REF_VALUE_LIMITS.maxCanonicalBytes), payloadPath);
             try { checkJsonLimits(target.payload, REF_VALUE_LIMITS); }
             catch (error) {
                 if (error instanceof SnapshotDataError) throw new SnapshotDataError(error.code, payloadPath + error.path.slice(1), error.message);
                 throw error;
+            }
+            const schema = obj(ref.valueSchema, path + '.valueSchema');
+            withinBytes(schema, limits.maxToolSchemaBytes, path + '.valueSchema');
+            const compiled = compileValueSchema(schema);
+            if (!compiled.ok) {
+                const issuePath = path + '.valueSchema' + compiled.issue.path.slice(1);
+                throw new SnapshotDataError('SNAPSHOT_INVALID', issuePath, compiled.issue.message);
+            }
+            const mismatch = compiled.validate(target.payload!);
+            if (mismatch) {
+                throw new SnapshotDataError('SNAPSHOT_INVALID', payloadPath + mismatch.path.slice(1), mismatch.message);
             }
         }
 
@@ -200,15 +210,15 @@ export function validatePreparedSnapshot(
                 activeTools.add(id);
             }
         }
-        const sharedNames = new Map<string, boolean>();
         const multiplicities = new Map<string, JsonValue>();
         for (const [key, value] of Object.entries(tools)) {
             const path = '$.tools[' + JSON.stringify(key) + ']';
             const tool = obj(value, path);
-            exact(tool, ['id', 'name', 'viewType', 'multiplicity', 'nameSharedAcrossViewTypes', 'description', 'inputSchema'], path);
+            exact(tool, ['id', 'name', 'viewType', 'multiplicity', 'description', 'inputSchema'], path);
             const id = str(tool.id, path + '.id');
             const name = str(tool.name, path + '.name');
             const viewType = str(tool.viewType, path + '.viewType');
+            if (!isViewTypeName(viewType)) fail(path + '.viewType', 'Invalid ViewType name');
             const multiplicity = tool.multiplicity;
             if ((multiplicity !== 'single' && multiplicity !== 'multiple') ||
                 (multiplicity === 'single' && countsByType.get(viewType) !== 1) ||
@@ -218,12 +228,6 @@ export function validatePreparedSnapshot(
             if (id !== key || id !== JSON.stringify([appId, viewType, name])) {
                 fail(path + '.id', 'Tool ID must be the canonical App + ViewType + name');
             }
-            const sharedName = tool.nameSharedAcrossViewTypes;
-            if (typeof sharedName !== 'boolean') fail(path + '.nameSharedAcrossViewTypes', 'Expected boolean');
-            const previousShared = sharedNames.get(name);
-            if (previousShared !== undefined && (!previousShared || !sharedName))
-                fail(path + '.nameSharedAcrossViewTypes', 'Tools with the same name across ViewTypes must both mark it shared');
-            sharedNames.set(name, sharedName);
             str(tool.description, path + '.description');
             const schema = obj(tool.inputSchema, path + '.inputSchema');
             if (schema.type !== 'object') fail(path + '.inputSchema.type', 'Tool inputs must have an object JSON schema');

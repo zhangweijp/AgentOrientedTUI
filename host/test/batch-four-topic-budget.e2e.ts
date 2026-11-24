@@ -41,7 +41,7 @@ const desktops = {
         const path = join(project, 'files-' + paths.size);
         paths.set(id, path);
         await setupFiles(path);
-        const desktopId = await runtime.createDesktop(id);
+        const desktopId = (await runtime.createDesktop(id)).id;
         const desktop = runtime.getDesktop(desktopId);
         await desktop.registerPendingApp({ installationId: 'files_install', localPath: await fixtureAppPath(moduleURL, APP, path), config: { folder: path, staticB: true } });
         await desktop.openApp('files_install');
@@ -51,7 +51,7 @@ const desktops = {
 } as DesktopManager;
 const topicId = 'budget-topic', key = 'agent:windows:test:direct:budget-peer';
 const topicMessages = new MessageService();
-const topic = new SessionManagerV3(runtime, desktops, models, topicMessages);
+const topic = new SessionManagerV3(desktops, models, topicMessages);
 const host = new HostManagerV2('unused-topic', {} as ConstructorParameters<typeof HostManagerV2>[1]);
 mock.method(host['llmConfigService'], 'resolveLLMConfig', models.resolveLLMConfig);
 const facts: Record<string, unknown> = { requests: provider.requests, passed: false };
@@ -136,7 +136,7 @@ try {
 } finally {
     await host.dispose();
     await topic.cleanup();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();
     config.mock.restore();
     db.closeDatabase();
