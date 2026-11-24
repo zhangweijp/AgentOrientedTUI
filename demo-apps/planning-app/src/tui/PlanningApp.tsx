@@ -1,17 +1,18 @@
-import { createTUIApp, useEffect, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
-import type { Plan, Phase, PhaseInput, TaskInput, TaskItem, TaskStatus } from '../types.js';
+import pkg from '../../package.json' with { type: 'json' };
+import { createTUIApp, useEffect, useMemo, useRef, useState, useAppLifecycle, useAppRuntimeContext } from '@aotui/sdk';
+import type { Plan, Phase, PhaseInput, TaskInput, TaskItem } from '../types.js';
 import { RootView } from './RootView.js';
 import { PlanListView } from './PlanListView.js';
 import { PlanDetailView } from './PlanDetailView.js';
 import { planningService } from '../core/planning-service.js';
-import type { AppContext } from '@aotui/sdk';
 import { RootType, PlanListType, PlanDetailType, planningViewTypes } from './planning-tools.js';
 
 function PlanningApp() {
     const [plans, setPlans] = useState<Plan[]>([]);
     const [activePlanId, setActivePlanId] = useState<string | null>(null);
     const selectedInSession = useRef(false);
-    const { desktopId, persistence } = useAppRuntimeContext();
+    const { desktopId, persistence, prepareProjection } = useAppRuntimeContext();
+    useAppLifecycle({ close: () => planningService.close() });
 
     const activePlan = useMemo(
         () => plans.find(plan => plan.id === activePlanId) || null,
@@ -150,35 +151,22 @@ function PlanningApp() {
         return true;
     };
 
+    const refreshCompletedPlans = async () => {
+        try {
+            const updated = await planningService.getPlans(desktopId);
+            await prepareProjection(() => setPlans(updated));
+            return {};
+        } catch (error) {
+            console.warn('Unable to refresh Planning pages after saving a completion', error);
+            return { projectionWarning: 'The completion was saved. The Planning pages could not be refreshed.' };
+        }
+    };
+
     const completePhase = async (phaseId: string) => {
-        const location = findPhaseLocation(phaseId);
-        if (!location) {
-            return false;
-        }
-        const { planId } = location;
-        const completed = await planningService.completePhase(desktopId, phaseId);
-        if (!completed) {
-            return false;
-        }
-        setPlans((prev: Plan[]) =>
-            prev.map((plan: Plan) => {
-                if (plan.id !== planId) {
-                    return plan;
-                }
-                const nextPhases = plan.phases.map((phase: Phase) => {
-                    if (phase.id !== phaseId) {
-                        return phase;
-                    }
-                    const nextTasks = phase.tasks.map((task: TaskItem) => ({
-                        ...task,
-                        status: 'completed' as TaskStatus
-                    }));
-                    return { ...phase, status: 'completed' as TaskStatus, tasks: nextTasks };
-                });
-                return { ...plan, phases: nextPhases };
-            })
-        );
-        return true;
+        if (!activePlanId) return null;
+        const completed = await planningService.completePhase(desktopId, activePlanId, phaseId);
+        if (!completed || (!completed.phaseChanged && completed.tasksCompleted === 0)) return completed;
+        return { ...completed, ...await refreshCompletedPlans() };
     };
 
     const addTask = async (phaseId: string, title: string, description?: string) => {
@@ -292,35 +280,9 @@ function PlanningApp() {
 
     const completeTask = async (taskId: string) => {
         const location = findTaskLocation(taskId);
-        if (!location) {
-            return false;
-        }
-        const { planId, phaseId } = location;
-        const completed = await planningService.completeTask(desktopId, taskId);
-        if (!completed) {
-            return false;
-        }
-        setPlans((prev: Plan[]) =>
-            prev.map((plan: Plan) => {
-                if (plan.id !== planId) {
-                    return plan;
-                }
-                const nextPhases = plan.phases.map((phase: Phase) => {
-                    if (phase.id !== phaseId) {
-                        return phase;
-                    }
-                    const nextTasks = phase.tasks.map((task: TaskItem) => {
-                        if (task.id !== taskId) {
-                            return task;
-                        }
-                        return { ...task, status: 'completed' as TaskStatus };
-                    });
-                    return { ...phase, tasks: nextTasks };
-                });
-                return { ...plan, phases: nextPhases };
-            })
-        );
-        return true;
+        if (!location || location.planId !== activePlanId) return null;
+        if (!await planningService.completeTask(desktopId, taskId)) return null;
+        return refreshCompletedPlans();
     };
 
     const planListContext = {
@@ -367,14 +329,7 @@ function PlanningApp() {
 }
 
 export default createTUIApp({
-    persistence: true,
-    app_name: 'planning_app',
-    whatItIs: 'A hierarchical task planning and progress tracking system that organizes work into three levels: Plans (projects), Phases (major milestones), and Tasks (individual work items). Each level supports full CRUD actions and tracks completion status. All data is persisted per-desktop using SQLite.',
-    whenToUse: 'Use Planning App when you need to: (1) Break down complex projects into manageable phases and tasks, (2) Track progress across multiple work streams or milestones, (3) Create structured, hierarchical work plans with descriptions and metadata, (4) Monitor completion status at plan, phase, and task levels, (5) Organize iterative development with clear phases and actionable tasks.',
+    ...pkg.aotui,
     component: PlanningApp,
     viewTypes: planningViewTypes,
-    onDelete: async (context: AppContext) => {
-        await planningService.clearDesktop(context.desktopId);
-        planningService.close();
-    }
 });

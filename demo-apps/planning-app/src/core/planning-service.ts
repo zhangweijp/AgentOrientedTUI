@@ -1,4 +1,4 @@
-import type { Plan, Phase, PhaseInput, TaskInput, TaskItem } from '../types.js';
+import type { Plan, Phase, PhaseCompletion, PhaseInput, TaskInput, TaskItem } from '../types.js';
 import * as db from '../db/index.js';
 
 async function ensureDb() {
@@ -81,9 +81,9 @@ export const planningService = {
         return db.deletePhase(desktopId, phaseId);
     },
 
-    async completePhase(desktopId: string, phaseId: string): Promise<boolean> {
+    async completePhase(desktopId: string, planId: string, phaseId: string): Promise<PhaseCompletion | null> {
         await ensureDb();
-        return db.completePhase(desktopId, phaseId);
+        return db.completePhase(desktopId, planId, phaseId);
     },
 
     async addTask(
@@ -113,11 +113,6 @@ export const planningService = {
     async completeTask(desktopId: string, taskId: string): Promise<boolean> {
         await ensureDb();
         return db.completeTodo(desktopId, taskId);
-    },
-
-    async clearDesktop(desktopId: string): Promise<void> {
-        await ensureDb();
-        db.clearPlansForDesktop(desktopId);
     },
 
     close(): void {

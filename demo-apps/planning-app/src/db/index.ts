@@ -1,8 +1,9 @@
 import initSqlJs, { type Database } from 'sql.js';
+import { randomUUID } from 'node:crypto';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import type { Plan, Phase, TaskItem, TaskStatus } from '../types.js';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import type { Plan, Phase, PhaseCompletion, TaskItem, TaskStatus } from '../types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..', '..');
@@ -37,8 +38,16 @@ export async function initDatabase(): Promise<Database> {
 
 function saveToDisk() {
     if (!db) return;
-    const data = db.export();
-    writeFileSync(DB_FILE, data);
+    const pending = join(DATA_DIR, `.planning-${randomUUID()}.tmp`);
+    try {
+        writeFileSync(pending, db.export());
+        renameSync(pending, DB_FILE);
+    } catch (error) {
+        // The in-memory commit must not leak into a later save after this write failed.
+        closeDatabase();
+        try { rmSync(pending, { force: true }); } catch { /* Preserve the save error. */ }
+        throw error;
+    }
 }
 
 function initSchema() {
@@ -291,30 +300,38 @@ export function deletePhase(desktopId: string, phaseId: string): boolean {
     return changes > 0;
 }
 
-export function completePhase(desktopId: string, phaseId: string): boolean {
-    if (!isPhaseOwnedByDesktop(desktopId, phaseId)) {
-        return false;
-    }
+export function completePhase(desktopId: string, planId: string, phaseId: string): PhaseCompletion | null {
+    const phase = queryOne<{ title: string }>(
+        `SELECT phases.title FROM phases
+         JOIN plans ON plans.id = phases.plan_id
+         WHERE phases.id = ? AND phases.plan_id = ? AND plans.desktop_id = ?`,
+        [phaseId, planId, desktopId],
+    );
+    if (!phase) return null;
+
     const db = getDb();
     const now = Date.now();
-    db.run(
-        `UPDATE phases
-         SET status = 'completed', completed_at = ?
-         WHERE id = ? AND status = 'pending'`,
-        [now, phaseId]
-    );
-    const phaseChanges = db.getRowsModified();
-    db.run(
-        `UPDATE todos
-         SET status = 'completed', completed_at = ?
-         WHERE phase_id = ? AND status = 'pending'`,
-        [now, phaseId]
-    );
-    const todoChanges = db.getRowsModified();
-    if (phaseChanges > 0 || todoChanges > 0) {
-        saveToDisk();
+    let phaseChanged: boolean;
+    let tasksCompleted: number;
+    db.run('BEGIN');
+    try {
+        db.run(
+            `UPDATE phases SET status = 'completed', completed_at = ? WHERE id = ? AND status = 'pending'`,
+            [now, phaseId],
+        );
+        phaseChanged = db.getRowsModified() > 0;
+        db.run(
+            `UPDATE todos SET status = 'completed', completed_at = ? WHERE phase_id = ? AND status = 'pending'`,
+            [now, phaseId],
+        );
+        tasksCompleted = db.getRowsModified();
+        db.run('COMMIT');
+    } catch (error) {
+        db.run('ROLLBACK');
+        throw error;
     }
-    return phaseChanges > 0;
+    if (phaseChanged || tasksCompleted > 0) saveToDisk();
+    return { title: phase.title, phaseChanged, tasksCompleted };
 }
 
 export function createTodo(
@@ -403,29 +420,6 @@ export function deleteTodo(desktopId: string, todoId: string): boolean {
         saveToDisk();
     }
     return changes > 0;
-}
-
-export function clearPlansForDesktop(desktopId: string): void {
-    const db = getDb();
-    db.run(
-        `DELETE FROM todos
-         WHERE phase_id IN (
-             SELECT phases.id FROM phases
-             JOIN plans ON plans.id = phases.plan_id
-             WHERE plans.desktop_id = ?
-         )`,
-        [desktopId]
-    );
-    db.run(
-        `DELETE FROM phases
-         WHERE plan_id IN (SELECT id FROM plans WHERE desktop_id = ?)`,
-        [desktopId]
-    );
-    db.run('DELETE FROM plans WHERE desktop_id = ?', [desktopId]);
-    const changes = db.getRowsModified();
-    if (changes > 0) {
-        saveToDisk();
-    }
 }
 
 export function closeDatabase(): void {

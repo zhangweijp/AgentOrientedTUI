@@ -1,5 +1,10 @@
+import Type from 'typebox';
 import { useArrayRef, useDataRef } from '@aotui/sdk';
 import type { Phase, Plan, TaskItem } from '../types.js';
+import { PhaseSchema, PlanSchema, TaskSchema } from './ref-schemas.js';
+
+const PhaseList = Type.Array(PhaseSchema);
+const TaskList = Type.Array(TaskSchema);
 
 type PlanDetailViewProps = {
     plan: Plan;
@@ -13,13 +18,13 @@ const splitPhases = (phases: Phase[]) => {
 };
 
 const PhaseTaskList = ({ refKey, tasks }: { refKey: string; tasks: TaskItem[] }) => {
-    const [, phaseTaskRef] = useArrayRef(refKey, tasks, { scope: 'private', itemType: 'Task' });
+    const [, phaseTaskRef] = useArrayRef(refKey, tasks, { scope: 'private', itemType: 'Task', schema: TaskList });
     if (tasks.length === 0) return <p>No tasks.</p>;
     return <ul>{tasks.map((task, index) => <li key={task.id}>{phaseTaskRef(index, task.title)}</li>)}</ul>;
 };
 
 function CurrentPhase({ phase }: { phase: Phase }) {
-    const phaseRef = useDataRef('current_phase', phase, { scope: 'private', refType: 'Phase' });
+    const phaseRef = useDataRef('current_phase', phase, { scope: 'private', refType: 'Phase', schema: PhaseSchema });
     const pendingTasks = phase.tasks.filter(task => task.status === 'pending');
     const completedTasks = phase.tasks.filter(task => task.status === 'completed');
     return <div>
@@ -35,9 +40,9 @@ function CurrentPhase({ phase }: { phase: Phase }) {
 export function PlanDetailView({ plan }: PlanDetailViewProps) {
     const { completed, current, upcoming } = splitPhases(plan.phases);
 
-    const planRef = useDataRef('plan_detail_current', plan, { scope: 'private', refType: 'Plan' });
-    const [, completedPhaseRef] = useArrayRef('completed_phases', completed, { scope: 'private', itemType: 'Phase' });
-    const [, upcomingPhaseRef] = useArrayRef('upcoming_phases', upcoming, { scope: 'private', itemType: 'Phase' });
+    const planRef = useDataRef('plan_detail_current', plan, { scope: 'private', refType: 'Plan', schema: PlanSchema });
+    const [, completedPhaseRef] = useArrayRef('completed_phases', completed, { scope: 'private', itemType: 'Phase', schema: PhaseList });
+    const [, upcomingPhaseRef] = useArrayRef('upcoming_phases', upcoming, { scope: 'private', itemType: 'Phase', schema: PhaseList });
 
     return (
         <>
