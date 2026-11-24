@@ -327,12 +327,6 @@ export class FeishuStreamingSession {
     return this.state !== null && !this.closed
   }
 
-  // ── getCardId (useful for diagnostics / testing) ──────────────────
-
-  getCardId(): string | null {
-    return this.state?.cardId ?? null
-  }
-
   // ── private: PUT card element content ─────────────────────────────
 
   private async updateReasoningContent(text: string): Promise<void> {

@@ -62,7 +62,6 @@ class MockDrivenSource implements ContextDrivenSource {
     name: string;
     private messages: MessageWithTimestamp[];
     private tools: Record<string, any>;
-    private updateCallback: (() => void) | null = null;
 
     constructor(name: string, messages: MessageWithTimestamp[] = [], tools: Record<string, any> = {}) {
         this.name = name;
@@ -79,15 +78,8 @@ class MockDrivenSource implements ContextDrivenSource {
         return { toolCallId, toolName, result: { success: true, data: args } };
     });
 
-    onUpdate(callback: () => void): () => void {
-        this.updateCallback = callback;
-        return () => {
-            this.updateCallback = null;
-        };
-    }
-
-    triggerUpdate(): void {
-        this.updateCallback?.();
+    onUpdate(): () => void {
+        return () => {};
     }
 }
 
@@ -352,35 +344,6 @@ describe('AgentDriverV2', () => {
                 code: 'E_TOOL_NOT_FOUND', message: 'No DrivenSource can execute tool: nonExistentTool',
             } } },
         ] }, expect.any(Array));
-    });
-
-    it.skip('应该监听更新信号', async () => {
-        vi.useFakeTimers();
-
-        // Create a dedicated driver instance for this test to ensure timers are faked
-        const localDriver = createDriver({
-            sources: [source1],
-            llm: { model: 'gpt-4', provider: { id: 'openai' } },
-            workLoop: { debounceMs: 10 },
-        });
-
-        const promise = new Promise<void>((resolve) => {
-            const runSpy = vi.spyOn(localDriver as any, 'run');
-            runSpy.mockImplementation(async () => {
-                resolve();
-            });
-        });
-
-        // Trigger update
-        source1.triggerUpdate();
-
-        // Advance time
-        vi.advanceTimersByTime(300);
-
-        await promise;
-
-        localDriver.stop();
-        vi.useRealTimers();
     });
 
     it('应该正确清理资源', () => {

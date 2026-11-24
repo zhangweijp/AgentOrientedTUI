@@ -204,13 +204,6 @@ html, body {
     box-shadow: 0 0 0 3px var(--color-accent-ring), inset 0 1px 0 var(--mat-inset-highlight);
 }
 
-/* project-card-icon — 项目图标颜色映射表 */
-.proj-icon-0 { background: rgba(10, 132, 255, 0.15); color: #0A84FF; border-color: rgba(10, 132, 255, 0.25); }
-.proj-icon-1 { background: rgba(191, 90, 242, 0.15); color: #BF5AF2; border-color: rgba(191, 90, 242, 0.25); }
-.proj-icon-2 { background: rgba(48, 209, 88, 0.15); color: #30D158; border-color: rgba(48, 209, 88, 0.25); }
-.proj-icon-3 { background: rgba(255, 159, 10, 0.15); color: #FF9F0A; border-color: rgba(255, 159, 10, 0.25); }
-.proj-icon-4 { background: rgba(255, 69, 58, 0.15); color: #FF453A; border-color: rgba(255, 69, 58, 0.25); }
-
 /* drag region */
 .drag-region {
     -webkit-app-region: drag;
@@ -219,18 +212,10 @@ html, body {
     -webkit-app-region: no-drag;
 }
 
-/* FUI Elements (Removed for macOS 26 Liquid Glass) */
-
 /* Window Controls */
 .title-drag-region {
     -webkit-app-region: drag;
 }
-
-.no-drag {
-    -webkit-app-region: no-drag;
-}
-
-/* Spotlight Animation (Removed for macOS 26 Liquid Glass) */
 
 .chat-markdown {
     color: inherit;

@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ModelList } from '../../../src/gui/components/settings/ModelList.js';
-import type { ModelsDevModel } from '@aotui/agent-driver-v2/browser';
+import type { ModelsDevModel } from '../../../src/services/model-registry.js';
 
 describe('ModelList', () => {
     const mockModels: ModelsDevModel[] = [
@@ -57,9 +57,9 @@ describe('ModelList', () => {
                 />
             );
 
-            expect(screen.getByText('GPT-4')).toBeInTheDocument();
-            expect(screen.getByText('GPT-3.5 Turbo')).toBeInTheDocument();
-            expect(screen.getByText('Claude 3 Opus')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'GPT-4' })).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'GPT-3.5 Turbo' })).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'Claude 3 Opus' })).toBeInTheDocument();
         });
 
         it('should render models as list items', () => {
@@ -104,7 +104,7 @@ describe('ModelList', () => {
             const items = within(list).getAllByRole('listitem');
             
             // First item should be the active model
-            expect(within(items[0]).getByText('GPT-3.5 Turbo')).toBeInTheDocument();
+            expect(within(items[0]).getByRole('heading', { name: 'GPT-3.5 Turbo' })).toBeInTheDocument();
         });
 
         it('should maintain order when no active model', () => {
@@ -120,9 +120,9 @@ describe('ModelList', () => {
             const items = within(list).getAllByRole('listitem');
             
             // Order should match original array
-            expect(within(items[0]).getByText('GPT-4')).toBeInTheDocument();
-            expect(within(items[1]).getByText('GPT-3.5 Turbo')).toBeInTheDocument();
-            expect(within(items[2]).getByText('Claude 3 Opus')).toBeInTheDocument();
+            expect(within(items[0]).getByRole('heading', { name: 'GPT-4' })).toBeInTheDocument();
+            expect(within(items[1]).getByRole('heading', { name: 'GPT-3.5 Turbo' })).toBeInTheDocument();
+            expect(within(items[2]).getByRole('heading', { name: 'Claude 3 Opus' })).toBeInTheDocument();
         });
 
         it('should sort correctly when last model is active', () => {
@@ -138,7 +138,7 @@ describe('ModelList', () => {
             const items = within(list).getAllByRole('listitem');
             
             // Last model should now be first
-            expect(within(items[0]).getByText('Claude 3 Opus')).toBeInTheDocument();
+            expect(within(items[0]).getByRole('heading', { name: 'Claude 3 Opus' })).toBeInTheDocument();
         });
     });
 
@@ -152,39 +152,11 @@ describe('ModelList', () => {
                 />
             );
 
-            const scrollContainer = container.querySelector('.model-list-scroll');
+            const scrollContainer = container.querySelector('.model-list-grid');
             expect(scrollContainer).toBeInTheDocument();
             expect(scrollContainer).toHaveStyle({ overflowY: 'auto' });
         });
 
-        it('should set max height for scrolling', () => {
-            const { container } = render(
-                <ModelList
-                    models={mockModels}
-                    activeModelId={null}
-                    {...mockHandlers}
-                />
-            );
-
-            const scrollContainer = container.querySelector('.model-list-scroll');
-            expect(scrollContainer).toHaveStyle({ maxHeight: '500px' });
-        });
-
-        it('should apply flex column layout', () => {
-            const { container } = render(
-                <ModelList
-                    models={mockModels}
-                    activeModelId={null}
-                    {...mockHandlers}
-                />
-            );
-
-            const scrollContainer = container.querySelector('.model-list-scroll');
-            expect(scrollContainer).toHaveStyle({ 
-                display: 'flex',
-                flexDirection: 'column',
-            });
-        });
     });
 
     describe('Loading state', () => {
@@ -211,8 +183,8 @@ describe('ModelList', () => {
                 />
             );
 
-            expect(screen.queryByText('GPT-4')).not.toBeInTheDocument();
-            expect(screen.queryByText('GPT-3.5 Turbo')).not.toBeInTheDocument();
+            expect(screen.queryByRole('heading', { name: 'GPT-4' })).not.toBeInTheDocument();
+            expect(screen.queryByRole('heading', { name: 'GPT-3.5 Turbo' })).not.toBeInTheDocument();
         });
 
         it('should display models when not loading', () => {
@@ -225,7 +197,7 @@ describe('ModelList', () => {
                 />
             );
 
-            expect(screen.getByText('GPT-4')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'GPT-4' })).toBeInTheDocument();
             expect(screen.queryByText('Loading models...')).not.toBeInTheDocument();
         });
     });
@@ -334,7 +306,7 @@ describe('ModelList', () => {
                 />
             );
 
-            expect(screen.getByText('GPT-4')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'GPT-4' })).toBeInTheDocument();
             const items = screen.getAllByRole('listitem');
             expect(items).toHaveLength(1);
         });
@@ -367,7 +339,7 @@ describe('ModelList', () => {
             );
 
             // Should not crash and should render all models
-            expect(screen.getByText('GPT-4')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'GPT-4' })).toBeInTheDocument();
             expect(screen.queryByText('Active')).not.toBeInTheDocument();
         });
 
@@ -381,7 +353,7 @@ describe('ModelList', () => {
             );
 
             // Should default to not loading
-            expect(screen.getByText('GPT-4')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'GPT-4' })).toBeInTheDocument();
             expect(screen.queryByText('Loading models...')).not.toBeInTheDocument();
         });
 
@@ -400,55 +372,30 @@ describe('ModelList', () => {
             );
 
             // Should render both (React will warn about duplicate keys in console)
-            expect(screen.getByText('GPT-4')).toBeInTheDocument();
-            expect(screen.getByText('Duplicate Model')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'GPT-4' })).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'Duplicate Model' })).toBeInTheDocument();
         });
     });
 
     describe('Model selection', () => {
-        it('should call onSelectModel with correct model ID when model is clicked', () => {
-            render(
-                <ModelList
-                    models={mockModels}
-                    activeModelId={null}
-                    {...mockHandlers}
-                />
-            );
+        it.each([
+            ['GPT-4', 'openai/gpt-4'],
+            ['Claude 3 Opus', 'anthropic/claude-3-opus'],
+        ])('activates %s with its model ID', (name, modelId) => {
+            render(<ModelList models={mockModels} activeModelId={null} {...mockHandlers} />);
 
-            const gpt4Card = screen.getByText('GPT-4').closest('[role="listitem"]');
-            gpt4Card?.click();
+            const card = screen.getByRole('listitem', { name: `${name} model` });
+            within(card).getByRole('button', { name: 'Activate' }).click();
 
-            expect(mockHandlers.onSelectModel).toHaveBeenCalledWith('openai/gpt-4');
+            expect(mockHandlers.onSelectModel).toHaveBeenCalledExactlyOnceWith(modelId);
         });
 
-        it('should allow selecting different models', () => {
-            render(
-                <ModelList
-                    models={mockModels}
-                    activeModelId={null}
-                    {...mockHandlers}
-                />
-            );
+        it('labels the active model and hides its activation action', () => {
+            render(<ModelList models={mockModels} activeModelId="openai/gpt-4" {...mockHandlers} />);
 
-            const claudeCard = screen.getByText('Claude 3 Opus').closest('[role="listitem"]');
-            claudeCard?.click();
-
-            expect(mockHandlers.onSelectModel).toHaveBeenCalledWith('anthropic/claude-3-opus');
-        });
-
-        it('should allow selecting active model again', () => {
-            render(
-                <ModelList
-                    models={mockModels}
-                    activeModelId="openai/gpt-4"
-                    {...mockHandlers}
-                />
-            );
-
-            const gpt4Card = screen.getByText('GPT-4').closest('[role="listitem"]');
-            gpt4Card?.click();
-
-            expect(mockHandlers.onSelectModel).toHaveBeenCalledWith('openai/gpt-4');
+            const card = screen.getByRole('listitem', { name: 'GPT-4 model (active)' });
+            expect(within(card).getByText('Active')).toBeInTheDocument();
+            expect(within(card).queryByRole('button', { name: 'Activate' })).not.toBeInTheDocument();
         });
     });
 });

@@ -41,7 +41,6 @@ describe('FeishuStreamingSession', () => {
     await session.start('oc_chat1', 'chat_id')
 
     expect(session.isActive()).toBe(true)
-    expect(session.getCardId()).toBe('card_001')
 
     // First call: create card
     expect(fetchImpl).toHaveBeenCalledTimes(2)

@@ -8,11 +8,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ModelTab } from '../../../src/gui/components/settings/ModelTab.js';
 import type { ProviderConfig } from '../../../src/gui/hooks/useProviderConfigs.js';
-import type { ModelsDevModel } from '@aotui/agent-driver-v2';
+import type { ModelsDevModel } from '../../../src/services/model-registry.js';
 
 // Mock data
 const mockProviders: ProviderConfig[] = [
@@ -107,16 +107,18 @@ vi.mock('../../../src/gui/hooks/useModels.js', () => ({
     },
 }));
 
-// Mock ModelRegistry
-vi.mock('@aotui/agent-driver-v2', () => ({
-    ModelRegistry: vi.fn().mockImplementation(() => ({
-        getProviders: vi.fn().mockResolvedValue([
-            { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', modelCount: 10 },
-            { id: 'anthropic', name: 'Anthropic', baseURL: 'https://api.anthropic.com', modelCount: 5 },
-        ]),
-        getModels: vi.fn().mockResolvedValue(mockModels),
-    })),
-}));
+vi.mock('../../../src/gui/ChatBridge.js', () => {
+    const bridge = {
+        listCustomProviders: async () => [],
+        getTrpcClient: () => ({ modelRegistry: {
+            getProviders: { query: async () => [
+                { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', modelCount: 2 },
+            ] },
+            getModels: { query: async () => mockModels },
+        } }),
+    };
+    return { useChatBridge: () => bridge };
+});
 
 describe('ModelTab - Integration Tests', () => {
     beforeEach(() => {
@@ -142,7 +144,7 @@ describe('ModelTab - Integration Tests', () => {
 
             await waitFor(() => {
                 // Sections
-                expect(screen.getByText('Providers')).toBeInTheDocument();
+                expect(screen.getByRole('list', { name: 'Provider list' })).toBeInTheDocument();
                 expect(screen.getByText(/Models Of/i)).toBeInTheDocument();
                 
                 // Add Provider button
@@ -321,91 +323,40 @@ describe('ModelTab - Integration Tests', () => {
     });
 
     describe('Add provider flow', () => {
-        it('should open add provider modal when button is clicked', async () => {
+        it('opens the named add provider dialog', async () => {
             render(<ModelTab />);
+            fireEvent.click(await screen.findByRole('button', { name: /add new provider/i }));
 
-            await waitFor(() => {
-                expect(screen.getByRole('button', { name: /add new provider/i })).toBeInTheDocument();
-            });
-
-            // Click add provider button
-            const addButton = screen.getByRole('button', { name: /add new provider/i });
-            fireEvent.click(addButton);
-
-            // Modal should open
-            await waitFor(() => {
-                expect(screen.getByText('Add New Provider')).toBeInTheDocument();
-            });
+            expect(await screen.findByRole('dialog', { name: 'Add Provider' })).toBeInTheDocument();
         });
 
-        it('should close modal when cancel is clicked', async () => {
+        it('closes the add provider dialog when canceled', async () => {
             render(<ModelTab />);
+            fireEvent.click(await screen.findByRole('button', { name: /add new provider/i }));
 
-            await waitFor(() => {
-                expect(screen.getByRole('button', { name: /add new provider/i })).toBeInTheDocument();
-            });
-
-            // Open modal
-            const addButton = screen.getByRole('button', { name: /add new provider/i });
-            fireEvent.click(addButton);
-
-            await waitFor(() => {
-                expect(screen.getByText('Add New Provider')).toBeInTheDocument();
-            });
-
-            // Click cancel
-            const cancelButton = screen.getByRole('button', { name: /cancel/i });
-            fireEvent.click(cancelButton);
-
-            // Modal should close
-            await waitFor(() => {
-                expect(screen.queryByText('Add New Provider')).not.toBeInTheDocument();
-            });
+            const dialog = await screen.findByRole('dialog', { name: 'Add Provider' });
+            fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+            expect(screen.queryByRole('dialog', { name: 'Add Provider' })).not.toBeInTheDocument();
         });
 
-        it('should call addProvider when save is clicked', async () => {
+        it('saves the selected template provider and model', async () => {
             render(<ModelTab />);
+            fireEvent.click(await screen.findByRole('button', { name: /add new provider/i }));
 
-            await waitFor(() => {
-                expect(screen.getByRole('button', { name: /add new provider/i })).toBeInTheDocument();
-            });
+            const dialog = within(await screen.findByRole('dialog', { name: 'Add Provider' }));
+            const provider = dialog.getByRole('button', { name: 'Provider *' });
+            await waitFor(() => expect(provider).toBeEnabled());
+            fireEvent.click(provider);
+            fireEvent.click(dialog.getByRole('option', { name: /openai/i }));
 
-            // Open modal
-            const addButton = screen.getByRole('button', { name: /add new provider/i });
-            fireEvent.click(addButton);
+            fireEvent.change(dialog.getByLabelText('API Key *'), { target: { value: 'sk-fixture-key' } });
+            const submit = dialog.getByRole('button', { name: 'Add Provider' });
+            await waitFor(() => expect(submit).toBeEnabled());
+            fireEvent.click(submit);
 
-            await waitFor(() => {
-                expect(screen.getByText('Add New Provider')).toBeInTheDocument();
-            });
-
-            // Wait for providers to load (mocked ModelRegistry returns providers)
-            await waitFor(() => {
-                const dropdownButton = screen.getByLabelText('Provider *');
-                expect(dropdownButton).toBeInTheDocument();
-            }, { timeout: 2000 });
-
-            // Select provider
-            const dropdownButton = screen.getByLabelText('Provider *');
-            fireEvent.click(dropdownButton);
-
-            // Wait for dropdown to open and find OpenAI option
-            await waitFor(() => {
-                const openaiOption = screen.getByRole('option', { name: /openai/i });
-                fireEvent.click(openaiOption);
-            }, { timeout: 2000 });
-
-            // Fill API key
-            const apiKeyInput = screen.getByLabelText('API Key *') as HTMLInputElement;
-            fireEvent.change(apiKeyInput, { target: { value: 'sk-test1234567890' } });
-
-            // Click save
-            const saveButton = screen.getByRole('button', { name: /save/i });
-            fireEvent.click(saveButton);
-
-            // addProvider should be called
-            await waitFor(() => {
-                expect(mockUseProviderConfigs.addProvider).toHaveBeenCalled();
-            });
+            await waitFor(() => expect(mockUseProviderConfigs.addProvider).toHaveBeenCalledExactlyOnceWith({
+                providerId: 'openai', customName: 'OpenAI', apiKey: 'sk-fixture-key', model: 'openai/gpt-4',
+            }));
         });
     });
 
@@ -494,7 +445,9 @@ describe('ModelTab - Integration Tests', () => {
 
             // Confirmation dialog should open - check for dialog title specifically
             await waitFor(() => {
-                expect(screen.getByRole('heading', { name: 'Delete Provider' })).toBeInTheDocument();
+                const dialog = screen.getByRole('dialog', { name: 'Delete Provider' });
+                expect(dialog).toHaveAttribute('aria-modal', 'true');
+                expect(dialog).toHaveAccessibleDescription(/My OpenAI/i);
             });
         });
 

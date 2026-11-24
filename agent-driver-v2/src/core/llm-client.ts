@@ -211,12 +211,6 @@ export class LLMClient {
                 toolCount: Object.keys(effectiveTools).length,
             });
 
-            console.log('\n=== LLM Messages ===');
-            console.log(JSON.stringify(messages, null, 2));
-            // 打印所有工具的名称
-            console.log('Tools:', Object.keys(effectiveTools));
-            console.log('====================\n');
-            
             const hasTools = Object.keys(effectiveTools).length > 0;
             const streamEnd = hasTools ? observeChatStreamEnd() : undefined;
             let admitted: Promise<void> | undefined;
@@ -329,7 +323,7 @@ export class LLMClient {
                         }
                     }
                 } catch (error) {
-                    this.logger.debug('Failed to read reasoning from LLM result', { error });
+                    this.logger.debug('Failed to read reasoning from LLM result', error instanceof Error ? error.message : String(error));
                 }
                 if (reasoningParts.length === 0 && reasoningText && reasoningText.trim().length > 0) {
                     reasoningParts = [{ type: 'reasoning', text: reasoningText }];
@@ -338,15 +332,6 @@ export class LLMClient {
             }
 
             if (requestFailure !== undefined) throw requestFailure;
-            const reasoningString = reasoningParts.length > 0
-                ? reasoningParts.map((part) => part.text).join('\n')
-                : '';
-
-            if (reasoningString.trim().length > 0) {
-                console.log('\n=== LLM REASONING ===');
-                console.log(reasoningString.slice(0, 400) + (reasoningString.length > 400 ? '...' : ''));
-                console.log('=====================\n');
-            }
 
             // stream 已被完整消费，以下 Promise 均已 resolve
             const toolCalls = (await result.toolCalls).map((tc) => ({
@@ -414,34 +399,11 @@ export class LLMClient {
                 finishReason: response.finishReason,
                 usage: usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens },
             });
-            
-            // 🔍 打印 LLM 响应
-            console.log('\n=== LLM RESPONSE ===');
-            console.log('Text:', text.slice(0, 200) + (text.length > 200 ? '...' : ''));
-            console.log('Tool Calls:', toolCalls.map(tc => ({ name: tc.toolName, args: tc.args })));
-            console.log('Finish Reason:', response.finishReason);
-            console.log('====================\n');
-
             return response;
         } catch (error) {
             if (requestFailure !== undefined) throw requestFailure;
-            this.logger.error('LLM call failed', { error });
-            
-            // 🔍 打印 API 请求中的 tools (从错误对象获取)
-            if ((error as any).requestBodyValues?.tools) {
-                console.log('\n=== Request Tools (from API error) ===');
-                const requestTools = (error as any).requestBodyValues.tools;
-                console.log('Total tools in request:', requestTools.length);
-                
-                // 打印前3个工具的完整结构
-                for (let i = 0; i < Math.min(3, requestTools.length); i++) {
-                    console.log(`\n[Tool ${i + 1}] ${requestTools[i].type || 'function'}:`, requestTools[i].function?.name);
-                    console.log('  Parameters schema:');
-                    console.log(JSON.stringify(requestTools[i].function?.parameters, null, 2));
-                }
-                console.log('=====================================\n');
-            }
-            
+            this.logger.error('LLM call failed', { model: this.config.model, providerId: this.config.provider.id,
+                message: error instanceof Error ? error.message : String(error) });
             throw error;
         }
     }

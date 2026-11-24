@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { sortProviders } from '../../../src/gui/hooks/useProviderConfigs.js';
 import { sortModels } from '../../../src/gui/hooks/useModels.js';
 import type { ProviderConfig } from '../../../src/gui/hooks/useProviderConfigs.js';
-import type { ModelsDevModel } from '@aotui/agent-driver-v2';
+import type { ModelsDevModel } from '../../../src/services/model-registry.js';
 
 describe('sortProviders - Unit Tests', () => {
     it('should sort providers with active first', () => {

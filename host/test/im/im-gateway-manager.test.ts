@@ -25,7 +25,8 @@ describe('IMGatewayManager', () => {
     manager.register(p1)
     manager.register(p2)
 
-    expect(manager.getRegisteredChannelIds()).toEqual(['feishu'])
+    expect(manager.getChannel('feishu')).toBe(p1)
+    expect(manager.listChannels()).toHaveLength(1)
   })
 
   it('starts only enabled configured channels', async () => {
@@ -59,7 +60,7 @@ describe('IMGatewayManager', () => {
 
     expect(plugin.start).toHaveBeenCalledTimes(1)
     expect(plugin.stop).toHaveBeenCalledTimes(1)
-    expect(manager.getActiveChannelIds()).toEqual([])
+    expect(manager.listChannels()).toMatchObject([{ id: 'feishu', active: false }])
   })
 
   it('is idempotent when startAll is called repeatedly', async () => {
@@ -92,7 +93,7 @@ describe('IMGatewayManager', () => {
     await manager.stopAll()
 
     expect(feishu.stop).toHaveBeenCalledTimes(1)
-    expect(manager.getActiveChannelIds()).toEqual([])
+    expect(manager.listChannels()).toMatchObject([{ id: 'feishu', active: false }])
   })
 
   it('continues starting other channels when one fails', async () => {
@@ -117,7 +118,7 @@ describe('IMGatewayManager', () => {
 
     expect(bad.start).toHaveBeenCalledTimes(1)
     expect(good.start).toHaveBeenCalledTimes(1)
-    expect(manager.getActiveChannelIds()).toEqual(['good'])
+    expect(manager.listChannels()).toMatchObject([{ id: 'bad', active: false }, { id: 'good', active: true }])
   })
 
   it('stops channels even when one stop fails', async () => {
@@ -144,7 +145,7 @@ describe('IMGatewayManager', () => {
 
     expect(bad.stop).toHaveBeenCalledTimes(1)
     expect(good.stop).toHaveBeenCalledTimes(1)
-    expect(manager.getActiveChannelIds()).toEqual([])
+    expect(manager.listChannels()).toMatchObject([{ id: 'bad', active: false }, { id: 'good', active: false }])
   })
 
   it('getChannel returns plugin by id or undefined', () => {

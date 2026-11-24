@@ -110,10 +110,3 @@ export function clearTenantTokenCache(domain?: string, appId?: string): void {
     tokenCache.clear()
   }
 }
-
-/**
- * Get the current cache size (for testing).
- */
-export function getTenantTokenCacheSize(): number {
-  return tokenCache.size
-}

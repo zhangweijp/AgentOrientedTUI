@@ -28,8 +28,6 @@ export default defineConfig({
     resolve: {
         alias: {
             '@': resolve(__dirname, 'src'),
-            // Prevent frontend from importing backend modules
-            '~/core/llm-config-service': resolve(__dirname, 'src/gui/ChatBridge.ts'),
         }
     },
     optimizeDeps: {

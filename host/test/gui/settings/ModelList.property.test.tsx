@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import type { ModelsDevModel } from '@aotui/agent-driver-v2';
+import type { ModelsDevModel } from '../../../src/services/model-registry.js';
 
 /**
  * Arbitrary generator for ModelsDevModel

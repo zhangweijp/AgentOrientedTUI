@@ -340,11 +340,3 @@ export interface CustomProviderUpdates {
     protocol?: CustomProviderProtocol;
     apiKey?: string;
 }
-
-/**
- * AddCustomProviderFormProps — used inside AddProviderModal's Customize tab
- */
-export interface AddCustomProviderFormProps {
-    onSave: (input: NewCustomProviderInput) => Promise<void>;
-    isSaving: boolean;
-}
