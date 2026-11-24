@@ -1,31 +1,30 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
-import { canonicalJson, utf8Size } from '../snapshot/json.js';
+import { canonicalJson, checkWireJson, copyWireJson, isSnapshotDataError, utf8Size } from '../snapshot/json.js';
 import { RAW_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
-import type { AppIdentityReader, AppSnapshot, JsonValue, SnapshotStore } from '../snapshot/types.js';
-import { encodeProgramArguments, getCapturedToolParameters } from '../tool/tool-parameters.js';
-import { checkCurrentRefScopes, checkRefViews, prepareViewTypeParameters, type SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
+import type { AppIdentityReader, JsonValue, SnapshotStore } from '../snapshot/types.js';
+import { getCapturedToolParameters } from '../tool/tool-parameters.js';
+import { prepareViewTypeParameters, type SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
 import { createObservationOperations, previewCommittedApp, type ObservationState } from './observation-registry.js';
 import { acquireRequestSource, registerRequestSource, requestAppIsAvailable, requestSourcesFor,
     type BoundRequestSources, type RefSourceHold, type RequestSourceAuthority } from './request-sources.js';
-import { refPath } from '../tool/ref-parameters.js';
-import type { ObservationJsonLimits, ObservationWindowSelection, ViewWindowAccess } from './observation-types.js';
-import { captureBoundedJson, exactFields, jsonObject, mapExecutionFact, unknownOutcome, type ExecutionMapping } from './invocation-outcome.js';
+import { checkCurrentRefScopes, checkRefViews, refPath } from '../tool/ref-path.js';
+import type { ObservationWindowSelection } from './observation-types.js';
+import { exactFields, jsonObject, mapExecutionFact, unknownOutcome, type ExecutionMapping } from './invocation-outcome.js';
 import type {
     AppInteractionSource, AppInvocation, ExecutionBinding, InstanceInteraction, InteractionLimits, InteractionLimitOverrides, InteractionStats,
-    CancellationSignal, InvocationContext, InvocationReceipt, InvocationSource, Issue, ObserveResult,
-    ReceiptAccess, ReceiptMetadata, ReceiptQuery, AppInteractionPolicy, RequestSources,
+    CancellationSignal, InvocationContext, InvocationJsonLimits, InvocationReceipt, InvocationSource, Issue, ObserveResult,
+    ReceiptAccess, ReceiptMetadata, ReceiptQuery, AppInteractionPolicy, ActiveTurn,
 } from './app-interaction-types.js';
 
-const KiB = 1024, MiB = KiB * KiB, WORK = MiB;
-const profile = (maxDepth: number, maxNodes: number, bytes: number): ObservationJsonLimits => Object.freeze({
-    maxDepth, maxNodes, maxApproxBytes: bytes, maxCanonicalBytes: bytes,
+const KiB = 1024;
+// 32 entries cap retained receipt content at 17.5 MiB of encoded JSON, plus bounded fingerprints and identity metadata.
+const profile = (maxDepth: number, maxNodes: number, bytes: number): InvocationJsonLimits => Object.freeze({
+    maxDepth, maxNodes, maxCanonicalBytes: bytes,
 });
 export const DEFAULT_INTERACTION_LIMITS: InteractionLimits = Object.freeze({
-    maxReceiptsPerObservation: 256, maxReceipts: 1024, maxReads: 8, receiptTtlMs: 60_000,
-    request: profile(33, 10005, 136 * KiB), rawInput: profile(32, 5000, 128 * KiB),
+    maxReceiptsPerObservation: 32, maxReceipts: 32, maxReads: 8, receiptTtlMs: 60_000,
+    request: profile(33, 10005, 136 * KiB), rawInput: RAW_TOOL_ARGUMENT_LIMITS,
     metadata: profile(8, 256, 32 * KiB), fact: profile(52, 32032, 520 * KiB), receipt: profile(54, 33000, 560 * KiB),
-    maxSourceBytes: 32 * MiB, maxFingerprintBytes: 8 * MiB, maxMetadataBytes: 8 * MiB,
-    maxWorkBytes: 16 * MiB, maxResultBytes: 16 * MiB, maxTotalBytes: 64 * MiB,
 });
 const MESSAGE = 'The App interaction could not be completed';
 class InteractionFailure {
@@ -49,8 +48,19 @@ function dataProperties(raw: unknown, required: readonly string[], optional: rea
 }
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const validRequestId = (value: unknown): value is string => nonEmpty(value) && utf8Size(value) <= 256;
-function capture<T>(raw: unknown, limits: ObservationJsonLimits, code: string): { value: T; bytes: number } {
-    try { return captureBoundedJson<T>(raw, limits); } catch { return fail(code); }
+function capture<T>(raw: unknown, limits: InvocationJsonLimits, code: string): T {
+    try { return copyWireJson(raw, limits) as T; }
+    catch (error) {
+        if (code === 'INVOCATION_INVALID' || code === 'ACTION_INPUT_INVALID') {
+            const path = isSnapshotDataError(error) && error.path.length <= 512 ? error.path : '$';
+            return fail(code, 'Expected bounded JSON invocation parameters.', path);
+        }
+        return fail(code);
+    }
+}
+function invalidInvocationJson(error: unknown, code: string): never {
+    const path = isSnapshotDataError(error) ? error.path.slice(0, 512) : '$';
+    return fail(code, 'Expected bounded JSON invocation parameters.', path);
 }
 function binding(raw: unknown): ExecutionBinding {
     if (raw === null) fail('TOOL_EXECUTION_UNAVAILABLE');
@@ -67,10 +77,8 @@ function sameBinding(a: ExecutionBinding, b: ExecutionBinding): boolean {
 interface Entry {
     readonly fingerprint: string;
     readonly requestSourcesId: symbol | undefined;
-    readonly fingerprintBytes: number;
     expiresAt?: number;
     metadata: ReceiptMetadata;
-    metadataBytes: number;
     phase: InvocationReceipt['executionPhase'];
     readonly waiters: Set<() => void>;
     readonly deadline?: number;
@@ -79,7 +87,6 @@ interface Entry {
     expired: boolean;
     unavailable: boolean;
     receipt?: InvocationReceipt;
-    resultBytes: number;
 }
 interface State extends ObservationState {
     policy?: AppInteractionPolicy;
@@ -91,28 +98,38 @@ interface State extends ObservationState {
     reads: number;
     projects: number;
 }
-type Fees = { source: number; fingerprint: number; metadata: number; work: number; result: number };
 type CapturedInvocation = Omit<AppInvocation, 'input'> & { readonly input: Readonly<Record<string, JsonValue>> };
 
 export function createAppInteraction(store: SnapshotStore & AppIdentityReader, options: Readonly<AppInteractionSource & {
     namespace: string; now: () => number;
-    observationLimits?: import('./observation-types.js').ObservationRegistryLimitOverrides;
+    observationLimits?: import('./observation-types.js').ProjectionLimitOverrides;
     limits?: InteractionLimitOverrides;
-    windowAccess?: ViewWindowAccess;
+    refreshProjection?: () => Promise<void>;
+    canExposeTools?: () => boolean;
 }>): InstanceInteraction {
     let config: Record<string, unknown>, limits: InteractionLimits, policy: AppInteractionPolicy, resolver: State['resolve'];
     try {
-        config = dataProperties(options, ['namespace', 'now', 'appId', 'instanceId', 'policy', 'execution'], ['observationLimits', 'limits', 'windowAccess']);
+        config = dataProperties(options, ['namespace', 'now', 'appId', 'instanceId', 'policy', 'execution'],
+            ['observationLimits', 'limits', 'refreshProjection', 'canExposeTools']);
+        if (config.refreshProjection !== undefined && typeof config.refreshProjection !== 'function') throw 0;
+        if (config.canExposeTools !== undefined && typeof config.canExposeTools !== 'function') throw 0;
         if (!nonEmpty(config.namespace) || utf8Size(config.namespace) > 128 || typeof config.now !== 'function' ||
-            !nonEmpty(config.appId) || !nonEmpty(config.instanceId) ||
-            config.windowAccess !== undefined && typeof config.windowAccess !== 'function') throw 0;
+            !nonEmpty(config.appId) || !nonEmpty(config.instanceId)) throw 0;
         const p = dataProperties(config.policy, ['project', 'authorize', 'canReadReceipt']);
         const e = dataProperties(config.execution, ['resolve']);
         if (Object.values(p).some(value => typeof value !== 'function') || typeof e.resolve !== 'function') throw 0;
-        policy = Object.freeze(p) as unknown as AppInteractionPolicy;
+        const service = config.policy as AppInteractionPolicy;
+        const project = p.project as AppInteractionPolicy['project'];
+        const authorize = p.authorize as AppInteractionPolicy['authorize'];
+        const canReadReceipt = p.canReadReceipt as AppInteractionPolicy['canReadReceipt'];
+        policy = {
+            project: context => project.call(service, context),
+            authorize: context => authorize.call(service, context),
+            canReadReceipt: (metadata, signal) => canReadReceipt.call(service, metadata, signal),
+        };
         resolver = e.resolve as State['resolve'];
         const overrides = config.limits === undefined ? {} : dataProperties(config.limits, [], Object.keys(DEFAULT_INTERACTION_LIMITS));
-        const effective: Record<string, number | ObservationJsonLimits> = {};
+        const effective: Record<string, number | InvocationJsonLimits> = {};
         for (const [key, hard] of Object.entries(DEFAULT_INTERACTION_LIMITS)) {
             if (typeof hard === 'number') {
                 const value = overrides[key] === undefined ? hard : overrides[key];
@@ -121,7 +138,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             } else {
                 const lower = overrides[key] === undefined ? {} : dataProperties(overrides[key], [], Object.keys(hard));
                 const p = { ...hard };
-                for (const field of Object.keys(hard) as (keyof ObservationJsonLimits)[]) {
+                for (const field of Object.keys(hard) as (keyof InvocationJsonLimits)[]) {
                     const value = lower[field] === undefined ? hard[field] : lower[field];
                     if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > hard[field]) throw 0;
                     Object.assign(p, { [field]: value });
@@ -132,6 +149,8 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         limits = Object.freeze(effective) as unknown as InteractionLimits;
     } catch { throw new TypeError('Invalid App interaction configuration'); }
     const now = config.now as () => number;
+    const refreshProjection = config.refreshProjection as typeof options.refreshProjection;
+    const canExposeTools = config.canExposeTools as typeof options.canExposeTools;
     let lastNow = -1;
     function clock(): number {
         let value: number;
@@ -142,15 +161,13 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     const state: State = { appId: config.appId as string, instanceId: config.instanceId as string,
         policy, resolve: resolver, observations: new Map(), reservations: new Map(),
         entries: new Map(), controllers: new Set(), closing: false, invocations: 0, reads: 0, projects: 0 };
-    const sources = new Map<string, { readonly source: AppSnapshot; readonly bytes: number; count: number }>();
-    const fees: Fees = { source: 0, fingerprint: 0, metadata: 0, work: 0, result: 0 };
     let closed = false;
+    let closingInvocation: InteractionStats['closingInvocation'];
     let expiry: ReturnType<typeof setTimeout> | undefined;
     let scheduledExpiry: number | undefined;
     const observations = createObservationOperations(store, { namespace: config.namespace as string,
-        limits: config.observationLimits as import('./observation-types.js').ObservationRegistryLimitOverrides | undefined },
-        state, refresh, config.windowAccess as ViewWindowAccess | undefined);
-    const sourceProfile = observations.limits.source;
+        limits: config.observationLimits as import('./observation-types.js').ProjectionLimitOverrides | undefined },
+        state, refresh);
     const externalHolds = new Set<{ dispatched: boolean; release(): void }>();
     try { clock(); } catch { throw new RangeError('Invalid observation registry clock'); }
     let completeClosed: (() => void) | undefined;
@@ -160,23 +177,12 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             completeClosed?.(); completeClosed = undefined;
         }
     }
-    const total = () => fees.source + fees.fingerprint + fees.metadata + fees.work + fees.result;
-    function charge(delta: Partial<Fees>, code = 'INVOCATION_CAPACITY'): void {
-        const next = { ...fees };
-        for (const key of Object.keys(delta) as (keyof Fees)[]) next[key] += delta[key]!;
-        if (next.source > limits.maxSourceBytes || next.fingerprint > limits.maxFingerprintBytes || next.metadata > limits.maxMetadataBytes ||
-            next.work > limits.maxWorkBytes || next.result > limits.maxResultBytes ||
-            Object.values(next).reduce((a, b) => a + b, 0) > limits.maxTotalBytes) fail(code);
-        Object.assign(fees, next);
-    }
     function dropContent(entry: Entry, expired = false): void {
-        fees.result -= entry.resultBytes; entry.resultBytes = 0; entry.receipt = undefined;
+        entry.receipt = undefined;
         if (expired) entry.expired = true;
     }
     function forget(state: State, entry: Entry): void {
         dropContent(entry);
-        fees.metadata -= entry.metadataBytes;
-        fees.fingerprint -= entry.fingerprintBytes;
         state.entries.delete(entry.metadata.invocationId);
     }
     function clean(state: State): void {
@@ -192,7 +198,9 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         scheduledExpiry = undefined;
         state.closing = true; observations.releaseAll();
         // Closing a publisher must not wait on another App's pending Host authorization.
-        for (const held of externalHolds) if (!held.dispatched) held.release();
+        for (const held of externalHolds) if (!held.dispatched) {
+            try { held.release(); } catch { /* Revocation still applies to the remaining sources. */ }
+        }
         for (const entry of state.entries.values()) if (!entry.running) dropContent(entry);
         for (const controller of state.controllers) controller.abort();
         clean(state);
@@ -228,32 +236,13 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     function active(state: State): void {
         refresh(); if (state.closing || closed) fail('APP_INTERACTION_UNAVAILABLE');
     }
-    function setMetadata(entry: Entry, patch: Partial<ReceiptMetadata>): void {
-        const measured = capture<ReceiptMetadata>({ ...entry.metadata, ...patch }, limits.metadata, 'INVOCATION_CAPACITY');
-        entry.metadata = measured.value; // Actual metadata bytes replace the reservation only at settlement.
-    }
-    function hold(source: AppSnapshot, release: () => void): () => void {
-        const existing = sources.get(source.id);
-        const bytes = existing?.bytes ?? capture<unknown>(source, sourceProfile, 'INVOCATION_CAPACITY').bytes;
-        charge({ source: existing ? 0 : bytes });
-        if (existing) existing.count++;
-        else sources.set(source.id, { source, bytes, count: 1 });
-        let released = false;
-        return () => {
-            if (released) return; released = true;
-            try { release(); } finally {
-                const item = sources.get(source.id)!;
-                if (--item.count === 0) { sources.delete(source.id); fees.source -= item.bytes; }
-            }
-        };
-    }
     const authority: RequestSourceAuthority = {
         appId: state.appId,
-        selectedConsoleRefs(id) {
-            const found = observations.readAdopted(id);
-            if (found.status !== 'found') return;
-            const { observation, selected } = found.value;
-            return observation.refs.filter(ref => ref.programPaths?.length && selected?.refViews.has(ref.viewInstanceId));
+        prepare: observations.prepareAdoption,
+        revokeWindows: observations.revokeWindows,
+        detach(id) {
+            const release = observations.detach(id);
+            if (release) return () => { try { release(); } finally { expireReceipts(lastNow); } };
         },
         acquire(observationId) {
             const found = observations.readAdopted(observationId);
@@ -261,15 +250,11 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             const { source } = found.value;
             const acquired = store.acquire(source.id);
             if (acquired.status === 'rejected') return { issue: acquired.issue };
-            let releaseSnapshot: () => void;
-            try { releaseSnapshot = hold(source, acquired.hold.release); }
-            catch (error) { acquired.hold.release(); return { issue: problem(error) }; }
             const held = {
                 dispatched: false,
                 release() {
                     if (!externalHolds.delete(held)) return;
-                    releaseSnapshot();
-                    settleClosed();
+                    try { acquired.hold.release(); } finally { settleClosed(); }
                 },
             };
             externalHolds.add(held);
@@ -277,6 +262,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             return {
                 snapshot: source,
                 source: { appId, instanceId, snapshotId, observationId, store, visibleRefs: observations.visibleRefs(found.value) },
+                ...(refreshProjection ? { refresh: refreshProjection } : {}),
                 current() {
                     if (!externalHolds.has(held)) return;
                     const latest = observations.readAdopted(observationId);
@@ -296,16 +282,15 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         return binding(value);
     }
     function live(current: ExecutionBinding, source: InvocationSource): void {
-        let value: JsonValue;
-        try { value = captureBoundedJson<JsonValue>(current.isLive(source), limits.metadata).value; }
+        let value: unknown;
+        try { value = current.isLive(source); }
         catch { return fail('LIVE_BINDING_CHECK_FAILED'); }
-        if (!jsonObject(value) || !exactFields(value, ['ok']) || typeof value.ok !== 'boolean') fail('LIVE_BINDING_CHECK_FAILED');
-        if (value.ok !== true) fail('TOOL_SOURCE_STALE');
+        if (typeof value !== 'boolean') fail('LIVE_BINDING_CHECK_FAILED');
+        if (!value) fail('TOOL_SOURCE_STALE');
     }
-    function sourceFor(state: State, request: CapturedInvocation, viewId: unknown) {
+    function sourceFor(state: State, request: CapturedInvocation) {
         active(state);
-        const result = observations.resolveTool({ observationId: request.observationId, toolId: request.toolId, viewId,
-            program: request.inputMode === 'program' });
+        const result = observations.resolveTool({ observationId: request.observationId, toolId: request.toolId, viewId: request.viewId });
         if (result.status === 'rejected') fail(result.issue.code, result.issue.message, result.issue.path);
         return result;
     }
@@ -334,40 +319,59 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         let mapping: ExecutionMapping = { executionPhase: 'not-dispatched', outcome: unknownOutcome() };
         try {
             checkAdmission(entry, controller);
-            const { view_id: viewId, ...input } = request.input;
-            const selected = sourceFor(state, request, viewId);
+            if (requestSources && !requestAppIsAvailable(requestSources, state.appId)) fail('TURN_NOT_ACTIVE');
+            try { checkWireJson(request.input, limits.rawInput); }
+            catch (error) { invalidInvocationJson(error, 'ACTION_INPUT_INVALID'); }
+            const selected = sourceFor(state, request);
             const acquired = store.acquire(selected.snapshotId);
             if (acquired.status === 'rejected') fail(acquired.issue.code);
             const snapshot = acquired.hold.snapshot;
             if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) { acquired.hold.release(); fail('SNAPSHOT_INVALID'); }
-            try { release = hold(snapshot, acquired.hold.release); } catch (error) { acquired.hold.release(); throw error; }
-            setMetadata(entry, { source: { appId: snapshot.appId, instanceId: snapshot.instanceId, snapshotId: snapshot.id, revision: snapshot.revision } });
+            release = acquired.hold.release;
+            entry.metadata = capture<ReceiptMetadata>({ ...entry.metadata, source: {
+                appId: snapshot.appId, instanceId: snapshot.instanceId, snapshotId: snapshot.id, revision: snapshot.revision,
+            } }, limits.metadata, 'INVOCATION_CAPACITY');
             const source: InvocationSource = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
                 snapshotId: snapshot.id, tool: selected.tool, receiver: selected.receiver });
             const contract = getCapturedToolParameters(source.tool.inputSchema);
             if (!contract) fail('REF_CONTRACT_UNSUPPORTED');
             const initial = resolve(state, source);
-            capture(request.input, contract.hasRefs ? RAW_TOOL_ARGUMENT_LIMITS : limits.rawInput, 'ACTION_INPUT_INVALID');
-            const rawArgs = request.inputMode === 'program' ? encodeProgramArguments(contract, input) : input;
-            const prepared = prepareViewTypeParameters(store, source, contract, rawArgs, selected.visibleRefs, request.observationId,
+            const prepared = prepareViewTypeParameters(store, source, contract, request.input, selected.visibleRefs, request.observationId,
                 requestSources && (appId => {
                     const held = acquireRequestSource(requestSources, appId);
                     if (!held || 'issue' in held) return held;
-                    try { foreign.set(appId, { ...held, release: hold(held.snapshot, held.release) }); }
-                    catch (error) { held.release(); return { issue: problem(error) }; }
+                    foreign.set(appId, held);
                     return held.source;
                 }));
             if (prepared.status === 'rejected') fail(prepared.issue.code, prepared.issue.message, prepared.issue.path);
-            const { rawArgs: rawInput, effectiveArgs: effectiveInput, refSources } = prepared;
+            const { effectiveArgs: effectiveInput, refSources } = prepared;
             const byApp = new Map<string, SnapshotValueRefSource[]>();
             for (const ref of refSources) {
                 const group = byApp.get(ref.appId);
                 if (group) group.push(ref);
                 else byApp.set(ref.appId, [ref]);
             }
+            const refreshes: Array<() => Promise<void>> = [];
+            if (refreshProjection) refreshes.push(async () => {
+                try { await refreshProjection(); }
+                catch {
+                    sourceFor(state, request);
+                    fail('TOOL_EXECUTION_UNAVAILABLE', 'The current App projection could not be confirmed.');
+                }
+            });
+            for (const [id, hold] of foreign) {
+                if (hold.refresh) refreshes.push(async () => {
+                    try { await hold.refresh!(); }
+                    catch {
+                        const ref = byApp.get(id)![0]!;
+                        fail('REF_VIEW_UNAVAILABLE', 'The current Ref source could not be confirmed.', refPath(ref.param, ref.index));
+                    }
+                });
+            }
             function recheck(): void {
                 checkAdmission(entry, controller);
-                sourceFor(state, request, viewId);
+                if (requestSources && !requestSources.isCurrent()) fail('TURN_NOT_ACTIVE');
+                sourceFor(state, request);
                 if (requestSources && !requestAppIsAvailable(requestSources, state.appId)) fail('TOOL_SOURCE_STALE');
                 for (const [appId, refs] of byApp) {
                     const external = foreign.get(appId);
@@ -387,14 +391,17 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
                 if (!sameBinding(initial, latest)) fail('TOOL_SOURCE_STALE');
                 live(latest, source);
             }
+            if (refreshes.length) await Promise.all(refreshes.map(check => check()));
             recheck();
             const context: InvocationContext = Object.freeze({ invocationId: request.invocationId, observationId: request.observationId,
-                source, rawInput, effectiveInput, refSources, signal: controller.signal });
+                source, rawInput: request.input, effectiveInput, refSources, signal: controller.signal });
             let authorized: unknown;
             try { authorized = await state.policy!.authorize(context); } catch { return fail('TOOL_AUTHORIZATION_FAILED'); }
+            if (authorized === true && refreshes.length) await Promise.all(refreshes.map(check => check()));
             recheck();
             if (authorized !== true) fail('TOOL_PERMISSION_DENIED');
             checkAdmission(entry, controller);
+            if (requestSources && !requestAppIsAvailable(requestSources, state.appId)) fail('TURN_NOT_ACTIVE');
             for (const source of foreign.values()) source.markDispatched();
             entry.phase = 'unknown'; // The business adapter may have entered from this point onward.
             try { mapping = mapExecutionFact(await initial.execute(context), limits.fact); }
@@ -404,23 +411,25 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
                 outcome: Object.freeze({ status: 'rejected', ...(entry.admissionIssue ?? problem(error)) }) }
                 : { executionPhase: 'unknown', outcome: unknownOutcome() };
         } finally {
+            if (state.closing && entry.phase !== 'not-dispatched') {
+                const { observationId, invocationId } = entry.metadata;
+                closingInvocation = Object.freeze({ observationId, invocationId, executionPhase: mapping.executionPhase,
+                    status: mapping.outcome.status });
+            }
             entry.phase = mapping.executionPhase;
             try {
                 const completedAt = clock();
                 entry.expiresAt = completedAt + limits.receiptTtlMs;
                 if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');
-                const result = makeReceipt(entry, mapping, completedAt);
-                entry.receipt = result.value; entry.resultBytes = result.bytes;
+                entry.receipt = makeReceipt(entry, mapping, completedAt);
             } catch {
                 entry.unavailable = true;
                 // Retain a current fingerprint even if the clock or result cannot settle a readable receipt.
                 entry.expiresAt ??= lastNow + limits.receiptTtlMs;
             }
-            fees.result -= limits.receipt.maxCanonicalBytes - entry.resultBytes;
-            const actualMetadata = captureBoundedJson<ReceiptMetadata>(entry.metadata, limits.metadata).bytes;
-            fees.metadata -= limits.metadata.maxCanonicalBytes - actualMetadata; entry.metadataBytes = actualMetadata;
-            for (const source of foreign.values()) source.release();
-            release?.(); fees.work -= WORK; state.invocations--;
+            for (const source of foreign.values()) try { source.release(); } catch { /* Other holds still need release. */ }
+            try { release?.(); } catch { /* Preserve the original operation's settlement. */ }
+            state.invocations--;
             state.controllers.delete(controller); entry.running = false;
             expireReceipts(lastNow);
             for (const notify of entry.waiters) notify();
@@ -445,7 +454,6 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     }
     function admitRead(state: State): AbortController {
         if (state.reads >= limits.maxReads) fail('RECEIPT_READ_CAPACITY');
-        charge({ work: limits.metadata.maxCanonicalBytes }, 'RECEIPT_READ_CAPACITY');
         const controller = new AbortController(); state.controllers.add(controller); state.reads++;
         return controller;
     }
@@ -509,7 +517,6 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             clearTimeout(timer);
             removeCancel?.();
             const release = () => {
-                fees.work -= limits.metadata.maxCanonicalBytes;
                 state.reads--;
                 state.controllers.delete(controller);
                 clean(state);
@@ -520,13 +527,14 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         }
     }
     function capturedRequest(raw: unknown) {
-        const captured = capture<CapturedInvocation>(raw, limits.request, 'INVOCATION_INVALID');
-        const request = captured.value;
+        let request: CapturedInvocation;
+        try { request = copyWireJson(raw, limits.request) as unknown as CapturedInvocation; }
+        catch (error) { return invalidInvocationJson(error, 'INVOCATION_INVALID'); }
         const fields = ['invocationId', 'observationId', 'toolId', 'input'];
-        if (!jsonObject(request) || !exactFields(request, request.inputMode === undefined ? fields : [...fields, 'inputMode']) ||
+        if (!jsonObject(request) || !exactFields(request, request.viewId === undefined ? fields : [...fields, 'viewId']) ||
             ![request.invocationId, request.observationId].every(validRequestId) || !nonEmpty(request.toolId) ||
-            !jsonObject(request.input) || (request.inputMode !== undefined && request.inputMode !== 'program')) fail('INVOCATION_INVALID');
-        return { request, bytes: captured.bytes, fingerprint: canonicalJson(request as unknown as JsonValue) };
+            !jsonObject(request.input) || (request.viewId !== undefined && typeof request.viewId !== 'string')) fail('INVOCATION_INVALID');
+        return { request, fingerprint: canonicalJson(request as unknown as JsonValue) };
     }
 
     function deadline(timeoutMs: number | undefined, now: number): number | undefined {
@@ -547,7 +555,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         try {
             const end = deadline(timeoutMs, refresh());
             if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');
-            const { value: query } = capture<ReceiptQuery>(raw, limits.request, 'INVOCATION_INVALID');
+            const query = capture<ReceiptQuery>(raw, limits.request, 'INVOCATION_INVALID');
             if (!jsonObject(query) || !exactFields(query, ['observationId', 'invocationId']) ||
                 !validRequestId(query.observationId) || !validRequestId(query.invocationId)) fail('INVOCATION_INVALID');
             const entry = state.entries.get(query.invocationId);
@@ -556,12 +564,12 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         } catch (error) { return Promise.resolve(unavailable(problem(error).code)); }
     }
 
-    function invoke(raw: unknown, timeoutMs?: number, token?: RequestSources, signal?: CancellationSignal): Promise<import('./app-interaction-types.js').InvokeResult> {
+    function invoke(raw: unknown, timeoutMs?: number, token?: ActiveTurn, signal?: CancellationSignal): Promise<import('./app-interaction-types.js').InvokeResult> {
         try {
             if (signal?.aborted) fail(cancelIssue.code, cancelIssue.message);
-            const { request, bytes, fingerprint } = capturedRequest(raw);
+            const { request, fingerprint } = capturedRequest(raw);
             const requestSources = token === undefined ? undefined : requestSourcesFor(token, authority, request.observationId);
-            if (token !== undefined && !requestSources) fail('REQUEST_SOURCES_INVALID', 'The original target observation must belong to this request binding.');
+            if (token !== undefined && !requestSources) fail('TURN_SELECTION_INVALID', 'The target observation must belong to the active turn.');
             let now: number;
             try { now = refresh(); } catch (error) {
                 const entry = state.entries.get(request.invocationId);
@@ -587,13 +595,11 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             if (state.reads >= limits.maxReads) fail('RECEIPT_READ_CAPACITY');
             const initial = capture<ReceiptMetadata>({ appId: state.appId, instanceId: state.instanceId,
                 invocationId: request.invocationId, observationId: request.observationId,
-                toolId: request.toolId, source: null }, limits.metadata, 'INVOCATION_CAPACITY').value;
-            charge({ fingerprint: bytes, metadata: limits.metadata.maxCanonicalBytes, work: WORK + limits.metadata.maxCanonicalBytes,
-                result: limits.receipt.maxCanonicalBytes });
+                toolId: request.toolId, source: null }, limits.metadata, 'INVOCATION_CAPACITY');
             const controller = new AbortController(), readController = new AbortController();
-            const entry: Entry = { fingerprint, requestSourcesId: requestSources?.identity, fingerprintBytes: bytes, metadata: initial, metadataBytes: limits.metadata.maxCanonicalBytes,
+            const entry: Entry = { fingerprint, requestSourcesId: requestSources?.identity, metadata: initial,
                 phase: 'not-dispatched', waiters: new Set(), ...(end === undefined ? {} : { deadline: end }),
-                running: true, expired: false, unavailable: false, resultBytes: 0 };
+                running: true, expired: false, unavailable: false };
             state.entries.set(request.invocationId, entry);
             state.controllers.add(controller); state.controllers.add(readController); state.invocations++; state.reads++;
             void Promise.resolve().then(() => run(state, entry, request, controller, requestSources));
@@ -601,17 +607,17 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         } catch (error) { return Promise.resolve(Object.freeze({ kind: 'refused', ...problem(error) })); }
     }
 
-    async function observe(selection: unknown): Promise<ObserveResult> {
+    async function observe(): Promise<ObserveResult> {
         let controller: AbortController | undefined, token: import('./observation-types.js').ReservationHandle | undefined;
         try {
             active(state);
             if (state.projects || state.observations.size > (state.adoptedObservationId ? 1 : 0))
                 fail('OBSERVATION_CAPACITY', 'Release or adopt the prepared observation before preparing another.');
-            const reserved = observations.begin(selection);
+            const reserved = observations.begin();
             if (reserved.status === 'rejected') return reserved;
             token = reserved.reservation; controller = new AbortController(); state.controllers.add(controller); state.projects++;
             const grant = await state.policy!.project(Object.freeze({ source: reserved.source, signal: controller.signal }));
-            return observations.complete(token, grant);
+            return observations.complete(token, grant, canExposeTools);
         } catch (error) { return Object.freeze({ status: 'rejected', issue: problem(error) }); }
         finally {
             if (token) observations.abandon(token);
@@ -625,9 +631,9 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         const observationStats = observations.stats(error);
         return Object.freeze({ closed, activeInvocations: state.invocations, activeReads: state.reads, receiptEntries: state.entries.size,
             receiptContents: [...state.entries.values()].filter(entry => entry.receipt).length,
-            sourceBytes: fees.source, fingerprintBytes: fees.fingerprint, metadataBytes: fees.metadata, workBytes: fees.work,
-            resultBytes: fees.result, invocationBytes: total(), combinedBytes: total() + observationStats.totalBytes,
-            observations: observationStats, ...(error === undefined ? {} : { issue: problem(error) }) });
+            borrowedSnapshots: externalHolds.size,
+            observations: observationStats, ...(closingInvocation ? { closingInvocation } : {}),
+            ...(error === undefined ? {} : { issue: problem(error) }) });
     }
     function inspect() { try { refresh(); return stats(); } catch (error) { return stats(error); } }
     const interaction = Object.freeze({

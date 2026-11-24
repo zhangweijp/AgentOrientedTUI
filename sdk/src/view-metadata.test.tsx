@@ -3,7 +3,7 @@ import { h, type ComponentType } from 'preact';
 import { useState } from 'preact/hooks';
 import { act } from 'preact/test-utils';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createApp, createView } from './app-factory/createApp.js';
@@ -14,7 +14,7 @@ const Guide = defineViewType({ name: 'Guide', multiplicity: 'single', region: 's
 const Detail = defineViewType({ name: 'FileDetail', multiplicity: 'multiple' });
 
 function kernelFor(factory: ReturnType<typeof createApp> | ReturnType<typeof createTUIApp>) {
-    return new AppKernel({ ...factory.kernelConfig, factory,
+    return new AppKernel({ factory,
         appId: createAppId('metadata'), desktopId: createDesktopId('desktop'),
         instanceId: 'metadata_run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
     });
@@ -61,20 +61,19 @@ describe('explicit View metadata', () => {
                 { id: '1_guide', type: 'Guide', region: 'static' },
                 { id: 'file_1', type: 'FileDetail', region: 'dynamic' },
             ]);
-            expect(document.getElementById('app-root-metadata')?.querySelector('[view]')).toBeNull();
+            expect(document.body.lastElementChild?.querySelector('[view]')).toBeNull();
         } finally { await act(async () => kernel.onClose()); }
         expect(mountedViews(kernel)).toEqual([]);
     });
 
-    it('uses one naming call per mount and preserves its identity across reordering and region changes', async () => {
-        const createId = vi.fn(({ context }: { context: { file: string } }) => 'doc_' + context.file);
-        const File = defineViewType<{ file: string }>()({ name: 'File', multiplicity: 'multiple', region: 'dynamic', createId });
+    it('preserves framework-assigned multi-instance identities across reordering and region changes', async () => {
+        const File = defineViewType<{ file: string }>()({ name: 'File', multiplicity: 'multiple', region: 'dynamic' });
         let update!: () => void;
         function Component() {
             const [changed, setChanged] = useState(false);
             update = () => setChanged(true);
             return (changed ? ['B', 'A'] : ['A', 'B']).map(file =>
-                h(File, { key: file, context: { file }, region: changed ? 'static' : 'dynamic' }, file));
+                h(File, { key: file, idPrefix: 'doc', context: { file }, region: changed ? 'static' : 'dynamic' }, file));
         }
         const kernel = kernelFor(createTUIApp({ app_name: 'metadata', viewTypes: [File], component: () => h(Component, {}) }));
         const views = () => {
@@ -85,13 +84,12 @@ describe('explicit View metadata', () => {
         try {
             await act(async () => kernel.onOpen());
             const original = new Map(views().map(view => [view.id, view.viewInstanceId]));
-            expect([...original.keys()]).toEqual(['doc_A', 'doc_B']);
+            expect([...original.keys()]).toEqual(['doc_1', 'doc_2']);
             await act(() => update());
             expect(views().map(view => [view.id, view.viewInstanceId, view.region])).toEqual([
-                ['doc_B', original.get('doc_B'), 'static'],
-                ['doc_A', original.get('doc_A'), 'static'],
+                ['doc_2', original.get('doc_2'), 'static'],
+                ['doc_1', original.get('doc_1'), 'static'],
             ]);
-            expect(createId).toHaveBeenCalledTimes(2);
         } finally { await act(async () => kernel.onClose()); }
     });
 

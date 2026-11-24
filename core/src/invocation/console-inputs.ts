@@ -1,33 +1,70 @@
-import { copyJson } from '../snapshot/json.js';
-import type { JsonValue } from '../snapshot/types.js';
-import { parseRefAddress, pathStartsWith, readRefPath, type RefAddress } from '../tool/ref-parameters.js';
-import type { ConsoleInputPath, ConsoleInputs, Issue } from './app-interaction-types.js';
+import { copyWireJson } from '../snapshot/json.js';
+import { refKey } from '../snapshot/snapshot-support.js';
+import type { AppSnapshot, JsonValue } from '../snapshot/types.js';
+import { parseRefAddress } from '../tool/ref-parameters.js';
+import { pathStartsWith, readRefPath, type RefAddress } from '../tool/ref-path.js';
+import type { ConsoleInputPath, ConsoleInputs, InspectRefMode, InspectRefResult, Issue } from './app-interaction-types.js';
 import type { ObservedRef } from './observation-types.js';
-import { programRefSchema } from './program-ref-schema.js';
+import { declaredRefSchema } from './ref-schema.js';
 import type { RefSourceHold } from './request-sources.js';
 
-const limits = { maxDepth: 40, maxNodes: 12_000, maxApproxBytes: 128 * 1024 };
+const limits = { maxDepth: 40, maxNodes: 12_000, maxCanonicalBytes: 128 * 1024 };
 const maxPaths = 256;
-const hidden: Issue = { code: 'CONSOLE_REF_UNAVAILABLE', message: 'Choose a public Ref path granted to Console in this request.' };
-const capacity: Issue = { code: 'CONSOLE_INPUT_CAPACITY', message: 'Console inputs exceed the limit. Supply a smaller imports list.' };
-const rejected = (issue: Issue): ConsoleInputs => Object.freeze({ status: 'rejected', issue: Object.freeze(issue) });
-const refKey = (viewId: string, refId: string) => JSON.stringify([viewId, refId]);
+const hidden: Issue = Object.freeze({ code: 'REF_NOT_VISIBLE', message: 'Choose a published Ref from an open page in this request.' });
+const capacity: Issue = Object.freeze({ code: 'CONSOLE_INPUT_CAPACITY', message: 'Console inputs exceed the limit. Supply a smaller imports list.' });
+const rejected = (issue: Issue) => Object.freeze({ status: 'rejected' as const, issue: Object.freeze(issue) });
 
-/** Read only Console grants from the selected, still-adopted original observations. */
-export function readConsoleInputs(apps: ReadonlyMap<string, { readonly consoleRefs: readonly ObservedRef[] }>,
-    acquire: (appId: string) => RefSourceHold | { issue: Issue } | undefined, imports?: readonly string[]): ConsoleInputs {
+type VisibleApps = ReadonlyMap<string, { readonly visibleRefs: readonly ObservedRef[] }>;
+type AcquireSource = (appId: string) => RefSourceHold | { issue: Issue } | undefined;
+
+function selectedRef(hold: RefSourceHold, current: AppSnapshot, refs: readonly ObservedRef[], address: RefAddress, mode: InspectRefMode) {
+    const visible = refs.find(ref => ref.viewId === address.viewId && ref.refId === address.refId);
+    if (!visible || !hold.isRefView(visible.viewId, visible.viewInstanceId)) return rejected(hidden);
+    const key = refKey(visible.viewId, visible.viewInstanceId, visible.refId);
+    const original = hold.snapshot.refs[key], live = current.refs[key];
+    if (!original || !live) return rejected(hidden);
+    if (mode === 'schema') {
+        const schema = declaredRefSchema(original.valueSchema, address.path);
+        return schema === undefined ? rejected(hidden) : Object.freeze({ status: 'ready' as const, schema });
+    }
+    if (original.scope !== 'public' || live.scope !== 'public') return rejected({
+        code: 'REF_VALUE_PRIVATE', message: 'Only a visible public Ref can be read directly. Pass a private or protected address to an authorized page.',
+    });
+    const value = readRefPath(original.target.payload, address.path);
+    return value.found ? Object.freeze({ status: 'ready' as const, value: value.value }) : rejected(hidden);
+}
+
+export async function inspectTurnRef(apps: VisibleApps, acquire: AcquireSource, address: string, mode: InspectRefMode): Promise<InspectRefResult> {
+    const parsed = typeof address === 'string' && parseRefAddress(address);
+    if (!parsed || (mode !== 'schema' && mode !== 'value')) return rejected({
+        code: 'REF_INSPECTION_INVALID', message: 'Supply a complete $ref.app_id.view_id.ref_id address and schema or value mode.',
+    });
+    const visible = apps.get(parsed.appId);
+    if (!visible) return rejected(hidden);
+    const hold = acquire(parsed.appId);
+    if (!hold || 'issue' in hold) return rejected(hidden);
+    try {
+        if (hold.refresh) await hold.refresh();
+        const latest = hold.current();
+        return latest ? selectedRef(hold, latest, visible.visibleRefs, parsed, mode) : rejected(hidden);
+    } catch { return rejected(hidden); }
+    finally { hold.release(); }
+}
+
+export async function readConsoleInputs(apps: VisibleApps, acquire: AcquireSource, imports?: readonly string[]): Promise<ConsoleInputs> {
     const selected = new Map<string, RefAddress[]>();
     if (imports === undefined) {
-        for (const [appId, { consoleRefs }] of apps) {
-            const paths = consoleRefs.flatMap(({ viewId, refId, programPaths }) =>
-                (programPaths ?? []).map(({ path }) => ({ appId, viewId, refId, path })));
+        for (const [appId, { visibleRefs }] of apps) {
+            const paths = visibleRefs.filter(ref => ref.scope === 'public')
+                .map(({ viewId, refId }) => ({ appId, viewId, refId, path: [] }));
             if (paths.length) selected.set(appId, paths);
         }
     } else {
         if (!Array.isArray(imports) || imports.length > maxPaths) return rejected(capacity);
         for (const [index, input] of imports.entries()) {
             const address = typeof input === 'string' ? parseRefAddress(input) : undefined;
-            if (!address) return rejected({ ...hidden, path: `$.imports[${index}]` });
+            if (!address) return rejected({ code: 'REF_INSPECTION_INVALID',
+                message: 'Supply a complete $ref.app_id.view_id.ref_id address.', path: '$.imports[' + index + ']' });
             const group = selected.get(address.appId) ?? [];
             group.push(address);
             selected.set(address.appId, group);
@@ -35,36 +72,38 @@ export function readConsoleInputs(apps: ReadonlyMap<string, { readonly consoleRe
     }
     type Value = { readonly entry: ConsoleInputPath; readonly value: JsonValue };
     const values = new Map<string, Value[]>();
-    let count = 0;
-    for (const [appId, paths] of selected) {
-        const planned = apps.get(appId);
-        if (!planned) return rejected(hidden);
-        const hold = acquire(appId);
-        if (!hold || 'issue' in hold) return rejected(hidden);
-        try {
+    const holds = new Map<string, RefSourceHold>();
+    try {
+        for (const appId of selected.keys()) {
+            if (!apps.has(appId)) return rejected(hidden);
+            const hold = acquire(appId);
+            if (!hold || 'issue' in hold) return rejected(hidden);
+            holds.set(appId, hold);
+        }
+        if (holds.size) {
+            try { await Promise.all([...holds.values()].map(hold => hold.refresh?.())); }
+            catch { return rejected(hidden); }
+        }
+        let count = 0;
+        for (const [appId, paths] of selected) {
+            const planned = apps.get(appId);
+            if (!planned) return rejected(hidden);
+            const hold = holds.get(appId)!;
             const current = hold.current();
             if (!current) return rejected(hidden);
-            const visible = new Map(planned.consoleRefs.map(ref => [refKey(ref.viewId, ref.refId), ref]));
-            const currentRefs = new Map(Object.values(current.refs).map(ref => [refKey(ref.ownerViewId, ref.id), ref]));
-            for (const { viewId, refId, path } of paths) {
-                const key = refKey(viewId, refId), original = visible.get(key), live = currentRefs.get(key);
-                const granted = original?.programPaths?.find(entry => pathStartsWith(path, entry.path));
-                if (!original || !granted || live?.scope !== 'public' || live.ownerViewInstanceId !== original.viewInstanceId ||
-                    !hold.isRefView(viewId, original.viewInstanceId)) return rejected(hidden);
-                const resolved = hold.source.store.resolveRef({ appId, viewId, refId, viewInstanceId: original.viewInstanceId,
-                    instanceId: hold.source.instanceId, snapshotId: hold.source.snapshotId });
-                if (resolved.status === 'rejected' || resolved.ref.scope !== 'public') return rejected(hidden);
-                const value = readRefPath(resolved.target.payload, path);
-                if (!value.found) return rejected(hidden);
+            for (const address of paths) {
+                const result = selectedRef(hold, current, planned.visibleRefs, address, 'value');
+                if (result.status === 'rejected') return result;
+                if (!('value' in result)) return rejected(hidden);
                 if (++count > maxPaths) return rejected(capacity);
-                const schema = programRefSchema(granted.schema, path.slice(granted.path.length));
+                const { viewId, refId } = address;
                 const groupId = JSON.stringify([appId, viewId, refId]);
                 const group = values.get(groupId) ?? [];
-                group.push({ entry: { appId, viewId, refId, path, ...(schema === undefined ? {} : { schema }) }, value: value.value });
+                group.push({ entry: address, value: result.value });
                 values.set(groupId, group);
             }
-        } finally { hold.release(); }
-    }
+        }
+    } finally { for (const hold of holds.values()) hold.release(); }
     type Root = Record<string, JsonValue>;
     const refs: Root = Object.create(null);
     const paths: ConsoleInputPath[] = [];
@@ -81,6 +120,6 @@ export function readConsoleInputs(apps: ReadonlyMap<string, { readonly consoleRe
             parent[leaf] = value;
         }
     }
-    try { return copyJson({ status: 'ready', refs, paths }, limits) as unknown as ConsoleInputs; }
+    try { return copyWireJson({ status: 'ready', refs, paths }, limits) as unknown as ConsoleInputs; }
     catch { return rejected(capacity); }
 }

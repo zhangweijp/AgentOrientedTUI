@@ -6,8 +6,11 @@ import type { AppSnapshot, JsonValue, PreparedAppSnapshotDraft, SnapshotStoreOpt
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { createAppInteraction, DEFAULT_INTERACTION_LIMITS as HARD } from './app-interaction.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionLimitOverrides, InvocationContext, ReceiptMetadata, ReceiptQuery, InstanceInteraction, AppInvocation } from './app-interaction-types.js';
-import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides } from './observation-types.js';
+import type { Observation, ObservationGrant, ProjectionLimitOverrides } from './observation-types.js';
 import { compileToolParameters } from '../tool/tool-parameters.js';
+
+const fixtureJsonSchema = { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }, { type: 'object' }, { type: 'array', items: {} }] };
+
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -175,6 +178,28 @@ describe('R1-F01: real App interaction preserves compatible business errors', ()
 });
 
 describe('R1-F02: await settlement propagates revocation before another public call', () => {
+    it('does not register an observation when Tool availability closes the interaction', async () => {
+        const f = fixture();
+        let closeDuringAvailability = false;
+        const interaction = createAppInteraction(f.store, {
+            ...f.input, namespace: 'close-during-availability', now: f.now,
+            canExposeTools() {
+                if (closeDuringAvailability) interaction.close();
+                return false;
+            },
+        });
+        const observed = await f.observe(interaction);
+        expect(observed.views).toHaveLength(2);
+        expect(observed.tools).toEqual([]);
+        expect(f.core.store.inspect().activeHolds).toBe(1);
+
+        closeDuringAvailability = true;
+        expect(await interaction.observe()).toMatchObject({ status: 'rejected', issue: { code: 'RESERVATION_UNAVAILABLE' } });
+        await interaction.whenClosed();
+        expect(interaction.inspect()).toMatchObject({ closed: true, observations: { observations: 0, reservations: 0 } });
+        f.zero();
+    });
+
     const changes = ['stop', 'close'] as const;
     function invalidate(f: ReturnType<typeof fixture>, client: InstanceInteraction, change: typeof changes[number]) {
         if (change === 'close') { client.close(); client.close(); }
@@ -188,7 +213,7 @@ describe('R1-F02: await settlement propagates revocation before another public c
         const running = client.invoke(f.request(observed)); await entered.promise;
         const project = deferred<unknown>(), started = deferred<void>(); let getterReads = 0;
         f.controls.project = ctx => { projectSignal = ctx.signal; started.resolve(); return project.promise; };
-        const projecting = client.observe({ all: true }); await started.promise; invalidate(f, client, change);
+        const projecting = client.observe(); await started.promise; invalidate(f, client, change);
         if (mode === 'reject') project.reject(new Error('synthetic project rejection'));
         else project.resolve(mode === 'uncapturable' ? { get views() { getterReads++; return []; } } : f.grant(f.source, ['v0']));
         const response = await projecting;
@@ -196,8 +221,8 @@ describe('R1-F02: await settlement propagates revocation before another public c
         expect(response.status).toBe('rejected'); expect(getterReads).toBe(0);
         const charged = f.authority.inspect(); expect(charged).toMatchObject({ activeInvocations: 1, activeReads: 1,
             receiptContents: 0, observations: { reservations: 0 } });
-        expect(charged.sourceBytes).toBeGreaterThan(0); expect(charged.workBytes).toBeGreaterThanOrEqual(1024 * 1024);
-        expect(charged.resultBytes).toBeGreaterThan(0); expect((await client.observe({ all: true })).status).toBe('rejected');
+        expect(f.core.store.inspect().activeHolds).toBeGreaterThan(0); expect(charged.activeInvocations).toBe(1);
+        expect((await client.observe()).status).toBe('rejected');
         client.close(); client.close();
         execute.resolve(success('entered before revocation')); expect(code(await running)).toBe('APP_INTERACTION_UNAVAILABLE');
         expect(f.calls.handler).toBe(1); f.zero();
@@ -209,7 +234,7 @@ describe('R1-F02: await settlement propagates revocation before another public c
         const running = client.invoke(f.request(observed)); await entered.promise;
         const project = deferred<unknown>(), started = deferred<void>(); let reads = 0;
         f.controls.project = () => { started.resolve(); return project.promise; };
-        const projecting = client.observe({ all: true }); await started.promise;
+        const projecting = client.observe(); await started.promise;
         if (mode === 'reject') project.reject(new Error('business project refusal'));
         else project.resolve(mode === 'uncapturable' ? { get views() { reads++; return []; } } : f.grant(f.source, ['v0']));
         const response = await projecting; expect(signal.aborted).toBe(false); expect(reads).toBe(0);
@@ -232,17 +257,17 @@ const receiptQuery = ({ observationId, invocationId }: ReceiptQuery): ReceiptQue
 function receipt(value: Awaited<ReturnType<InstanceInteraction['invoke']>>) {
     expect(value.kind).toBe('receipt'); if (value.kind !== 'receipt') throw new Error('Expected receipt: ' + value.code); return value.receipt;
 }
-function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverrides; observationLimits?: ObservationRegistryLimitOverrides;
+function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverrides; observationLimits?: ProjectionLimitOverrides;
     store?: Omit<SnapshotStoreOptions, 'appId' | 'instanceId'>; payload?: JsonValue; refType?: string; schema?: JsonValue; namespace?: string } = {}) {
     let time = 0, sequence = 0, clockThrows = false, clockMessageReads = 0;
     const now = () => { if (clockThrows) throw { get message() { clockMessageReads++; return 'secret-clock'; } }; return time; };
     const core = createSnapshotCore({ ...context, now, ...options.store });
     const tools = createViewOwnedTools('app', 'run');
-    let pages = ['v0','v1'].map(id => ({id,type:'File',owner:{}}));
+    let pages = [1, 2].map(() => ({idPrefix:'v',type:'File',owner:{}}));
     let owners: ReturnType<ReturnType<typeof createViewOwnedTools>['prepareFrame']>['instances'];
     const ordinary = compileToolParameters({ type: 'object', properties: {} });
     const snapshotValue = compileToolParameters({ type: 'object', properties: {
-        file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } },
+        file: { 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } },
         line: { type: 'string' },
     }, required: ['file'], additionalProperties: true });
     if (!ordinary.ok || !snapshotValue.ok) throw new Error('Invalid interaction fixture');
@@ -251,32 +276,32 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     const typeDefinition = { name: 'run', description: 'Synthetic tool', inputSchema: schema };
     tools.defineViewTypes([{ name: 'File', multiplicity: 'multiple', tools: [typeDefinition] }]);
     function prepare(enabled = true) {
-        const plan = tools.prepareFrame(pages.map(({ id, ...page }) => ({ ...page, createId: () => id, bindings:[{name:'run',enabled,execute:() => ({success:true})}]})));
+        const plan = tools.prepareFrame(pages.map(page => ({ ...page, bindings:[{name:'run',enabled,execute:() => ({success:true})}]})));
         plan.accept();
         owners = plan.instances;
         return plan.tools;
     }
     function rebindTool() { prepare(false); }
-    function remountAll() { pages = [{id:'v0',type:'File',owner:{}}]; }
+    function remountAll() { pages = [{idPrefix:'v',type:'File',owner:{}}]; }
     function refs(value: JsonValue = options.payload ?? { version: 'S1' }) {
-        return Object.fromEntries(owners.flatMap(owner => (owner.viewId === 'v0' ? ['visible', 'hidden'] : ['visible-v1', 'hidden-v1']).map(id => [refKey(owner.viewId, owner.viewInstanceId, id), { scope: 'protected',
+        return Object.fromEntries(owners.flatMap(owner => (owner.viewId === 'v_1' ? ['visible', 'hidden'] : ['visible-v1', 'hidden-v1']).map(id => [refKey(owner.viewId, owner.viewInstanceId, id), { valueSchema: fixtureJsonSchema, scope: 'protected',
             id, ownerViewId: owner.viewId, ownerViewInstanceId: owner.viewInstanceId, refType: options.refType ?? 'File',
             target: { kind: 'snapshot-value' as const, payload: value },
         }])));
     }
     function publish(patch: Partial<PreparedAppSnapshotDraft> = {}): AppSnapshot {
         const available = prepare();
-        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 7, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 8, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, region: 'dynamic',
                 content: { format: 'markdown-v1', value: 'content-secret-' + v.viewId } })), refs: refs(),
             tools: Object.fromEntries(available.map(t => [t.id, t])), ...patch });
         expect(['published', 'unchanged']).toContain(result.status);
-        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 7) throw new Error('Expected a published Snapshot fixture'); return result.snapshot;
+        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 8) throw new Error('Expected a published Snapshot fixture'); return result.snapshot;
     }
     const source = publish();
     const calls = { project: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0 };
     const seen: { authorize?: InvocationContext; execute?: InvocationContext; metadata?: ReceiptMetadata; readSignal?: CancellationSignal } = {};
-    function grant(snapshot = source, visible = ['v0', 'v1'], refIds = ['visible']): ObservationGrant {
+    function grant(snapshot = source, visible = ['v_1', 'v_2'], refIds = ['visible']): ObservationGrant {
         return { refs: Object.values(snapshot.refs).filter(r => visible.includes(r.ownerViewId) && refIds.includes(r.id))
             .map(r => ({ viewId:r.ownerViewId, viewInstanceId:r.ownerViewInstanceId, refId:r.id })),
             toolIds: Object.keys(snapshot.tools) };
@@ -286,7 +311,7 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
         authorize: (_ctx: InvocationContext): unknown => true,
         execute: (_ctx: InvocationContext): unknown => success(),
         read: (_metadata: ReceiptMetadata, _signal?: CancellationSignal): unknown => true,
-        live: (): unknown => ({ ok: true }),
+        live: (): unknown => true,
     };
     let current: ExecutionBinding | null = { identity: {},
         isLive: () => { calls.live++; return controls.live() as never; },
@@ -301,16 +326,17 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
         limits: options.limits, observationLimits: options.observationLimits });
     function open() { return authority; }
     async function observe(client: InstanceInteraction) {
-        const viewed = await client.observe({ all: true }); expect(viewed.status).toBe('observed');
+        const viewed = await client.observe(); expect(viewed.status).toBe('observed');
         if (viewed.status !== 'observed') throw new Error(viewed.issue.code);
         expect(client.adoptObservation(viewed.observation.observationId)).toEqual({ status: 'adopted' }); return viewed.observation;
     }
-    function request(viewed: Observation, id = 'invocation', input: Readonly<Record<string, JsonValue>> = options.withRef ? { file: '$app.v0.visible', line: '7' } : {}): AppInvocation {
-        return { invocationId: id, observationId: viewed.observationId, toolId: viewed.tools[0]!.id, input: {view_id:"v0", ...input} };
+    function request(viewed: Observation, id = 'invocation', input: Readonly<Record<string, JsonValue>> = options.withRef ? { file: '$ref.app.v_1.visible', line: '7' } : {}): AppInvocation {
+        const { view_id = 'v_1', ...business } = input;
+        return { invocationId: id, observationId: viewed.observationId, toolId: viewed.tools[0]!.id, viewId: view_id as string, input: business };
     }
     function zero() {
         authority.close(); expect(authority.inspect()).toMatchObject({ receiptEntries: 0, receiptContents: 0,
-            activeInvocations: 0, activeReads: 0, invocationBytes: 0, combinedBytes: 0 });
+            activeInvocations: 0, activeReads: 0 });
         expect(core.store.inspect().activeHolds).toBe(0);
     }
     return { authority, core, tools, owners, source, refs, publish, calls, seen, controls, store, input, open, observe, request, grant, now,
@@ -365,18 +391,18 @@ describe('B2-T01/T02: real instance publication and trusted assembly', () => {
     it('retains B1 project reservations until a cancelled real policy Promise settles', async () => {
         const f = fixture(), client = f.open(), gate = deferred<ObservationGrant>(), started = deferred<void>();
         f.controls.project = () => { started.resolve(); return gate.promise; };
-        const observed = client.observe({ all: true }); await started.promise; client.close();
+        const observed = client.observe(); await started.promise; client.close();
         expect(f.authority.inspect()).toMatchObject({ observations: { reservations: 1, cancelledReservations: 1 } });
-        expect((await client.observe({ all: true })).status).toBe('rejected');
-        gate.resolve(f.grant()); expect((await observed).status).toBe('rejected'); expect(f.authority.inspect().combinedBytes).toBe(0); f.zero();
+        expect((await client.observe()).status).toBe('rejected');
+        gate.resolve(f.grant()); expect((await observed).status).toBe('rejected'); expect(f.core.store.inspect().activeHolds).toBe(0); f.zero();
     });
-    it('detaches original selection and invocation input before caller mutation', async () => {
-        const f = fixture(), client = f.open(), selection = { all: true }, gate = deferred<ObservationGrant>(), started = deferred<void>();
-        f.controls.project = ctx => { expect(ctx.source.views.map(view => view.id)).toEqual(['v0','v1']); started.resolve(); return gate.promise; };
-        const pending = client.observe(selection); selection.all = false; await started.promise; gate.resolve(f.grant(f.source, ['v0']));
+    it('observes all pages and captures invocation input before caller mutation', async () => {
+        const f = fixture(), client = f.open(), gate = deferred<ObservationGrant>(), started = deferred<void>();
+        f.controls.project = ctx => { expect(ctx.source.views.map(view => view.id)).toEqual(['v_1','v_2']); started.resolve(); return gate.promise; };
+        const pending = client.observe(); await started.promise; gate.resolve(f.grant(f.source, ['v_1']));
         const result = await pending; expect(result.status).toBe('observed'); if (result.status !== 'observed') return;
         expect(client.adoptObservation(result.observation.observationId)).toEqual({ status: 'adopted' });
-        const request = { ...f.request(result.observation), input: { view_id: 'v0', value: 'captured' } }, invoked = client.invoke(request);
+        const request = { ...f.request(result.observation), input: { value: 'captured' } }, invoked = client.invoke(request);
         request.input.value = 'mutated'; receipt(await invoked); expect(f.seen.execute!.rawInput.value).toBe('captured'); f.zero();
     });
 });
@@ -391,34 +417,34 @@ describe('B2-T11: cancellation and actual settlement', () => {
         const pending = client.invoke(f.request(observation));
         await started.promise; client.close();
         expect(f.authority.inspect()).toMatchObject({ observations: { observations: 0 } });
-        expect((await client.observe({ all: true })).status).toBe('rejected'); expect(f.authority.inspect().workBytes).toBeGreaterThan(0);
+        expect((await client.observe()).status).toBe('rejected'); expect(f.authority.inspect().activeInvocations + f.authority.inspect().activeReads).toBeGreaterThan(0);
         if (stage === 'authorize') expect(f.seen.authorize!.signal.aborted).toBe(true);
         if (stage === 'execute') expect(f.seen.execute!.signal.aborted).toBe(true);
         if (stage === 'read') expect(f.seen.readSignal!.aborted).toBe(true);
         gate.resolve(stage === 'execute' ? success() : true);
-        expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE'); expect(f.authority.inspect().combinedBytes).toBe(0); f.zero();
+        expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE'); expect(f.core.store.inspect().activeHolds).toBe(0); f.zero();
     });
     it('releases an observation while retaining the source of actual dispatched work', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client),
             gate = deferred<unknown>(), started = deferred<void>();
         f.controls.execute = () => { started.resolve(); return gate.promise; };
         const request = f.request(observation), pending = client.invoke(request); await started.promise;
-        const charged = f.authority.inspect().sourceBytes;
+        expect(f.core.store.inspect().activeHolds).toBe(2);
         client.releaseObservation(observation.observationId);
         f.publish({ refs: f.refs({ version: 'S2' }) }); f.setTime(10);
         expect(f.core.store.inspect().activeHolds).toBe(1);
-        expect(f.authority.inspect().sourceBytes).toBe(charged);
+
         expect(f.seen.execute!.signal.aborted).toBe(false);
         gate.resolve(success()); expect(receipt(await pending).outcome.status).toBe('succeeded');
         expect(receipt(await client.readReceipt(receiptQuery(request))).outcome.status).toBe('succeeded');
-        expect(f.core.store.inspect().activeHolds).toBe(0); expect(f.authority.inspect().sourceBytes).toBe(0); f.zero();
+        expect(f.core.store.inspect().activeHolds).toBe(0); expect(f.authority.inspect().activeInvocations).toBe(0); f.zero();
     });
     it.each(['authorize', 'execute'] as const)('settles %s work during a bad completion clock without inventing a receipt time or replaying it', async stage => {
         const f = fixture(); f.setTime(10); const client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
         if (stage === 'authorize') f.controls.authorize = () => { started.resolve(); return gate.promise; };
         else f.controls.execute = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise; f.setTime(9); gate.resolve(stage === 'execute' ? success() : true);
-        expect(code(await pending)).toBe('RESULT_UNAVAILABLE'); expect(f.authority.inspect()).toMatchObject({ activeInvocations: 0, activeReads: 0, workBytes: 0, resultBytes: 0, sourceBytes: 0, receiptEntries: 1 });
+        expect(code(await pending)).toBe('RESULT_UNAVAILABLE'); expect(f.authority.inspect()).toMatchObject({ activeInvocations: 0, activeReads: 0, receiptEntries: 1 });
         expect(code(await client.invoke(f.request(observation)))).toBe('RESULT_UNAVAILABLE');
         f.setTime(10); expect(code(await client.invoke(f.request(observation)))).toBe('RESULT_UNAVAILABLE');
         expect(f.calls.handler).toBe(stage === 'execute' ? 1 : 0); f.zero();
@@ -448,16 +474,16 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
     });
     it('prepares a legal 6000+ node Ref without the old M5 whole-request cap or ordinary conversion', async () => {
         const f = fixture({ withRef: true }), client = f.open(), observed = await f.observe(client);
-        const raw = { file: '$app.v0.visible', line: '7', surplus: true, nodes: Array(6000).fill(null) };
+        const raw = { file: '$ref.app.v_1.visible', line: '7', surplus: true, nodes: Array(6000).fill(null) };
         const result = receipt(await client.invoke(f.request(observed, 'ref', raw)));
         expect(result.outcome.status).toBe('succeeded'); expect(f.seen.execute!.effectiveInput).toMatchObject({ file: { version: 'S1' }, line: '7', surplus: true });
-        expect(f.seen.execute).toBe(f.seen.authorize); expect(f.seen.execute!.rawInput.file).toBe('$app.v0.visible');
+        expect(f.seen.execute).toBe(f.seen.authorize); expect(f.seen.execute!.rawInput.file).toBe('$ref.app.v_1.visible');
         expect([f.seen.execute!.rawInput, f.seen.execute!.effectiveInput, f.seen.execute!.effectiveInput.file].every(Object.isFrozen)).toBe(true);
-        expect(f.seen.execute!.refSources[0]).toMatchObject({ snapshotId: f.source.id, viewId: 'v0', refId: 'visible' }); f.zero();
+        expect(f.seen.execute!.refSources[0]).toMatchObject({ snapshotId: f.source.id, viewId: 'v_1', refId: 'visible' }); f.zero();
     });
     it('rejects an invisible same-owner Ref before Store.resolveRef or authorization', async () => {
         const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client);
-        expect(receipt(await client.invoke(f.request(observation, 'hidden', { file: '$app.v0.hidden' }))).outcome).toMatchObject({ code: 'REF_NOT_VISIBLE' });
+        expect(receipt(await client.invoke(f.request(observation, 'hidden', { file: '$ref.app.v_1.hidden' }))).outcome).toMatchObject({ code: 'REF_NOT_VISIBLE' });
         expect(f.calls.resolveRef).toBe(0); expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('keeps Ref type and mixed root selector restrictions', async () => {
@@ -473,9 +499,8 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
 describe('B2-T06: post-await original source and callable revalidation', () => {
     it('invokes the same observed Binding after a long model turn while reading the exact original Ref', async () => {
         const f = fixture({ withRef: true }), client = f.open();
-        const observed = await client.observe({ all: true });
+        const observed = await client.observe();
         expect(observed.status).toBe('observed'); if (observed.status !== 'observed') return;
-        expect(observed.observation.expiresAt).toBeNull();
         expect(client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
         f.publish({ refs: f.refs({ version: 'S2' }) }); f.setTime(1_000_000);
         const request = f.request(observed.observation), result = receipt(await client.invoke(request));
@@ -502,19 +527,19 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
     it('publishes an empty semantic projection through all after the App removes its Views', async () => {
         const f = fixture(), client = f.open();
         f.publish({ views: [], refs: {}, tools: {} });
-        expect(await client.observe({ all: true })).toMatchObject({ status: 'observed',
+        expect(await client.observe()).toMatchObject({ status: 'observed',
             observation: { views: [], refs: [], tools: [] } });
         expect(f.calls.project).toBe(1); expect(f.calls.handler).toBe(0); f.zero();
     });
     it.each(['update', 'close'] as const)('rechecks the source page of a cross-page Ref after %s during authorization', async change => {
         const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
         f.controls.authorize = () => { started.resolve(); return gate.promise; };
-        const pending = client.invoke(f.request(observation, 'cross-page', { view_id: 'v1', file: '$app.v0.visible' }));
+        const pending = client.invoke(f.request(observation, 'cross-page', { view_id: 'v_2', file: '$ref.app.v_1.visible' }));
         await started.promise;
         expect(f.core.store.inspect().activeHolds).toBe(2);
         if (change === 'update') f.publish({ refs: f.refs({ version: 'S2' }) });
-        else f.publish({ views: f.source.views.filter(view => view.id !== 'v0'),
-            refs: Object.fromEntries(Object.entries(f.source.refs).filter(([, ref]) => ref.ownerViewId !== 'v0')) });
+        else f.publish({ views: f.source.views.filter(view => view.id !== 'v_1'),
+            refs: Object.fromEntries(Object.entries(f.source.refs).filter(([, ref]) => ref.ownerViewId !== 'v_1')) });
         gate.resolve(true);
         const result = receipt(await pending);
         if (change === 'update') {
@@ -539,7 +564,7 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
             f.publish({ tools: { [tool.id]: { ...tool, inputSchema: changed.contract.schema } } });
         } else if (change === 'identity') f.binding = { ...f.binding!, identity: {} };
         else if (change === 'function') f.binding = { ...f.binding!, execute: () => success('must-not-run') };
-        else if (change === 'live') f.controls.live = () => ({ ok: false });
+        else if (change === 'live') f.controls.live = () => false;
         else if (change === 'null') f.binding = null;
         else if (change === 'getter') f.binding = { ...f.binding!, get execute() { throw new Error('secret'); } };
         gate.resolve(true); expect(receipt(await pending).outcome.status).toBe('rejected'); expect(f.calls.handler).toBe(0); f.zero();
@@ -571,9 +596,11 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         expect(result.executionPhase).toBe('entered-returned'); expect(result.outcome.status).toBe('failed');
         expect(result.outcome).toHaveProperty('details.result.error.code', code); f.zero();
     });
-    it.each(['live-getter', 'authorize-throw', 'authorize-false', 'execute-throw', 'execute-getter', 'execute-oversize'] as const)('classifies %s by the actual boundary and keeps exception text private', async mode => {
+    it.each(['live-throw', 'live-promise', 'live-getter', 'authorize-throw', 'authorize-false', 'execute-throw', 'execute-getter', 'execute-oversize'] as const)('classifies %s by the actual boundary and keeps exception text private', async mode => {
         const f = fixture(), client = f.open(), observation = await f.observe(client); let reads = 0;
         const exception = { get message() { reads++; return 'secret-marker'; }, toString() { reads++; return 'secret-marker'; } };
+        if (mode === 'live-throw') f.controls.live = () => { throw exception; };
+        if (mode === 'live-promise') f.controls.live = () => Promise.resolve(true);
         if (mode === 'live-getter') f.controls.live = () => ({ get ok() { reads++; throw exception; } });
         if (mode === 'authorize-throw') f.controls.authorize = () => { throw exception; };
         if (mode === 'authorize-false') f.controls.authorize = () => 'true';
@@ -582,6 +609,7 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         if (mode === 'execute-oversize') f.controls.execute = () => success('\u0000'.repeat(100000));
         const result = receipt(await client.invoke(f.request(observation))), entered = mode.startsWith('execute');
         expect(result.executionPhase).toBe(entered ? 'unknown' : 'not-dispatched'); expect(result.outcome.status).toBe(entered ? 'unknown' : 'rejected');
+        if (mode.startsWith('live')) expect(result.outcome).toMatchObject({ code: 'LIVE_BINDING_CHECK_FAILED' });
         expect(f.calls.handler).toBe(entered ? 1 : 0); expect(reads).toBe(0); expect(JSON.stringify(result)).not.toContain('secret-marker'); f.zero();
     });
     it('checks first and duplicate result reads every time and keeps the original result across denied/failed reads', async () => {
@@ -614,7 +642,7 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         f.setTime(9); expect(receipt(await client.readReceipt(receiptQuery(request)))).toEqual(first); f.setTime(10);
         expect(code(await client.invoke(f.request(observation)))).toBe('RESULT_EXPIRED'); expect(code(await client.invoke(request))).toBe('RESULT_EXPIRED');
         expect(code(await client.readReceipt(receiptQuery(request)))).toBe('RESULT_EXPIRED');
-        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0, resultBytes: 0, fingerprintBytes: before.fingerprintBytes, sourceBytes: 0 });
+        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0 });
         expect(await client.invoke(f.request(observation, 'another'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
         expect(f.calls.handler).toBe(1); f.zero();
     });
@@ -676,45 +704,45 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         f.controls.read = () => { started.resolve(); return gate.promise; };
         const pending = client.readReceipt(receiptQuery(f.request(observation))); await started.promise; client.close();
         expect(f.authority.inspect()).toMatchObject({ activeReads: 1, receiptContents: 0 });
-        expect((await client.observe({ all: true })).status).toBe('rejected'); gate.resolve(true);
+        expect((await client.observe()).status).toBe('rejected'); gate.resolve(true);
         expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE'); f.zero();
     });
 });
 
 describe('B2-T01/T11 additional revocation and completion faults', () => {
-    it('revokes settled interactions on stop with no double refund or revival', async () => {
+    it('revokes settled interactions on stop with no leaked work or revival', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
         receipt(await client.invoke(f.request(observation)));
         f.core.lifecycle.stop();
         expect(code(await client.invoke(f.request(observation)))).toBe('APP_INTERACTION_UNAVAILABLE');
-        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, invocationBytes: 0, combinedBytes: 0 }); f.zero();
+        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0 }); f.zero();
     });
     it('keeps settled reading separate from temporary degraded source availability', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
         receipt(await client.invoke(f.request(observation)));
-        expect(f.core.committer.accept({ schemaVersion: 7, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
+        expect(f.core.committer.accept({ schemaVersion: 8, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
             views: f.source.views, refs: { malformed: null }, tools: f.source.tools }).status).toBe('rejected');
         expect(f.core.store.readLatest('app').status).toBe('degraded');
-        receipt(await client.invoke(f.request(observation))); expect((await client.observe({ all: true })).status).toBe('rejected'); f.zero();
+        receipt(await client.invoke(f.request(observation))); expect((await client.observe()).status).toBe('rejected'); f.zero();
     });
-    it('settles a dispatched call while now throws without reading its exception or retaining active fees', async () => {
+    it('settles a dispatched call while now throws without reading its exception or retaining active work', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), started = deferred<void>(), gate = deferred<unknown>();
         f.controls.execute = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise; f.setClockError(true); gate.resolve(success());
         expect(code(await pending)).toBe('RESULT_UNAVAILABLE'); expect(code(await client.invoke(f.request(observation)))).toBe('RESULT_UNAVAILABLE');
-        expect(f.authority.inspect()).toMatchObject({ activeInvocations: 0, activeReads: 0, sourceBytes: 0, workBytes: 0, resultBytes: 0, receiptEntries: 1 });
+        expect(f.authority.inspect()).toMatchObject({ activeInvocations: 0, activeReads: 0, receiptEntries: 1 });
         expect(f.clockMessageReads).toBe(0); f.setClockError(false);
         expect(code(await client.invoke(f.request(observation)))).toBe('RESULT_UNAVAILABLE'); expect(f.calls.handler).toBe(1); f.zero();
     });
     it('refuses an invalid admission clock before claiming any ID or running callbacks', async () => {
         const f = fixture(); f.setTime(10); const client = f.open(), observation = await f.observe(client); f.setTime(9);
         expect(await client.invoke(f.request(observation))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_INTERNAL_ERROR' });
-        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, invocationBytes: 0 }); expect(f.calls.authorize).toBe(0);
+        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0 }); expect(f.calls.authorize).toBe(0);
         f.setTime(10); f.zero();
     });
 });
 
-describe('B2-T12: individual counters and transactional byte responsibility', () => {
+describe('Receipt admission and Snapshot ownership', () => {
     it('checks first-read admission before business and independently limits duplicate/cache reads', async () => {
         const f = fixture({ limits: { maxReads: 1 } }), client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
         f.controls.read = () => { started.resolve(); return gate.promise; };
@@ -750,38 +778,17 @@ describe('B2-T12: individual counters and transactional byte responsibility', ()
         expect(code(await client.readReceipt(receiptQuery(request)))).toBe('RECEIPT_READ_CAPACITY');
         gate.resolve(true); receipt(await one); receipt(await two); f.zero();
     });
-    it.each(['maxFingerprintBytes', 'maxMetadataBytes', 'maxWorkBytes', 'maxResultBytes'] as const)('checks %s initial reservation at exact byte boundaries', async field => {
-        const probe = fixture(), p = probe.open(), observed = await probe.observe(p), request = probe.request(observed);
-        const fingerprintBytes = utf8Size(canonicalJson(request as unknown as JsonValue)); probe.zero();
-        const n = field === 'maxFingerprintBytes' ? fingerprintBytes : field === 'maxMetadataBytes' ? HARD.metadata.maxCanonicalBytes
-            : field === 'maxWorkBytes' ? 1024 * 1024 + HARD.metadata.maxCanonicalBytes : HARD.receipt.maxCanonicalBytes;
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { [field]: n + delta } }), client = f.open(), observation = await f.observe(client), result = await client.invoke(f.request(observation));
-            if (delta < 0) { expect(result).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' }); expect(f.calls.handler).toBe(0); expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, invocationBytes: 0 }); }
-            else expect(receipt(result).outcome.status).toBe('succeeded'); f.zero();
-        }
-    });
-    it('checks source and total fees independently, atomically rejecting a claimed preflight that cannot acquire its source budget', async () => {
-        const probe = fixture(), pc = probe.open(), po = await probe.observe(pc), raw = probe.request(po), sourceBytes = utf8Size(canonicalJson(probe.source as unknown as JsonValue));
-        const totalBytes = utf8Size(canonicalJson(raw as unknown as JsonValue)) + 2 * HARD.metadata.maxCanonicalBytes + 1024 * 1024 + HARD.receipt.maxCanonicalBytes + sourceBytes; probe.zero();
-        for (const field of ['maxSourceBytes', 'maxTotalBytes'] as const) for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { [field]: (field === 'maxSourceBytes' ? sourceBytes : totalBytes) + delta } }), client = f.open(), observation = await f.observe(client);
-            const result = receipt(await client.invoke(f.request(observation)));
-            expect(result.outcome.status).toBe(delta < 0 ? 'rejected' : 'succeeded'); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1);
-            expect(f.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0, activeInvocations: 0, activeReads: 0, receiptEntries: 1 }); f.zero();
-        }
-    });
     it('keeps the original invocation source while the next observation is adopted', async () => {
         const f = fixture(), client = f.open(), first = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
         f.controls.execute = () => { started.resolve(); return gate.promise; };
         const original = f.request(first, 'one'), running = client.invoke(original); await started.promise;
-        const bytes = f.authority.inspect().sourceBytes;
+        expect(f.core.store.inspect().activeHolds).toBe(2);
         f.publish({ refs: f.refs({ version: 'S2' }) }); const current = await f.observe(client);
-        expect(f.authority.inspect().sourceBytes).toBe(bytes);
+        expect(f.core.store.inspect().activeHolds).toBe(2);
         expect(await client.invoke(f.request(current, 'other-source'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
         gate.resolve(success()); receipt(await running);
         expect(receipt(await client.readReceipt(receiptQuery(original))).source?.snapshotId).toBe(f.source.id);
-        expect(f.authority.inspect().sourceBytes).toBe(0); expect(f.calls.handler).toBe(1); f.zero();
+        expect(f.authority.inspect().activeInvocations).toBe(0); expect(f.calls.handler).toBe(1); f.zero();
     });
     it('honors independent Store lease limits without widening them', async () => {
         const f = fixture({ store: { maxActiveHolds: 2 } }), client = f.open(), observation = await f.observe(client);
@@ -801,7 +808,7 @@ describe('B2-T12: individual counters and transactional byte responsibility', ()
         const f = fixture({ limits: { receipt: { maxCanonicalBytes: 1 }, maxReceiptsPerObservation: 1 } }), client = f.open(), observation = await f.observe(client);
         const raw = { ...f.request(observation), toolId: 'unknown' };
         expect(code(await client.invoke(raw))).toBe('RESULT_UNAVAILABLE'); expect(code(await client.invoke(raw))).toBe('RESULT_UNAVAILABLE');
-        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0, resultBytes: 0, workBytes: 0, sourceBytes: 0 });
+        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0 });
         expect(await client.invoke(f.request(observation, 'another'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' }); expect(f.calls.handler).toBe(0); f.zero();
     });
     it.each(Object.entries(HARD).flatMap(([key, value]) => typeof value === 'number' ? [[key, value, undefined] as const]
@@ -812,13 +819,13 @@ describe('B2-T12: individual counters and transactional byte responsibility', ()
     });
 });
 
-describe('B2-T12: independent depth/node/approximate/canonical profiles', () => {
-    type Field = 'maxDepth' | 'maxNodes' | 'maxApproxBytes' | 'maxCanonicalBytes';
-    const fields: Field[] = ['maxDepth', 'maxNodes', 'maxApproxBytes', 'maxCanonicalBytes'];
+describe('Invocation JSON depth, node and encoded-byte limits', () => {
+    type Field = 'maxDepth' | 'maxNodes' | 'maxCanonicalBytes';
+    const fields: Field[] = ['maxDepth', 'maxNodes', 'maxCanonicalBytes'];
     const sample = { deep: [{ leaf: '汉字\u0000'.repeat(5) }] };
     function measure(value: unknown, field: Field): number {
         if (field === 'maxCanonicalBytes') return utf8Size(canonicalJson(copyJson(value, { maxDepth: 100, maxNodes: 200000, maxApproxBytes: 8 * 1024 * 1024 })));
-        let low = 0, high = field === 'maxApproxBytes' ? 8 * 1024 * 1024 : 100000;
+        let low = 0, high = 100000;
         while (low < high) {
             const middle = Math.floor((low + high) / 2);
             try { copyJson(value, { maxDepth: 100, maxNodes: 200000, maxApproxBytes: 8 * 1024 * 1024, [field]: middle }); high = middle; }
@@ -835,7 +842,7 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
         }
     });
     it.each(fields)('bounds ordinary input %s before authorization', async field => {
-        const n = measure({ view_id: 'v0', ...sample }, field);
+        const n = measure(sample, field);
         for (const delta of [-1, 0, 1]) {
             const f = fixture({ limits: { rawInput: { [field]: n + delta } } }), client = f.open(), observed = await f.observe(client);
             const result = receipt(await client.invoke(f.request(observed, 'profile', sample)));
@@ -844,14 +851,14 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
             expect(f.calls.authorize).toBe(delta < 0 ? 0 : 1); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
         }
     });
-    it.each(fields)('bounds filled metadata %s and never expands beyond its admission reservation', async field => {
+    it.each(fields)('bounds filled receipt metadata %s before authorizing a call', async field => {
         const probe = fixture(), p = probe.open(), po = await probe.observe(p), raw = probe.request(po, 'profile'), got = receipt(await p.invoke(raw));
         const metadata = { ...context, invocationId: raw.invocationId, observationId: raw.observationId, toolId: raw.toolId, source: got.source };
         const n = measure(metadata, field); probe.zero();
         for (const delta of [-1, 0, 1]) {
             const f = fixture({ limits: { metadata: { [field]: n + delta } } }), client = f.open(), observation = await f.observe(client), result = receipt(await client.invoke(f.request(observation, 'profile')));
             expect(result.outcome.status).toBe(delta < 0 ? 'rejected' : 'succeeded');
-            expect(f.authority.inspect().metadataBytes).toBeLessThanOrEqual(HARD.metadata.maxCanonicalBytes); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
+            expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
         }
     });
     it.each(fields)('bounds entered execution fact %s and classifies failed capture as unknown', async field => {
@@ -869,18 +876,9 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
         for (const delta of [-1, 0, 1]) {
             const f = fixture({ limits: { receipt: { [field]: n + delta } } }), client = f.open(), observation = await f.observe(client);
             f.controls.execute = () => success(sample); const request = f.request(observation), result = await client.invoke(request);
-            if (delta < 0) { expect(code(result)).toBe('RESULT_UNAVAILABLE'); expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0, resultBytes: 0 });
+            if (delta < 0) { expect(code(result)).toBe('RESULT_UNAVAILABLE'); expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0 });
                 expect(code(await client.invoke(request))).toBe('RESULT_UNAVAILABLE'); }
             else expect(receipt(result).outcome.status).toBe('succeeded'); expect(f.calls.handler).toBe(1); f.zero();
-        }
-    });
-    it.each(fields)('reuses the bounded B1 source %s profile for B2 reference billing', async field => {
-        const probe = fixture(), n = measure(probe.source, field); probe.zero();
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture({ observationLimits: { source: { [field]: n + delta } } }), client = f.open(), result = await client.observe({ all: true });
-            expect(result.status).toBe(delta < 0 ? 'rejected' : 'observed');
-            if (result.status === 'observed') { expect(client.adoptObservation(result.observation.observationId)).toEqual({ status: 'adopted' }); expect(receipt(await client.invoke(f.request(result.observation))).outcome.status).toBe('succeeded'); }
-            else expect(f.authority.inspect().receiptEntries).toBe(0); f.zero();
         }
     });
 
@@ -896,7 +894,7 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         const client = f.open(), gate = deferred<unknown>(), started = deferred<void>(); let signal: CancellationSignal | undefined;
         if (stage === 'project') {
             f.controls.project = ctx => { signal = ctx.signal; started.resolve(); return gate.promise; };
-            const pending = client.observe({ all: true }); await started.promise;
+            const pending = client.observe(); await started.promise;
             f.core.lifecycle.stop();
             expect(f.authority.inspect()).toMatchObject({ observations: { reservations: 1, cancelledReservations: 1 } });
             expect(signal!.aborted).toBe(true); gate.resolve(f.grant()); expect((await pending).status).toBe('rejected'); f.zero(); return;
@@ -908,8 +906,8 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         const pending = client.invoke(f.request(observation)); await started.promise;
         f.core.lifecycle.stop();
         expect(f.authority.inspect().observations.closed).toBe(true); expect(signal!.aborted).toBe(true);
-        expect(f.authority.inspect().workBytes).toBeGreaterThan(0);
-        expect((await client.observe({ all: true })).status).toBe('rejected');
+        expect(f.authority.inspect().activeInvocations + f.authority.inspect().activeReads).toBeGreaterThan(0);
+        expect((await client.observe()).status).toBe('rejected');
         gate.resolve(stage === 'execute' ? success() : true);
         expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE');
         expect(f.calls.handler).toBe(stage === 'authorize' ? 0 : 1); f.zero();
@@ -929,17 +927,17 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         f.core.lifecycle.stop();
         const successor = createSnapshotCore({ ...context, instanceId: 'run-2', now: f.now });
         const replacement = createAppInteraction(successor.store, { ...f.input, instanceId: 'run-2', namespace: 'replacement', now: f.now });
-        expect(code(await replacement.observe({ all: true }))).toBe('SNAPSHOT_UNREADY');
+        expect(code(await replacement.observe())).toBe('SNAPSHOT_UNREADY');
         expect(code(await old.invoke(originalRequest))).toBe('APP_INTERACTION_UNAVAILABLE');
         f.core.lifecycle.stop();
         expect(successor.store.readAppIdentity('app')).toEqual({ status: 'active', instanceId: 'run-2' });
         const next = createViewOwnedTools('app', 'run-2');
         next.defineViewTypes([{ name: "File", multiplicity: 'multiple', tools: [{ name:'run', description:'Synthetic tool', inputSchema:{type:'object',properties:{}} }] }]);
-        const plan = next.prepareFrame([{createId:() => 'v0',type:'File',owner:{},bindings:[{name:'run',enabled:true,execute:()=>({success:true})}]}]);
+        const plan = next.prepareFrame([{idPrefix:'v',type:'File',owner:{},bindings:[{name:'run',enabled:true,execute:()=>({success:true})}]}]);
         const mounted = plan.instances[0]!, tool = plan.tools[0]!;
         expect(successor.committer.accept({
-            schemaVersion: 7, appId: 'app', instanceId: 'run-2', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
-            views: [{ toolBindings: mounted.toolBindings, id: 'v0', viewInstanceId: mounted.viewInstanceId,
+            schemaVersion: 8, appId: 'app', instanceId: 'run-2', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+            views: [{ toolBindings: mounted.toolBindings, id: mounted.viewId, viewInstanceId: mounted.viewInstanceId,
                 type: 'File', name: 'new', region: 'dynamic', content: { format: 'markdown-v1', value: 'new' } }],
             refs: {}, tools: { [tool.id]: tool },
         }).status).toBe('published');
@@ -959,9 +957,9 @@ describe('B2-Q01: stopped and successor instance authority', () => {
 it('refuses an interaction bound to a different or stopped App instance', async () => {
     const f = fixture();
     const wrong = createAppInteraction(f.store, { ...f.input, instanceId: 'wrong-instance', namespace: 'wrong', now: f.now });
-    expect(code(await wrong.observe({ all: true }))).toBe('APP_INTERACTION_UNAVAILABLE');
+    expect(code(await wrong.observe())).toBe('APP_INTERACTION_UNAVAILABLE');
     wrong.close();
     f.core.lifecycle.stop();
-    expect(code(await f.authority.observe({ all: true }))).toBe('APP_INTERACTION_UNAVAILABLE');
+    expect(code(await f.authority.observe())).toBe('APP_INTERACTION_UNAVAILABLE');
     f.zero();
 });

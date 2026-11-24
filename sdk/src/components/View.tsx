@@ -44,14 +44,14 @@ function mountedDefinition(definition: ViewType) {
 
 export function defineViewType<Context extends object>(): <const M extends ViewMultiplicity,
   const Schemas extends ToolSchemas, const R extends ViewRegion | undefined = undefined>(
-  declaration: ViewTypeDeclaration<M, R, Context> & { readonly tools?: ContextToolDeclarations<Context, Schemas> },
+  declaration: ViewTypeDeclaration<M, R> & { readonly tools?: ContextToolDeclarations<Context, Schemas> },
 ) => ViewComponent<ContextualViewType<ContextToolMetadata<Schemas>, Context, M, R>>;
 export function defineViewType<const M extends ViewMultiplicity, const R extends ViewRegion | undefined = undefined>(
-  declaration: ViewTypeDeclaration<M, R, undefined> & { readonly tools?: never },
+  declaration: ViewTypeDeclaration<M, R> & { readonly tools?: never },
 ): ViewComponent<ViewType<{}, M, R>>;
 export function defineViewType(declaration?: unknown): unknown {
   if (arguments.length) {
-    return mountedDefinition(defineDescriptor(declaration as ViewTypeDeclaration<ViewMultiplicity, ViewRegion | undefined, undefined>));
+    return mountedDefinition(defineDescriptor(declaration as ViewTypeDeclaration<ViewMultiplicity, ViewRegion | undefined>));
   }
   const define = defineDescriptor();
   return (source: Parameters<typeof define>[0]) => mountedDefinition(define(source));
@@ -78,7 +78,7 @@ function MountedView(props: MountOptions): JSX.Element {
   const app = useContext(AppRuntimeContext);
   if (!app) throw new Error('[AOTUI SDK] View requires a managed App');
   const type = app.resolveViewType(props.type);
-  const placement = captureViewPlacement(type, props, props.context);
+  const placement = captureViewPlacement(type, props);
   const bindings = captureViewBindings(type, label, props.context);
   const slot = useMemo(() => {
     let attached: { node: HTMLDivElement; owner: object } | undefined;

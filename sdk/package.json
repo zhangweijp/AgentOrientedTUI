@@ -23,7 +23,7 @@
     "test": "vitest",
     "test:run": "vitest --run",
     "lint": "ESLINT_USE_FLAT_CONFIG=false eslint src",
-    "prepublishOnly": "npm run build",
+    "prepack": "npm run build 1>&2",
     "typecheck:static": "node ./node_modules/@typescript/native/bin/tsc -p tsconfig.static-tools.json"
   },
   "peerDependencies": {
@@ -84,7 +84,8 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "examples"
   ],
   "keywords": [
     "aotui",

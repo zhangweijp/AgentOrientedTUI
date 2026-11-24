@@ -1,20 +1,20 @@
 import { compileValueSchema, SnapshotDataError, type JsonValue, type RefScope } from '@aotui/core';
 import type { AppFrameRef, createRefCapture, RefCapture, RefValueCheck } from '@aotui/core';
 import type Type from 'typebox';
-import { exportTypeBoxValueSchema, schemaDeclarationError } from '../tools/typebox-schema.js';
+import { exportTypeBoxValueSchema, schemaDeclarationError, TypeBoxSchemaExportError } from '../tools/typebox-schema.js';
 import type { DeepReadonly } from '../tools/view-type-tool.js';
 
 export interface RefOptions<Schema extends Type.TSchema = Type.TSchema> {
     readonly scope: RefScope;
     readonly refType?: string | undefined;
-    readonly schema?: Schema | undefined;
+    readonly schema: Schema;
 }
 
 export interface ArrayRefOptions<Schema extends Type.TSchema = Type.TSchema> {
     readonly scope: RefScope;
     readonly itemType?: string;
     /** Schema for the whole array. */
-    readonly schema?: Schema | undefined;
+    readonly schema: Schema;
 }
 
 export type RefSourceValue<Schema extends Type.TSchema> = NoInfer<DeepReadonly<Type.Static<Schema>>>;
@@ -79,7 +79,7 @@ export function formatRef(label: string, { id, value, refType, scope, array }: P
 
 const schemas = new WeakMap<Type.TSchema, { valueSchema: JsonValue; validate: RefValueCheck }>();
 
-export function capturedRefValue(viewId: string, id: string, capture: RefCapture): JsonValue {
+function capturedRefValue(viewId: string, id: string, capture: RefCapture): JsonValue {
     if ('issue' in capture) {
         const { code, path, message } = capture.issue;
         throw new SnapshotDataError(code, 'Ref ' + viewId + '.' + id + (path ? ' ' + path : ''), message);
@@ -104,12 +104,20 @@ export function capturePublication(
     capture: ReturnType<typeof createRefCapture>, { id, value, refType, scope, schema, array }: PublishedRef,
 ): CapturedPublication {
     validateRefMarker(id, refType, scope);
-    const contract = schema === undefined ? undefined : validator(schema);
+    if (schema === undefined) throw new SnapshotDataError('SNAPSHOT_INVALID', 'Ref ' + id + '.schema', 'Declare a schema for every published Ref.');
+    let contract: ReturnType<typeof validator>;
+    try { contract = validator(schema); }
+    catch (error) {
+        if (error instanceof TypeBoxSchemaExportError)
+            throw new SnapshotDataError(error.code, 'Ref ' + id + '.schema' + error.path.slice(1), error.reason);
+        if (!(error instanceof SnapshotDataError)) throw error;
+        throw new SnapshotDataError(error.code, 'Ref ' + id + '.schema' + error.path.slice(1), error.message);
+    }
     return {
         id, scope, ...(refType === undefined ? {} : { refType }),
-        ...(array ? { array } : {}), ...(contract ? { valueSchema: contract.valueSchema } : {}),
+        ...(array ? { array } : {}), valueSchema: contract.valueSchema,
         capture: capture(value, array ? captured => !Array.isArray(captured)
-            ? { path: '$', message: 'ArrayRef requires an array' } : contract?.validate(captured) : contract?.validate),
+            ? { path: '$', message: 'ArrayRef requires an array' } : contract.validate(captured) : contract.validate),
     };
 }
 

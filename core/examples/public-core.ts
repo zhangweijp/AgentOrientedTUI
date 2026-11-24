@@ -1,9 +1,7 @@
-import {
-  createSnapshotCore, createViewOwnedTools, createAppInteraction, SemanticProjectionCoordinator,
-  compileToolParameters, SNAPSHOT_SCHEMA_VERSION,
-  type ExecutionBinding, type ExecutionFact, type JsonValue, type ToolResult,
-  type ObservationGrant,
-} from '@aotui/core';
+import { compileToolParameters, SNAPSHOT_SCHEMA_VERSION, type ExecutionBinding, type ExecutionFact,
+  type JsonValue, type ToolResult, type ObservationGrant } from '@aotui/core';
+import { createAppInteraction, createSnapshotCore } from '@aotui/core/host';
+import { createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core/producer';
 
 function check(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -17,7 +15,7 @@ const preview = createSnapshotCore({ appId, instanceId: previewInstanceId, limit
 previewLimits.maxViews = 1;
 const registry = createViewOwnedTools(appId, instanceId);
 const owner = {};
-const view = { viewId: 'detail', viewType: 'Note' };
+const view = { idPrefix: 'detail', viewId: 'detail_1', viewType: 'Note' };
 
 const addSchema = {
   type: 'object', properties: { n: { type: 'number' } },
@@ -26,7 +24,7 @@ const addSchema = {
 // This is the JSON annotation produced by SDK refParam('Note', NoteSchema).
 const readSchema = {
   type: 'object', properties: {
-    note: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'Note',
+    note: { 'x-aotui-ref-kind': 'Note',
       'x-aotui-ref-value': { type: 'object', properties: { text: { type: 'string' } },
         required: ['text'], additionalProperties: false } },
     suffix: { type: 'string' },
@@ -54,7 +52,7 @@ async function read(args: Readonly<Record<string, unknown>>): Promise<ToolResult
 registry.defineViewTypes([{ name: "Note", multiplicity: 'multiple', tools: [{ name: 'add', description: 'Add to the counter', inputSchema: addSchema }, { name: 'read', description: 'Inspect a displayed Note', inputSchema: readSchema }] }]);
 const binding: ExecutionBinding = {
   identity: {},
-  isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
+  isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success,
   execute: async context => {
     const terminal = await registry.invokeTypeTool(context.source.tool, context.source.receiver, context.effectiveInput);
     if (terminal.result.success) check(terminal.result.data?.completed === true, 'Expected a concise completion receipt');
@@ -64,16 +62,16 @@ const binding: ExecutionBinding = {
 function publish(text: string) {
   const prepared = projection.commit(() => {
     noteText = text;
-    const candidate = registry.prepareFrame([{ createId: () => view.viewId, type: view.viewType, owner, bindings: [
+    const candidate = registry.prepareFrame([{ idPrefix: view.idPrefix, type: view.viewType, owner, bindings: [
       { name: 'add', enabled: addEnabled, execute: add },
       { name: 'read', enabled: true, execute: read },
     ] }]);
     const published = candidate.instances[0]; check(published, 'Expected the Note View');
-    const { viewInstanceId, toolBindings } = published;
+    const { viewId, viewInstanceId, toolBindings } = published;
     return {
-      views: [{ id: view.viewId, viewInstanceId, type: view.viewType, name: 'Note', region: 'dynamic',
+      views: [{ id: viewId, viewInstanceId, type: view.viewType, name: 'Note', region: 'dynamic',
         content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${noteText}` }, toolBindings }],
-      refs: [{ viewId: view.viewId, viewInstanceId, id: 'selected', scope: 'private', refType: 'Note', value: { text } }],
+      refs: [{ valueSchema: { type: 'object' }, viewId, viewInstanceId, id: 'selected', scope: 'private', refType: 'Note', value: { text } }],
       tools: candidate.tools, accept: candidate.accept,
     };
   });
@@ -101,7 +99,7 @@ const authority = createAppInteraction(snapshots.store, { namespace: 'tutorial:t
 }, execution: { resolve: () => binding } });
 const client = authority;
 async function observe() {
-  const result = await client.observe({ all: true });
+  const result = await client.observe();
   check(result.status === 'observed', 'Expected an observation');
   check(client.adoptObservation(result.observation.observationId).status === 'adopted', 'Expected adoption');
   return result.observation;
@@ -110,7 +108,7 @@ function request(observation: Awaited<ReturnType<typeof observe>>, name: string,
   input: Readonly<Record<string, JsonValue>>) {
   const tool = observation.tools.find(item => item.name === name);
   check(tool, 'Expected an observed Tool');
-  return { invocationId, observationId: observation.observationId, toolId: tool.id, input: { view_id: view.viewId, ...input } };
+  return { invocationId, observationId: observation.observationId, toolId: tool.id, viewId: view.viewId, input };
 }
 async function completed(observation: Awaited<ReturnType<typeof observe>>, name: string, id: string,
   input: Readonly<Record<string, JsonValue>>) {
@@ -124,7 +122,7 @@ async function completed(observation: Awaited<ReturnType<typeof observe>>, name:
     'Receipt contains completion, not the Note text or counter');
 }
 let beforeClosed = 0;
-const noteAddress = '$' + appId + '.' + view.viewId + '.selected';
+const noteAddress = '$ref.' + appId + '.' + view.viewId + '.selected';
 try {
   const old = await observe();
   await completed(old, 'add', 'add-1', { n: 2 });
@@ -152,8 +150,8 @@ try {
   check((await client.invoke(request(fresh, 'read', 'closed', { note: noteAddress, suffix: '!' }))).kind === 'refused', 'Closed Client rejects');
   check(authorizations === beforeClosed && handlerEntries === 3, 'Closed authority does not authorize or enter handlers');
   check(authority.inspect().observations.observationSlots === 0 &&
-    authority.inspect().combinedBytes === 0 && snapshots.store.inspect().activeHolds === 0,
-    'Observation slots, logical bytes and leases released');
+    snapshots.store.inspect().activeHolds === 0,
+    'Observation slots and Snapshot holds released');
 } finally {
   snapshots.lifecycle.stop();
   authority.close(); await authority.whenClosed();
@@ -162,5 +160,5 @@ try {
 check(registry.inspect().bindings === 0 && snapshots.store.inspect().activeHolds === 0, 'Registry and Snapshot cleanup');
 
 export const coreFixtureFacts = { handlerEntries, authorizations: beforeClosed, witness,
-  observationSlots: authority.inspect().observations.observationSlots, logicalBytes: authority.inspect().combinedBytes,
+  observationSlots: authority.inspect().observations.observationSlots,
   leases: snapshots.store.inspect().activeHolds, bindings: registry.inspect().bindings };

@@ -15,7 +15,7 @@ function readViews(container: Element) {
         region: node.getAttribute('data-fixture-region') === 'static' ? 'static' : 'dynamic',
         type: node.getAttribute('data-aotui-view')!,
         owner: node, bindings: [], refs: [],
-    }));
+    }), container.querySelectorAll('[data-aotui-view]').length);
 }
 
 function fragment(fragments: ReturnType<typeof readViews>, viewId: string) {

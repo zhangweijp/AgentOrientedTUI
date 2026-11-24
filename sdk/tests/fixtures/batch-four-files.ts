@@ -9,7 +9,7 @@ const largeText = 'B-LATEST ' + 'b'.repeat(8_000);
 const succeeded = () => ({ success: true as const, data: { saved: true } });
 const File = defineViewType<{
     name: Name; edit(mode: 'large' | 'short' | 'late'): Promise<ToolResult>;
-}>()({ name: 'file', multiplicity: 'multiple', region: 'dynamic', createId: ({ context }) => 'file_' + context.name,
+}>()({ name: 'file', multiplicity: 'multiple', region: 'dynamic',
     tools: {
         edit: { description: 'Apply the selected editing operation to this open file.',
             inputSchema: Type.Object({ mode: Type.Union([Type.Literal('large'), Type.Literal('short'), Type.Literal('late')]) }),
@@ -73,6 +73,7 @@ export default createApp({
                 return { success: true };
             }
             return createView(File, {
+                idPrefix: 'file_' + name,
                 region: name === 'A' || (name === 'B' && launchConfig?.staticB === true) ? 'static' : 'dynamic',
                 ...(name === 'C' ? {} : { onClose: close }),
                 render: () => ({ body: name + '.txt generation ' + generation + '\n' + text.get(name),

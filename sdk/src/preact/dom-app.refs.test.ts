@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
 import { readDOMAppViews } from './dom-app.js';
-import { createSnapshotCore, SemanticProjectionCoordinator, type JsonValue } from '@aotui/core';
+import { createSnapshotCore } from '@aotui/core/host';
+import { SemanticProjectionCoordinator } from '@aotui/core/producer';
+import type { JsonValue } from '@aotui/core';
 import { refKey } from '@aotui/core';
 import { compileToolParameters } from '@aotui/core';
 function documentWithView(id = 'workspace') {
@@ -15,21 +17,21 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
         const root = documentWithView();
         const node = root.querySelector('[data-view-id]')!;
         const toolId = JSON.stringify(['task_app', 'Workspace', 'replace_file']);
-        const compiled = compileToolParameters({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
+        const compiled = compileToolParameters({ type: 'object', properties: { file: { 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
         if (!compiled.ok) throw Error('Ref Schema fixture');
         const owner = { viewId: 'workspace', viewInstanceId: 'vi:v1:["logical-run",1]', viewType: 'Workspace' };
         const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId: 'task_app', instanceId: 'logical-run' }) });
         const prepare = () => {
-            const local = Object.entries(refs).map(([id, value]) => ({ id, scope: 'protected' as const, value }));
+            const local = Object.entries(refs).map(([id, value]) => ({ id, scope: 'protected' as const, valueSchema: { type: 'object' }, value }));
             const views = readDOMAppViews(root, current => current === node
-                ? { id: owner.viewId, name: owner.viewId, region: 'dynamic', type: owner.viewType, owner, bindings: [], refs: local } : undefined);
+                ? { id: owner.viewId, name: owner.viewId, region: 'dynamic', type: owner.viewType, owner, bindings: [], refs: local } : undefined, 1);
             expect(projection.commit(() => ({
                 views: views.map(({ owner: _owner, bindings: _bindings, refs: _refs, ...view }) => ({
                     ...view, viewInstanceId: owner.viewInstanceId, toolBindings: [{ toolId, activationId: 'active-1' }],
                 })),
                 refs: views.flatMap(view => view.refs.map(ref => ({ ...ref, viewId: view.id, viewInstanceId: owner.viewInstanceId }))),
                 tools: [{ multiplicity: 'multiple', id: toolId, viewType: 'Workspace', name: 'replace_file',
-                    nameSharedAcrossViewTypes: false, description: 'Replace file with a version guard', inputSchema: compiled.contract.schema }],
+                     description: 'Replace file with a version guard', inputSchema: compiled.contract.schema }],
             }))).toMatchObject({ status: 'prepared' });
             const publication = projection.nextPublication();
             if (!('draft' in publication)) throw new Error(publication.failure.issue.message);

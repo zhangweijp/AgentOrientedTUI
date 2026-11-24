@@ -1,5 +1,5 @@
 import { mountedViews, preparedRefs } from './__tests__/projection-facts.js';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { Component, h, type ComponentChildren } from 'preact';
 import { act } from 'preact/test-utils';
@@ -12,7 +12,7 @@ import { useDataRef } from './hooks/useRef.js';
 import { defineViewType, type ViewType } from './tools/view-type-tool.js';
 import Type from 'typebox';
 
-const descriptors=Object.fromEntries(['child','parent','ready','recovered'].map(name=>[name,defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name})]));
+const descriptors=Object.fromEntries(['child','parent','ready','recovered'].map(name=>[name,defineViewType({ multiplicity: 'multiple', name})]));
 function toolsOf(kernel:AppKernel) {
     const projection=kernel.getProjectionCoordinator();
     if (!projection.token().ready) return [];
@@ -21,16 +21,18 @@ function toolsOf(kernel:AppKernel) {
 }
 function setup(component: () => any, viewTypes:readonly ViewType[]=Object.values(descriptors)) {
     const factory = createTUIApp({ app_name: 'nested_view_fixture', component, viewTypes });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+    const kernel = new AppKernel({ factory,
         appId: createAppId('nested_fixture'), desktopId: createDesktopId('desktop'),
         instanceId: 'nested_fixture_run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
     });
 
+    let container: Element;
     return {
         kernel,
-        get container() { return document.getElementById('app-root-nested_fixture')!; },
+        get container() { return container; },
         async open() {
             await act(async () => kernel.onOpen());
+            container = document.body.lastElementChild!;
         },
         async close() {
             await act(async () => kernel.onClose());
@@ -67,14 +69,14 @@ describe('View nesting boundary', () => {
         let nestedPayloadRendered = false;
         function NestedPayload() {
             nestedPayloadRendered = true;
-            const value = useDataRef('nested_record', { value: 'nested' }, { scope: 'protected' });
+            const value = useDataRef('nested_record', { value: 'nested' }, { schema: Type.Object({}), scope: 'protected' });
             return h('p', {}, value('Nested'));
         }
         function NestedWrapper() {
             return h(DynamicView, {type: descriptors.child, idPrefix: 'child' }, h(NestedPayload, {}));
         }
         function RecoveryPayload() {
-            const value = useDataRef('recovered_record', { value: 'recovered' }, { scope: 'protected' });
+            const value = useDataRef('recovered_record', { value: 'recovered' }, { schema: Type.Object({}), scope: 'protected' });
             return h('p', {}, value('Recovered'));
         }
         function Root() {
@@ -113,8 +115,8 @@ describe('View nesting boundary', () => {
 
             await act(async () => setNested(false));
             expect(x.container.querySelector('[data-aotui-view="Recovered"]')).not.toBeNull();
-            expect(instances(x.kernel)).toEqual(['parent', 'recovered']);
-            expect(refs(x.kernel)).toEqual(['recovered:recovered_record']);
+            expect(instances(x.kernel)).toEqual(['parent_1', 'recovered_1']);
+            expect(refs(x.kernel)).toEqual(['recovered_1:recovered_record']);
             expect(x.container.textContent).toContain('Recovered');
         } finally {
             await x.close();
@@ -127,12 +129,12 @@ describe('View nesting boundary', () => {
     it('rethrows an uncaught Preact render error without leaving View bindings behind', async () => {
         let nestedPayloadRendered = false;
         function ExistingPayload() {
-            const value = useDataRef('existing_record', { value: 'existing' }, { scope: 'protected' });
+            const value = useDataRef('existing_record', { value: 'existing' }, { schema: Type.Object({}), scope: 'protected' });
             return h('p', {}, value('Existing'));
         }
         function NestedPayload() {
             nestedPayloadRendered = true;
-            const value = useDataRef('nested_record', { value: 'nested' }, { scope: 'protected' });
+            const value = useDataRef('nested_record', { value: 'nested' }, { schema: Type.Object({}), scope: 'protected' });
             return h('p', {}, value('Nested'));
         }
         function Root() {
@@ -143,6 +145,7 @@ describe('View nesting boundary', () => {
         }
 
         const x = setup(Root);
+        const before = [...document.body.children];
         try {
             await expect(x.open()).rejects.toMatchObject({
                 code: 'NESTED_VIEW_UNSUPPORTED',
@@ -153,7 +156,7 @@ describe('View nesting boundary', () => {
             expect(nestedPayloadRendered).toBe(false);
             expect(instances(x.kernel)).toEqual([]);
             expect(refs(x.kernel)).toEqual([]);
-            expect(x.container).toBeNull();
+            expect([...document.body.children]).toEqual(before);
         } finally {
             await x.close();
         }
@@ -164,9 +167,9 @@ describe('View nesting boundary', () => {
 
     it('allows ordinary component nesting and independently declared sibling Views through dynamic close and reopen', async () => {
         let setLeftOpen!: (open: boolean) => void;
-        const Card=defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Card',tools:{inspect_card:{description:'Inspect the current Card.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
+        const Card=defineViewType<object>()({ multiplicity: 'multiple', name:'Card',tools:{inspect_card:{description:'Inspect the current Card.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
         function Content({ owner }: { owner: string }) {
-            const value = useDataRef(`${owner}_record`, { owner }, { scope: 'protected' });
+            const value = useDataRef(`${owner}_record`, { owner }, { schema: Type.Object({}), scope: 'protected' });
             return h('section', {}, h('p', {}, value(owner)));
         }
         function OrdinaryWrapper({ children }: { children?: ComponentChildren }) {
@@ -188,8 +191,8 @@ describe('View nesting boundary', () => {
         const x = setup(Root,[Card]);
         try {
             await x.open();
-            expect(instances(x.kernel)).toEqual(['left', 'right']);
-            expect(refs(x.kernel)).toEqual(['left:left_record', 'right:right_record']);
+            expect(instances(x.kernel)).toEqual(['left_1', 'right_1']);
+            expect(refs(x.kernel)).toEqual(['left_1:left_record', 'right_1:right_record']);
             const initialTool = toolsOf(x.kernel).find(tool => tool.name === 'inspect_card')!;
             expect(initialTool).toMatchObject({name:'inspect_card',viewType:'Card'});
             expect(initialTool).not.toHaveProperty('execution');
@@ -199,14 +202,14 @@ describe('View nesting boundary', () => {
             expect(x.container.textContent).toContain('Application content');
 
             await act(async () => setLeftOpen(false));
-            expect(instances(x.kernel)).toEqual(['right']);
-            expect(refs(x.kernel)).toEqual(['right:right_record']);
+            expect(instances(x.kernel)).toEqual(['right_1']);
+            expect(refs(x.kernel)).toEqual(['right_1:right_record']);
             expect(toolsOf(x.kernel)).toHaveLength(1);
             expect(toolsOf(x.kernel)[0]).toEqual(initialTool);
 
             await act(async () => setLeftOpen(true));
-            expect(instances(x.kernel)).toEqual(['left', 'right']);
-            expect(refs(x.kernel)).toEqual(['left:left_record', 'right:right_record']);
+            expect(instances(x.kernel)).toEqual(['left_2', 'right_1']);
+            expect(refs(x.kernel)).toEqual(['left_2:left_record', 'right_1:right_record']);
             expect(toolsOf(x.kernel)).toHaveLength(1);
             expect(toolsOf(x.kernel)[0]).toEqual(initialTool);
         } finally {

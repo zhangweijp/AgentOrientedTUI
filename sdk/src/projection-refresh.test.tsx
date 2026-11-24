@@ -1,5 +1,5 @@
 import { preparedRefs } from './__tests__/projection-facts.js';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Component, h, options } from 'preact';
@@ -12,9 +12,9 @@ import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
 import { defineViewType } from './tools/view-type-tool.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
-import { createSnapshotCore } from '@aotui/core';
+import { createSnapshotCore } from '@aotui/core/host';
 
-const File = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'File'});
+const File = defineViewType({ multiplicity: 'multiple', name:'File'});
 const previous = options.debounceRendering;
 afterEach(() => { options.debounceRendering = previous; });
 
@@ -22,10 +22,10 @@ async function fixture(insideAct = false) {
     const queue: Array<() => void> = [];
     options.debounceRendering = callback => { queue.push(callback); };
     let update!: (value: number) => void;
-    const Editable=defineViewType<{value:number}>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'File',tools:{edit:{description:'Edit',inputSchema:Type.Object({}),enabled:({value})=>value>0,execute:()=>({success:true})}}});
+    const Editable=defineViewType<{value:number}>()({ multiplicity: 'multiple', name:'File',tools:{edit:{description:'Edit',inputSchema:Type.Object({}),enabled:({value})=>value>0,execute:()=>({success:true})}}});
     function Content({ value }: { value: number }) {
         const data = useMemo(() => ({ value }), [value]);
-        const ref = useDataRef('selected', data, { scope: 'protected' });
+        const ref = useDataRef('selected', data, { schema: Type.Object({}), scope: 'protected' });
         return h('p', {}, 'body:' + value + ref('Selection'));
     }
     function App() {
@@ -33,13 +33,13 @@ async function fixture(insideAct = false) {
         return h(DynamicView,{idPrefix:'file',type:Editable,context:{value}},h(Content,{value}));
     }
     const factory = createTUIApp({ viewTypes:[Editable], app_name: 'refresh_app', component: App });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+    const kernel = new AppKernel({ factory,
         appId: createAppId('refresh_app'), desktopId: createDesktopId('desktop'),
         instanceId: 'refresh-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
     });
     const open = () => kernel.onOpen();
     if (insideAct) await act(async () => { await open(); }); else await open();
-    return { kernel, get container() { return document.getElementById('app-root-refresh_app')!; }, update, queue, flush: () => { while (queue.length) queue.shift()!(); } };
+    return { kernel, container: document.body.lastElementChild!, update, queue, flush: () => { while (queue.length) queue.shift()!(); } };
 }
 
 describe('SDK queued render commit completion', () => {
@@ -50,12 +50,12 @@ describe('SDK queued render commit completion', () => {
             return null;
         }
         function Body() {
-            const ref = useDataRef('selected', record, { scope: 'protected' });
+            const ref = useDataRef('selected', record, { schema: Type.Object({}), scope: 'protected' });
             return h('p', {}, ref('Value ' + record.value));
         }
         const factory = createTUIApp({ viewTypes:[File], app_name: 'render_capture', component: () =>
             h(DynamicView, { idPrefix: 'file', type: File, }, [h(OtherLayout, { key: 'layout' }), h(Body, { key: 'body' })]) });
-        const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+        const kernel = new AppKernel({ factory,
             appId: createAppId('render_capture'), desktopId: createDesktopId('desktop'),
             instanceId: 'render-capture-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
         });
@@ -81,7 +81,7 @@ describe('SDK queued render commit completion', () => {
             function A() {
                 const [step, setStep] = useState<Stage>('ready'); changeA = setStep;
                 const value = step === 'ready' ? 1 : step === 'fixed' ? 3 : 9;
-                const ref = useDataRef('selected', step === 'capture' ? { value: () => value } : { value }, { scope: 'protected' });
+                const ref = useDataRef('selected', step === 'capture' ? { value: () => value } : { value }, { schema: Type.Object({}), scope: 'protected' });
                 useLayoutEffect(() => { if (step === 'layout') throw error; });
                 if (step === 'render') throw error;
                 return h('p', {}, ref('A:' + value), step === 'schema' ? 'x'.repeat(512 * 1024) : '',
@@ -89,14 +89,14 @@ describe('SDK queued render commit completion', () => {
             }
             function B() {
                 const [value, setValue] = useState(2); updateB = () => setValue(4);
-                const ref = useDataRef('selected', { value }, { scope: 'protected' });
+                const ref = useDataRef('selected', { value }, { schema: Type.Object({}), scope: 'protected' });
                 return h('p', {}, ref('B:' + value));
             }
             const factory = createTUIApp({ viewTypes:[File], app_name: 'failure_batch', component: () => [
                 h(DynamicView, { idPrefix: 'aa', key: 'a', type: File, }, h(A, {})),
                 h(DynamicView, { idPrefix: 'bb', key: 'b', type: File, }, h(B, {})),
             ] });
-            const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+            const kernel = new AppKernel({ factory,
                 appId: createAppId('failure_batch'), desktopId: createDesktopId('desktop'),
                 instanceId: 'run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
             });
@@ -105,7 +105,7 @@ describe('SDK queued render commit completion', () => {
             const publish = () => projection.publishTo(core.committer);
             try {
                 await kernel.onOpen();
-            const container = document.getElementById('app-root-failure_batch')!;
+            const container = document.body.lastElementChild!;
                 const initial = publish();
                 if (initial.status !== 'published') throw new Error('Missing initial snapshot');
                 const epoch = projection.token().epoch;
@@ -142,8 +142,8 @@ describe('SDK queued render commit completion', () => {
         function A() {
             const [, tick] = useState(0);
             updateA = () => tick(n => n + 1);
-            const label = useDataRef('selected', selected, { scope: 'protected', refType: 'Record' });
-            const [list] = useArrayRef('items', items, { scope: 'protected', itemType: 'Record' });
+            const label = useDataRef('selected', selected, { schema: Type.Object({}), scope: 'protected', refType: 'Record' });
+            const [list] = useArrayRef('items', items, { schema: Type.Array(Type.Object({})), scope: 'protected', itemType: 'Record' });
             return h('p', {}, label(`A:${selected.value}`), list('Items'));
         }
         function B() {
@@ -155,14 +155,14 @@ describe('SDK queued render commit completion', () => {
             h(DynamicView, { idPrefix: 'aa', type: File, key: 'a' }, h(A, {})),
             h(DynamicView, { idPrefix: 'bb', type: File, key: 'b' }, h(B, {})),
         ] });
-        const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+        const kernel = new AppKernel({ factory,
             appId: createAppId('ref_refresh'), desktopId: createDesktopId('desktop'),
             instanceId: 'ref-refresh-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
         });
         const refs = () => Object.fromEntries(preparedRefs(kernel).map(({ refId, value }) => [refId, value]));
         try {
             await kernel.onOpen();
-            const container = document.getElementById('app-root-ref_refresh')!;
+            const container = document.body.lastElementChild!;
             selected.value = 3;
             items.push({ value: 4 });
             await act(updateB);
@@ -217,9 +217,9 @@ describe('SDK queued render commit completion', () => {
         const x = await fixture();
         x.update(1);
         const waiting = x.kernel.whenProjectionCommitted();
-        x.kernel.beginShutdown();
+        const closing = x.kernel.onClose();
         await expect(waiting).rejects.toMatchObject({ code: 'PROJECTION_CLOSED' });
-        await x.kernel.onClose();
+        await closing;
         x.flush();
     });
 });

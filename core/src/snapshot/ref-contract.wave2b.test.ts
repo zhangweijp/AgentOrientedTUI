@@ -6,6 +6,9 @@ import { validatePreparedSnapshot } from './validate-snapshot.js';
 import type { JsonValue, PreparedAppSnapshotDraft, SnapshotCore } from './types.js';
 import { compileToolParameters } from '../tool/tool-parameters.js';
 
+const fixtureJsonSchema = { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }, { type: 'object' }, { type: 'array', items: {} }] };
+
+
 // Evidence of CURRENT Core/DOM-adapter behavior, not a proposed Ref executor.
 // Identities and declarations below are fixtures, not mounts performed by SDK.
 const appId = 'wave2b';
@@ -14,29 +17,29 @@ const mountA = 'fixture-mount-A';
 const mountB = 'fixture-mount-B';
 const toolId = JSON.stringify([appId, 'FileDetail', 'inspect']);
 const argsLimits = { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 };
-const refParameters = compileToolParameters({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });
+const refParameters = compileToolParameters({ type: 'object', properties: { file: { 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });
 if (!refParameters.ok) throw new Error('Invalid Ref fixture');
 
 function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraft {
     return {
-        schemaVersion: 7, appId, instanceId,
+        schemaVersion: 8, appId, instanceId,
         producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
         views: [['fd_A', a], ['fd_B', mountB]].map(([id, viewInstanceId]) => ({
             toolBindings: [{ toolId, activationId: 'active-' + viewInstanceId }], id, viewInstanceId, type: 'FileDetail', name: id, region: 'dynamic',
             content: { format: 'markdown-v1', value: '[File](file)' },
         })),
         refs: {
-            [refKey('fd_A', a, 'file')]: { scope: 'protected',
+            [refKey('fd_A', a, 'file')]: { valueSchema: fixtureJsonSchema, scope: 'protected',
                 id: 'file', ownerViewId: 'fd_A', ownerViewInstanceId: a, refType: 'File',
                 target: { kind: 'snapshot-value', payload: valueA },
             },
-            [refKey('fd_B', mountB, 'file')]: { scope: 'protected',
+            [refKey('fd_B', mountB, 'file')]: { valueSchema: { type: 'object' }, scope: 'protected',
                 id: 'file', ownerViewId: 'fd_B', ownerViewInstanceId: mountB, refType: 'File',
                 target: { kind: 'snapshot-value', payload: { value: 'B' } },
             },
         },
         tools: { [toolId]: { multiplicity: 'multiple',
-            id: toolId, name: 'inspect', viewType: 'FileDetail', nameSharedAcrossViewTypes: false, description: 'Inspect',
+            id: toolId, name: 'inspect', viewType: 'FileDetail',  description: 'Inspect',
             inputSchema: refParameters.contract.schema,
         } },
     };
@@ -47,7 +50,7 @@ function start(options: Omit<Parameters<typeof createSnapshotCore>[0], 'appId' |
 function publish(core: SnapshotCore, input = draft()) {
     const result = core.committer.accept(input);
     expect(result.status).toBe('published');
-    if (result.status !== 'published' || result.snapshot.schemaVersion !== 7) throw new Error('Expected a committed snapshot');
+    if (result.status !== 'published' || result.snapshot.schemaVersion !== 8) throw new Error('Expected a committed snapshot');
     return result.snapshot;
 }
 function selector(snapshotId: string, viewId = 'fd_A', viewInstanceId = mountA, refId = 'file') {
@@ -85,7 +88,7 @@ describe('Wave 2B: exact historical Ref lookup', () => {
         expect(core.store.resolveRef(selector(fresh.id))).toMatchObject({
             status: 'resolved', target: { payload: { nested: { value: 'B' } } },
         });
-        expect(core.store.getTool({ snapshotId: old.id, appId, instanceId, toolId })).toMatchObject({ status: 'found' });
+        expect(core.store.getById(old.id)).toMatchObject({ status: 'found', snapshot: { tools: { [toolId]: { id: toolId } } } });
         held.hold.release(); expect(core.store.inspect().activeHolds).toBe(0);
     });
 

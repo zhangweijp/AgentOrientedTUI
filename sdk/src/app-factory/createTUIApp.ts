@@ -6,9 +6,6 @@ import { createRenderCommit, createViewRefs, prepareRenderProjection, trackRende
 import { createAppFactory, type AppConfig, type TUIAppFactory } from './app-factory.js';
 import { requireViewType, type ViewType } from '../tools/view-type-tool.js';
 
-// Retain interrupted DOM cleanup until the same container is reused.
-const pendingUnmounts = new WeakMap<HTMLElement, () => void>();
-
 export interface TUIAppConfig extends AppConfig {
     component: ComponentType;
 }
@@ -16,7 +13,7 @@ export interface TUIAppConfig extends AppConfig {
 export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
     const RootComponent = config.component;
     const factory = createAppFactory(config, async (context, types) => {
-        const root = createDOMAppRoot(context.appId);
+        const root = createDOMAppRoot();
         try {
             const instance = await mountPreactApp(RootComponent, root, context, types);
             return {
@@ -36,12 +33,11 @@ export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
     return factory;
 }
 
-/** Preact renderer and its owner cleanup, also used by the adapter's unit tests. */
-export async function mountPreactApp(
+/** Mount the Preact tree and register its cleanup with the App owner. */
+async function mountPreactApp(
     RootComponent: ComponentType, container: HTMLElement, context: RuntimeContext, viewTypes: ReadonlyMap<string, ViewType>,
 ): Promise<AppInstance> {
     trackRenderCommits();
-    pendingUnmounts.get(container)?.();
     type RenderContext = NonNullable<import('preact').ContextType<typeof AppRuntimeContext>>;
     const views: RenderContext['views'] = new Map();
     const appContextValue: RenderContext = {
@@ -51,12 +47,13 @@ export async function mountPreactApp(
         projectionLimits: context.projectionLimits,
         ...(context.persistence === undefined ? {} : { persistence: context.persistence }),
         appLifecycle: context.appLifecycle,
-        viewTypes,
         resolveViewType: definition => requireViewType(viewTypes, definition),
         createViewRefs: label => createViewRefs(appContextValue, label),
         views,
         prepareProjection: update => prepareRenderProjection(appContextValue, context.signal, update),
         prepareOpeningProjection: (update, revert) => prepareRenderProjection(appContextValue, context.signal, update, { revert }),
+        readPreparedViewId: (type, name) => context.readPreparedViewId(type, name),
+        requestAttention: () => context.requestAttention(),
     };
     const root = h(AppRuntimeContext.Provider, { value: appContextValue }, h(RootComponent, {}));
     const commitRender = createRenderCommit(context, appContextValue, refs => ({
@@ -73,10 +70,6 @@ export async function mountPreactApp(
         try {
             commitRender(() => render(null, container));
             attached = false;
-            pendingUnmounts.delete(container);
-        } catch (error) {
-            pendingUnmounts.set(container, close);
-            throw error;
         } finally {
             unmounting = false;
         }
@@ -85,7 +78,7 @@ export async function mountPreactApp(
     try {
         commitRender(() => render(root, container));
     } catch (error) {
-        try { close(); } catch { /* Preserve initial failure while cleanup can still be retried. */ }
+        try { close(); } catch { /* Preserve the mount failure. */ }
         throw error;
     }
 

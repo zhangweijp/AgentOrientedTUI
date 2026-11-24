@@ -7,14 +7,16 @@ function FileBody({ name, text, writable }: { name: FileName; text: string; writ
 }
 
 function App() {
-    const { launchConfig, prepareProjection } = useAppRuntimeContext();
+    const { launchConfig, prepareProjection, prepareOpeningProjection } = useAppRuntimeContext();
     const [, setRevision] = useState(0);
-    const [workspace] = useState(() => files(launchConfig?.folder, () => prepareProjection(() => setRevision(value => value + 1))));
+    const redraw = () => setRevision(value => value + 1);
+    const [workspace] = useState(() => files(launchConfig?.folder, () => prepareProjection(redraw), (open, undo) =>
+        prepareOpeningProjection(() => { open(); redraw(); }, () => { undo(); redraw(); })));
     return <>
         <StaticView type={Directory} context={workspace.directory}>{directoryBody}</StaticView>
         {[...workspace.contents].map(([name, text]) => {
             const context = workspace.context(name);
-            return <DynamicView key={name} type={File} idPrefix="doc" context={context}>
+            return <DynamicView key={name} type={File} idPrefix="doc" name={name} context={context} onClose={() => workspace.close(name)}>
                 <FileBody name={name} text={text} writable={context.writable} />
             </DynamicView>;
         })}

@@ -161,7 +161,8 @@ try {
         assert.equal(authorGuide, guide);
         const language = kind === 'jsx' ? 'tsx' : 'ts';
         const counter = kind === 'jsx' ? '### JSX 计数器' : '### 普通 TypeScript 计数器';
-        await writeFile(join(author, `app.${language}`), block(authorGuide, counter, language));
+        await mkdir(join(author, 'src'));
+        await writeFile(join(author, 'src', `app.${language}`), block(authorGuide, counter, language));
         await writeFile(join(author, 'tsconfig.json'), block(authorGuide, counter, 'json'));
         await shell(authorGuide, '生成制品');
 
@@ -183,8 +184,8 @@ try {
         assert.equal('preact' in production, kind === 'jsx');
         if (key === 'tarball-plain') {
             const { compilerOptions } = await readJson(join(author, 'tsconfig.json'));
-            await writeFile(join(author, 'ref.ts'), block(authorGuide, '## 发布 Ref 与传业务参数', 'ts'));
-            await writeJson(join(author, 'tsconfig.ref.json'), { compilerOptions, files: ['ref.ts'] });
+            await writeFile(join(author, 'src', 'ref.ts'), block(authorGuide, '## 发布 Ref 与传业务参数', 'ts'));
+            await writeJson(join(author, 'tsconfig.ref.json'), { compilerOptions, files: ['src/ref.ts'] });
             await run(author, 'npm', ['exec', '--', 'tsc', '-p', 'tsconfig.ref.json', '--noEmit'], authorEnv);
         }
 

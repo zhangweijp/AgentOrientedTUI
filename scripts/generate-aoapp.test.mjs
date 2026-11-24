@@ -1,134 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import os from 'node:os';
-import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-
+import { APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL } from '@aotui/core';
 import { buildAoappManifest, writeAoappManifest } from '../sdk/bin/generate-aoapp.mjs';
 
-test('buildAoappManifest derives aoapp.json from the configured built entry and its metadata', async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
+async function fixture(t, fields = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'aotui-generate-aoapp-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, 'dist'));
+  await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.2.3',
+    description: 'IDE app', main: './dist/custom.mjs', types: './dist/index.d.ts',
+    aotui: { app_name: 'system_ide', whatItIs: 'IDE', whenToUse: 'Use for code work', persistence: true }, ...fields }));
+  await writeFile(join(directory, 'dist/index.d.ts'), 'export {};');
+  await writeFile(join(directory, 'dist/custom.mjs'), 'throw new Error("Manifest generation executed the entry");');
+  return directory;
+}
 
-  try {
-    await mkdir(path.join(tempDir, 'dist'), { recursive: true });
-
-    await writeFile(
-      path.join(tempDir, 'package.json'),
-      JSON.stringify(
-        {
-          name: '@agentina/system-ide',
-          version: '1.2.3',
-          description: 'IDE app',
-          main: './dist/custom.js',
-          types: './dist/index.d.ts',
-        },
-        null,
-        2
-      )
-    );
-
-    await writeFile(
-      path.join(tempDir, 'dist/custom.js'),
-      `
-      export default {
-        toolAuthoringProtocol: 'view-type-tools-v7',
-        persistenceSupport: 'state-session-v2',
-        appLifecycleSupport: 'app-lifecycle-v2',
-        initialize() {},
-        kernelConfig: {
-          appName: 'system_ide',
-          description: 'IDE app',
-          whatItIs: 'IDE',
-          whenToUse: 'Use for code work'
-        }
-      };
-      `
-    );
-
-    const manifest = await buildAoappManifest(tempDir);
-
-    assert.equal(manifest.app_name, 'system_ide');
-    assert.equal(manifest.version, '1.2.3');
-    assert.equal(manifest.description, 'IDE app');
-    assert.deepEqual(manifest.entry, {
-      main: './dist/custom.js',
-      types: './dist/index.d.ts',
-    });
-    assert.equal('name' in manifest, false);
-    assert.equal('displayName' in manifest, false);
-
-    await writeAoappManifest(tempDir, manifest);
-    const written = JSON.parse(await readFile(path.join(tempDir, 'aoapp.json'), 'utf-8'));
-    assert.equal(written.app_name, 'system_ide');
-    assert.equal(written.version, '1.2.3');
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+test('generates the manifest from package.json without executing the App entry', async t => {
+  const directory = await fixture(t);
+  const manifest = await buildAoappManifest(directory);
+  assert.deepEqual(manifest, { app_name: 'system_ide', description: 'IDE app', whatItIs: 'IDE', whenToUse: 'Use for code work',
+    version: '1.2.3', entry: { main: './dist/custom.mjs', types: './dist/index.d.ts' },
+    toolAuthoringProtocol: VIEW_TYPE_TOOL_PROTOCOL, appLifecycleSupport: APP_LIFECYCLE_PROTOCOL, persistenceSupport: STATE_SESSION_PROTOCOL });
+  await writeAoappManifest(directory, manifest);
+  assert.deepEqual(JSON.parse(await readFile(join(directory, 'aoapp.json'), 'utf8')), manifest);
 });
 
-test('buildAoappManifest rejects the retired manifest/create factory shape', async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
-
-  try {
-    await mkdir(path.join(tempDir, 'dist'), { recursive: true });
-    await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'old-app' }));
-    await writeFile(
-      path.join(tempDir, 'dist/index.js'),
-      `export default { manifest: { app_name: 'old_app', version: '1.0.0', entry: { main: './dist/index.js' } }, create() {} };`,
-    );
-
-    await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+test('omits the persistence marker when the App did not request storage', async t => {
+  const directory = await fixture(t, { aotui: { app_name: 'system_ide', persistence: false }, types: undefined });
+  const manifest = await buildAoappManifest(directory);
+  assert.equal('persistenceSupport' in manifest, false);
+  assert.deepEqual(manifest.entry, { main: './dist/custom.mjs' });
 });
 
-test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
-
-  try {
-    await mkdir(path.join(tempDir, 'dist'), { recursive: true });
-    await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'incomplete-app' }));
-    await writeFile(
-      path.join(tempDir, 'dist/index.js'),
-      `export default { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'incomplete_app' } };`,
-    );
-
-    await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('buildAoappManifest rejects named and nested factories instead of resolving a fallback export', async () => {
-  for (const source of [
-      `const f = { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'named_app' }, initialize() {} }; export const factory = f;`,
-    `export default { factory: { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: 'nested_app' }, initialize() {} } };`,
-  ]) {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
-
-    try {
-      await mkdir(path.join(tempDir, 'dist'), { recursive: true });
-      await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'alternate-export' }));
-      await writeFile(path.join(tempDir, 'dist/index.js'), source);
-
-      await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  }
-});
-
-test('buildAoappManifest requires the canonical appName on the default factory', async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
-  try {
-    await mkdir(path.join(tempDir, 'dist'), { recursive: true });
-    await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'invalid-metadata' }));
-    await writeFile(path.join(tempDir, 'dist/index.js'),
-      `export default { persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7', kernelConfig: { appName: '' }, initialize() {} };`);
-
-    await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+for (const [fields, field] of [
+  [{ aotui: undefined }, 'aotui'],
+  [{ aotui: { app_name: 'system_ide', persistence: 'true' } }, 'aotui.persistence'],
+  [{ main: './dist/missing.mjs' }, 'main'],
+  [{ types: './dist' }, 'types'],
+  [{ version: '' }, 'version'],
+]) test(`rejects invalid ${field} in package.json`, async t => {
+  await assert.rejects(buildAoappManifest(await fixture(t, fields)), { code: 'APP_MANIFEST_INVALID', path: field });
 });

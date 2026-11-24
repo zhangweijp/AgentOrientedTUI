@@ -4,7 +4,7 @@ import { refKey } from '../snapshot/snapshot-support.js';
 import { compileToolParameters } from '../tool/tool-parameters.js';
 function parameters(extra = false) {
     return compileToolParameters({ type: 'object', properties: {
-        file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
+        file: { 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
         choice: { type: 'string', enum: ['ok'] }, ...(extra ? { n: { type: 'number', default: 2 } } : {}),
     }, required: ['file'], additionalProperties: true });
 }
@@ -18,14 +18,14 @@ function fixture() {
     const calls = { policy: 0, execute: 0 }, seen: any[] = [];
     const controls = { authorize: (_ctx: any): any => true };
     function publish(label = 'A', mounted = true) {
-        const s = ++seq;const r = core.committer.accept({ schemaVersion: 7, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
+        const s = ++seq;const r = core.committer.accept({ schemaVersion: 8, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
             views: mounted ? [{ toolBindings: [{ toolId: id, activationId: label === 'rule' ? 'rule-2' : 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', region: 'dynamic', content: { format: 'markdown-v1', value: label } }] : [],
-            refs: mounted ? { [refKey('aa', 'mount', 'id')]: { scope: 'protected', id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value', payload: { label } } } } : {},
-            tools: mounted ? { [id]: { multiplicity: 'multiple', id, name: 'read', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema: schema } } : {} });
+            refs: mounted ? { [refKey('aa', 'mount', 'id')]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value', payload: { label } } } } : {},
+            tools: mounted ? { [id]: { multiplicity: 'multiple', id, name: 'read', viewType: 'File',  description: 'Read', inputSchema: schema } } : {} });
         expect(r.status).toBe('published');if (r.status !== 'published') throw Error('publication');return r.snapshot;
     }
     const original = publish();
-    const binding = { identity: {}, isLive: () => ({ ok: true }),
+    const binding = { identity: {}, isLive: () => true,
         execute: (ctx: any) => { calls.execute++;seen.push(ctx);return { kind: 'tool-result' as const, phase: 'entered-returned' as const, result: { success: true, data: { label: ctx.effectiveInput.file.label } } }; } };
     const client = createAppInteraction(core.store, { namespace: 'ref-v2', now: () => 0, appId: 'app', instanceId: 'run', policy: { project: ({ source }) => ({
         refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
@@ -34,20 +34,20 @@ function fixture() {
     return { core, client, controls, calls, seen, publish, original, changeRule() {
         const changed = parameters(true);
         if (!changed.ok) throw Error('fixture');schema = changed.contract.schema;publish('rule');
-    }, async request(input: any = { file: '$app.aa.id', choice: 'ok' }) {
-        const o = await client.observe({ all: true });if (o.status !== 'observed') throw Error('observation');expect(client.adoptObservation(o.observation.observationId)).toEqual({ status: 'adopted' });const tool = o.observation.tools[0]!;
-        return { invocationId: 'i', observationId: o.observation.observationId, toolId: tool.id, input: { view_id: 'aa', ...input } };
+    }, async request(input: any = { file: '$ref.app.aa.id', choice: 'ok' }) {
+        const o = await client.observe();if (o.status !== 'observed') throw Error('observation');expect(client.adoptObservation(o.observation.observationId)).toEqual({ status: 'adopted' });const tool = o.observation.tools[0]!;
+        return { invocationId: 'i', observationId: o.observation.observationId, toolId: tool.id, viewId: 'aa', input: {  ...input } };
     } };
 }
 describe('R08/R09/R11 unchanged Core coordination with versioned Ref admission', () => {
     it('rejects ordinary parameters during prepare before policy and dispatch', async () => {
-        const f = fixture();try { const result = await f.client.invoke(await f.request({ file: '$app.aa.id', choice: 7 }));expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { code: 'TOOL_INVALID_ARGS' } } });expect(f.calls).toEqual({ policy: 0, execute: 0 }); }
+        const f = fixture();try { const result = await f.client.invoke(await f.request({ file: '$ref.app.aa.id', choice: 7 }));expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { code: 'TOOL_INVALID_ARGS' } } });expect(f.calls).toEqual({ policy: 0, execute: 0 }); }
         finally { f.client.close(); }expect(f.core.store.inspect().activeHolds).toBe(0);
     });
     it('keeps original A after B publication and shows the same provenance to policy and adapter', async () => {
         const f = fixture();const request = await f.request();f.publish('B');
         try { expect(await f.client.invoke(request)).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });expect(f.seen).toHaveLength(2);
-            for (const ctx of f.seen) { expect(ctx.effectiveInput.file).toEqual({ label: 'A' });expect(ctx.source.snapshotId).toBe(f.original.id);expect(ctx.rawInput.file).toBe('$app.aa.id');expect(ctx.refSources[0].snapshotId).toBe(f.original.id); } }
+            for (const ctx of f.seen) { expect(ctx.effectiveInput.file).toEqual({ label: 'A' });expect(ctx.source.snapshotId).toBe(f.original.id);expect(ctx.rawInput.file).toBe('$ref.app.aa.id');expect(ctx.refSources[0].snapshotId).toBe(f.original.id); } }
         finally { f.client.close(); }
     });
     it.each(['rule', 'unmount', 'instance'])('rechecks %s after an awaited policy without adapter entry', async kind => {

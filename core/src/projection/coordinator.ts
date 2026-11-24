@@ -16,14 +16,13 @@ export interface AppFrameRef {
     readonly refType?: string | undefined;
     readonly scope: RefScope;
     readonly array?: true;
-    readonly valueSchema?: JsonValue;
+    readonly valueSchema: JsonValue;
 }
 
 /** Completed author data. The app runtime supplies mounted identities and Tool activations. */
 export interface AppFrameView extends Omit<ViewSnapshot, 'id' | 'name' | 'viewInstanceId' | 'toolBindings' | 'canClose'> {
     readonly id?: string;
     readonly idPrefix?: string;
-    readonly createId?: (prefix: string, sequence: number) => string;
     readonly name?: string;
     readonly owner: object;
     readonly bindings: readonly AppFrameBinding[];
@@ -33,12 +32,12 @@ export interface AppFrameView extends Omit<ViewSnapshot, 'id' | 'name' | 'viewIn
 export interface AppProjectionFrame {
     readonly views: readonly AppFrameView[];
 }
-export type PreparedProjection = Readonly<{ status: 'prepared'; sourceEpoch: number }>;
+export type PreparedProjection = Readonly<{ status: 'prepared' }>;
 export type ProjectionOptions =
     | Readonly<{ opening: true; retainViews?: true }>
     | Readonly<{ restore: true }>;
 export type ProjectionCommitResult = PreparedProjection
-    | Readonly<{ status: 'restored'; sourceEpoch: number }>
+    | Readonly<{ status: 'restored' }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>
     | Readonly<{ status: 'failed'; issue: SnapshotIssue; cause?: { readonly error: unknown } }>;
 
@@ -127,7 +126,18 @@ export class SemanticProjectionCoordinator {
             throw error;
         }
         if (!this.prepared) throw new SnapshotDataError('SNAPSHOT_INVALID', '$.views', 'Prepare the App’s first successful projection frame');
-        return Object.freeze({ status: 'prepared', sourceEpoch: this.prepared.sourceEpoch });
+        return Object.freeze({ status: 'prepared' });
+    }
+
+    readPreparedViewId(viewType: string, name: string): string | undefined {
+        if (this.closed || this.fault || !this.prepared) return;
+        let id: string | undefined;
+        for (const view of this.prepared.views) {
+            if (view.type !== viewType || view.name !== name) continue;
+            if (id !== undefined) return;
+            id = view.id;
+        }
+        return id;
     }
 
     assertWritable(): void {
@@ -169,9 +179,10 @@ export class SemanticProjectionCoordinator {
         for (const { id, value, viewId, viewInstanceId, refType, scope, array, valueSchema } of refs) {
             const key = refKey(viewId, viewInstanceId, id);
             if (Object.hasOwn(values, key)) throw new SnapshotDataError('SNAPSHOT_INVALID', '$.refs', 'Duplicate Ref in App frame');
+            if (valueSchema === undefined) throw new SnapshotDataError('SNAPSHOT_INVALID', 'Ref ' + viewId + '.' + id + '.valueSchema', 'Declare a schema for every published Ref.');
             values[key] = { id, ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
                 refType: refType ?? 'unknown', scope, ...(array ? { array } : {}),
-                ...(valueSchema === undefined ? {} : { valueSchema }), target: { kind: 'snapshot-value', payload: value } };
+                valueSchema, target: { kind: 'snapshot-value', payload: value } };
         }
         const definitions: Record<string, ToolDescriptor> = Object.create(null);
         for (const tool of tools) {
@@ -197,7 +208,7 @@ export class SemanticProjectionCoordinator {
                 return this.fail({ code: 'SNAPSHOT_INVALID', path: '$.views',
                     message: 'The render did not restore the accepted projection after refusing an opening' });
             }
-            return { status: 'restored', sourceEpoch: this.epoch };
+            return { status: 'restored' };
         }
 
         const capacity = this.source.checkCapacity?.(draft);
@@ -217,7 +228,7 @@ export class SemanticProjectionCoordinator {
         this.prepared = draft;
         this.epoch = draft.sourceEpoch;
         this.fault = undefined;
-        return Object.freeze({ status: 'prepared', sourceEpoch: this.epoch });
+        return Object.freeze({ status: 'prepared' });
     }
 
     private fail(issue: SnapshotIssue, cause?: { readonly error: unknown }): ProjectionCommitResult {

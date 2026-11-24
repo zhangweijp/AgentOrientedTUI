@@ -1,11 +1,10 @@
 import type { ToolResult, ToolResultData } from './tool-result.js';
 import { canonicalJson, checkJsonLimits, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS } from '../snapshot/snapshot-support.js';
-import type { JsonValue, ToolDescriptor, ToolInvocationDescriptor, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
-import { isInstanceName, type ViewMultiplicity } from '../snapshot/types.js';
-import { compileToolParameters, modelToolSchema, type ToolParameterContract } from './tool-parameters.js';
+import type { JsonValue, ToolDescriptor, ToolRoute, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
+import { isInstanceName, isViewTypeName, type ViewMultiplicity } from '../snapshot/types.js';
+import { compileToolParameters, type ToolParameterContract } from './tool-parameters.js';
 import type { ViewToolInvocationTerminal } from './invocation-terminal.js';
-import { sameToolDefinition } from './source-binding.js';
 
 /** One shared business contract for an operation on a ViewType. */
 interface AppTypeToolDefinition {
@@ -56,7 +55,6 @@ type Mounted = {
 type ViewCandidate = {
     readonly id?: string;
     readonly idPrefix?: string;
-    readonly createId?: (prefix: string, sequence: number) => string;
     readonly type: string;
     readonly owner: object;
     readonly bindings: readonly AppFrameBinding[];
@@ -104,7 +102,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
     let defined = false;
     let mounted = new Map<string, Mounted>();
     let declared = new Map<string, { multiplicity: ViewMultiplicity; tools: ReadonlyMap<string, Tool> }>();
-    const sequences = new Map<string, number>();
+    let sequences = new Map<string, number>();
     let mountSequence = 0;
     let activationSequence = 0;
     let bindingCount = 0;
@@ -121,7 +119,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         return Object.freeze({ viewId: id, viewType: type, viewInstanceId: 'vi:v1:' + JSON.stringify([appInstanceId, ++mountSequence]) });
     }
 
-    function current(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver) {
+    function current(tool: ToolRoute, receiver: ViewToolReceiver) {
         const view = mounted.get(receiver.viewId);
         if (view?.view.viewInstanceId !== receiver.viewInstanceId || view.view.viewType !== tool.viewType)
             return { error: rejected('VIEW_INSTANCE_REVOKED', 'The receiving View was closed or replaced. Observe the current Views.') };
@@ -129,7 +127,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         if (!binding || binding.activationId !== receiver.activationId)
             return { error: rejected('TOOL_SOURCE_STALE', 'The receiving View no longer has this Tool activation. Observe the current Tools.') };
         const declaration = declared.get(tool.viewType)?.tools.get(tool.name);
-        if (!declaration || !sameToolDefinition(declaration.descriptor, tool))
+        if (!declaration || declaration.descriptor.id !== tool.id)
             return { error: rejected('TOOL_SOURCE_CONFLICT', 'Tool definition does not match the current ViewType') };
         return { binding, contract: declaration.contract };
     }
@@ -141,13 +139,12 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             if (!Array.isArray(definitions) || definitions.length > DEFAULT_SNAPSHOT_LIMITS.maxViews)
                 fail('VIEW_CAPACITY', 'App ViewType definition limit exceeded');
             const types = new Map<string, { multiplicity: ViewMultiplicity; tools: Map<string, Tool> }>();
-            const firstByName = new Map<string, { nameSharedAcrossViewTypes: boolean }>();
             let bytes = staticBytes;
             let toolCount = 0;
             for (const input of definitions) {
                 const definition = copyJson(input, { maxDepth: 48, maxNodes: 120_000, maxApproxBytes: maxRetainedBytes }) as unknown as AppViewTypeDefinition;
                 if (!definition || typeof definition !== 'object' || Array.isArray(definition) ||
-                    Object.keys(definition).length !== 3 || !isInstanceName(definition.name) ||
+                    Object.keys(definition).length !== 3 || !isViewTypeName(definition.name) ||
                     (definition.multiplicity !== 'single' && definition.multiplicity !== 'multiple') || !Array.isArray(definition.tools))
                     fail('VIEW_INVALID', 'Expected a ViewType name, multiplicity and Tool list');
                 const { name: viewType, multiplicity } = definition;
@@ -168,15 +165,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                         throw new ViewToolContractError(code === 'PARAMETER_DECLARATION_CAPACITY' ? 'TOOL_SCHEMA_CAPACITY' : code, message, path);
                     }
                     const inputSchema = compiled.contract.schema;
-                    modelToolSchema(inputSchema, viewType, multiplicity);
-                    const first = firstByName.get(name);
-                    const descriptor = { id: JSON.stringify([appId, viewType, name]), viewType, multiplicity, name, description, inputSchema,
-                        nameSharedAcrossViewTypes: first !== undefined };
-                    if (!first) firstByName.set(name, descriptor);
-                    else if (!first.nameSharedAcrossViewTypes) {
-                        first.nameSharedAcrossViewTypes = true;
-                        bytes -= 1;
-                    }
+                    const descriptor = { id: JSON.stringify([appId, viewType, name]), viewType, multiplicity, name, description, inputSchema };
                     bytes += utf8Size(canonicalJson(descriptor));
                     if (bytes > maxRetainedBytes) fail('TOOL_CAPACITY', 'App Tool definitions exceed retention limit');
                     tools.set(name, { descriptor, contract: compiled.contract });
@@ -203,20 +192,24 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 const prior = previousByOwner.get(owner);
                 return prior ? [prior.view.viewId] : [];
             }));
+            const nextSequences = new Map(sequences);
             const owners = new Set<object>();
             const singles = new Set<string>();
             const tools = new Map<string, ToolDescriptor>();
             let bytes = 0;
             let count = 0;
             let entries = 0;
-            const instances = views.map(({ id: override, idPrefix, createId, type, owner, bindings, onClose }) => {
+
+            // Pass 1: validate every candidate and reserve fixed single-instance IDs
+            // before allocating any multi-instance sequences, so frame order never collides.
+            const staged = views.map(({ id: override, idPrefix, type, owner, bindings, onClose }) => {
                 if (owners.has(owner)) fail('VIEW_DUPLICATE', 'Duplicate View owner for ' + type);
                 if (!owner || typeof owner !== 'object') fail('VIEW_INVALID', 'View requires a stable owner');
                 owners.add(owner);
                 const definition = declared.get(type);
                 if (!definition) fail('VIEW_INVALID', 'Register ViewType ' + type + ' before mounting it');
                 const single = definition.multiplicity === 'single';
-                if (single && (idPrefix !== undefined || createId !== undefined) || !single && override !== undefined)
+                if (single && idPrefix !== undefined || !single && override !== undefined)
                     fail('VIEW_INVALID', 'ViewType ' + type + ' requires naming options matching its multiplicity');
                 if (single && singles.has(type)) fail('VIEW_DUPLICATE', 'Single ViewType ' + type + ' already has a mount');
                 if (single) singles.add(type);
@@ -225,24 +218,28 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 const continuous = previousByOwner.get(owner);
                 if (continuous && (continuous.view.viewType !== type || continuous.naming !== naming))
                     fail('VIEW_INVALID', 'Remount ViewType ' + type + ' to change its ID or prefix');
+                if (!continuous && single) {
+                    if (occupied.has(naming)) {
+                        throw new SnapshotDataError('SNAPSHOT_INVALID', 'ViewType ' + type + '.id', 'View ID already occupied: ' + naming);
+                    }
+                    occupied.add(naming);
+                }
+                return { definition, single, naming, continuous, type, owner, bindings, onClose };
+            });
+
+            // Pass 2: assign sequential IDs for newly opened multi-instance Views and bind Tools.
+            const instances = staged.map(({ definition, single, naming, continuous, type, owner, bindings, onClose }) => {
                 let id = continuous?.view.viewId ?? naming;
                 if (!continuous && !single) {
-                    const path = 'ViewType ' + type + '.createId';
+                    let sequence = nextSequences.get(naming) ?? 0;
                     do {
-                        const sequence = (sequences.get(naming) ?? 0) + 1;
+                        sequence++;
                         if (!Number.isSafeInteger(sequence)) fail('VIEW_CAPACITY', 'View sequence exhausted for ' + naming);
-                        sequences.set(naming, sequence);
-                        let proposed: unknown;
-                        try { proposed = createId ? createId(naming, sequence) : naming + '_' + sequence; }
-                        catch { throw new SnapshotDataError('SNAPSHOT_INVALID', path, 'createId threw while preparing a View'); }
-                        if (proposed instanceof Promise) void Promise.prototype.then.call(proposed, undefined, () => {});
-                        if (!isInstanceName(proposed)) throw new SnapshotDataError('SNAPSHOT_INVALID', path, 'createId must synchronously return a valid View ID');
-                        id = proposed;
-                    } while (!createId && occupied.has(id));
+                        id = naming + '_' + sequence;
+                    } while (occupied.has(id));
+                    nextSequences.set(naming, sequence);
+                    occupied.add(id);
                 }
-                if (!continuous && occupied.has(id)) throw new SnapshotDataError('SNAPSHOT_INVALID',
-                    'ViewType ' + type + (createId ? '.createId' : '.id'), 'View ID already occupied: ' + id);
-                occupied.add(id);
                 const view = continuous?.view ?? identity(id, type);
                 if (onClose !== undefined && typeof onClose !== 'function')
                     throw new SnapshotDataError('SNAPSHOT_INVALID', `View ${id}.onClose`, 'Expected a close callback');
@@ -283,6 +280,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     assertActive();
                     if (mounted !== previous) fail('VIEW_INVALID', 'Prepared View inventory was superseded');
                     mounted = next;
+                    sequences = nextSequences;
                     liveBytes = bytes;
                     bindingCount = count;
                 },
@@ -301,13 +299,10 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         inspect(): ViewOwnedToolsStats {
             return { state: disposed ? 'disposed' : 'active', views: mounted.size, bindings: bindingCount, retainedBytes: staticBytes + liveBytes };
         },
-        validateTypeToolBinding(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolResultData {
+        validateTypeToolBinding(tool: ToolRoute, receiver: ViewToolReceiver): ToolResultData {
             return current(tool, receiver).error ?? { success: true };
         },
-        getTypeToolContract(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolParameterContract | undefined {
-            return current(tool, receiver).contract;
-        },
-        async invokeTypeTool(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver,
+        async invokeTypeTool(tool: ToolRoute, receiver: ViewToolReceiver,
             args: Readonly<Record<string, unknown>>): Promise<ViewToolInvocationTerminal> {
             const initial = current(tool, receiver);
             if (initial.error) return { phase: 'not-entered', result: initial.error };

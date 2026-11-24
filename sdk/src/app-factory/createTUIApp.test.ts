@@ -2,39 +2,35 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTUIApp } from './createTUIApp.js';
 
 describe('createTUIApp', () => {
-    it('forwards canonical app_name into kernelConfig.appName', () => {
+    it('exposes the canonical app_name on the factory', () => {
         function RootComponent() {
             return null;
         }
 
-        const onReinitialize = vi.fn();
         const factory = createTUIApp({
             viewTypes: [],
             app_name: 'test_app',
             component: RootComponent,
-            onReinitialize,
-        } as any);
+        });
 
-        expect(factory.kernelConfig.appName).toBe('test_app');
-        expect(factory.kernelConfig.onReinitialize).toBe(onReinitialize);
+        expect(factory.app_name).toBe('test_app');
     });
 
-    it('captures metadata once without executing accessors or retaining mutable author metadata', () => {
+    it('captures the App name without executing accessors or retaining catalog metadata', () => {
         let reads = 0;
         expect(() => createTUIApp({viewTypes: [], get app_name() { reads++; return 'test_app'; }, component: () => null }))
             .toThrow(expect.objectContaining({ code: 'APP_METADATA_INVALID', path: 'app_name' }));
         expect(reads).toBe(0);
         const input = { viewTypes: [], app_name: 'test_app', whatItIs: 'Before', component: () => null };
-        const factory = createTUIApp(input);input.app_name = 'other';input.whatItIs = 'After';
-        expect(factory.kernelConfig).toEqual({ appName: 'test_app', whatItIs: 'Before' });
+        const factory = createTUIApp(input);input.app_name = 'other';
+        expect(factory.app_name).toBe('test_app');
+        expect(factory).not.toHaveProperty('whatItIs');
     });
 
     it('advertises the managed lifecycle contract without requiring app cleanup callbacks', () => {
         const factory = createTUIApp({viewTypes: [], app_name: 'test_app', component: () => null });
         expect(factory.appLifecycleSupport).toBe('app-lifecycle-v2');
         expect(Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value).toBe('view-type-tools-v7');
-        expect(factory.kernelConfig.onDelete).toBeUndefined();
-        expect(factory.kernelConfig.onReinitialize).toBeUndefined();
     });
 
     it.each([undefined, { protocol: 'app-lifecycle-v1' }])('refuses an unsupported cleanup port before rendering the Root', async appLifecycle => {
@@ -64,12 +60,8 @@ describe('createTUIApp', () => {
         const coercion = vi.fn(() => 'valid');
         expect(() => createTUIApp({ app_name: { toString: coercion }, component: () => null } as any)).toThrow(/APP_METADATA_INVALID.*app_name/);
         expect(coercion).not.toHaveBeenCalled();
-        const factory = createTUIApp({viewTypes: [], app_name: 'valid_123', whatItIs: 'What', whenToUse: 'When', component: () => null });
-        expect(factory.kernelConfig).toEqual({ appName: 'valid_123', whatItIs: 'What', whenToUse: 'When' });
-        expect(typeof factory.initialize).toBe('function');
-        expect(Object.hasOwn(factory, 'create')).toBe(false);
-        expect(Object.hasOwn(factory, 'TUI_FACTORY')).toBe(false);
-        expect(Object.hasOwn(factory, 'displayName')).toBe(false);
-        expect(typeof factory).toBe('object');
+        const factory = createTUIApp({viewTypes: [], app_name: 'valid_123', component: () => null });
+        expect(factory).toEqual({ app_name: 'valid_123', initialize: expect.any(Function),
+            appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v7' });
     });
 });

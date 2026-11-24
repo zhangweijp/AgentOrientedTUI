@@ -41,7 +41,6 @@ export type {
   ToolError,
   ToolResult,
   AppContext,
-  AppReinitializeContext,
   ProjectionLimits,
   AppStatePersistence,
   StateValue,

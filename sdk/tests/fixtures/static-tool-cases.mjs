@@ -24,7 +24,11 @@ export function staticCases(api, Type) {
       const descriptor = define({ name: 'File', tools: { read: input } });
       const definition = descriptor.tools.read;
       assert.deepEqual(Object.keys(definition).sort(), ['description', 'inputSchema']);
-      assert.equal(definition.inputSchema.additionalProperties, true);
+      assert.equal(definition.inputSchema.additionalProperties, false);
+      assert.equal(define({
+        name: 'Open',
+        tools: { read: { description: 'Read.', inputSchema: Type.Object({ x: Type.String() }, { additionalProperties: true }), execute } },
+      }).tools.read.inputSchema.additionalProperties, true);
       assert.deepEqual(definition.inputSchema.required, ['alpha', 'zeta']);
       frozen(descriptor);
       input.description = 'Changed.';
@@ -77,7 +81,7 @@ export function staticCases(api, Type) {
       assert.doesNotThrow(() => register([make('A'), make('B'), make('A_B', ['c']), make('C', ['A-B'])]));
     }],
     ['supports empty types and the business parameter pattern, and rejects unsupported schema', () => {
-      const empty = api.defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Empty' });
+      const empty = api.defineViewType({ multiplicity: 'multiple', name: 'Empty' });
       assert.doesNotThrow(() => register([empty]));
       const search = inputSchema => define({ name: 'Search', tools: { search: { ...declaration(), inputSchema } } });
       assert.throws(() => search(Type.Object({ path: Type.String({ format: 'email' }) })), code('TOOL_SCHEMA_UNSUPPORTED'));

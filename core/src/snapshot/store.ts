@@ -2,7 +2,7 @@ import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import type {
     AppSnapshot, CommitResult, HoldResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
     SnapshotHealth, SnapshotIssue, SnapshotIssueCode, SnapshotHold, SnapshotLookup, SnapshotRead,
-    SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead, SnapshotDraftEnvelope,
+    SnapshotStoreOptions, SnapshotStoreStats, AppIdentityRead, SnapshotDraftEnvelope,
 } from './types.js';
 import { diagnosticDigest, utf8Size } from './json.js';
 import { captureSnapshotLimits, refKey, snapshotId } from './snapshot-support.js';
@@ -17,6 +17,13 @@ interface SnapshotEntry {
 const DEFAULT_HELD_SNAPSHOTS = 64;
 const DEFAULT_HELD_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_ACTIVE_HOLDS = 1_024;
+
+const liveReaders = new WeakMap<AppSnapshot, WeakRef<() => AppSnapshot | undefined>>();
+
+/** Read the actual publisher without reentering a Host's store adapter. */
+export function currentPublishedSnapshot(source: AppSnapshot): AppSnapshot | undefined {
+    return liveReaders.get(source)?.deref()?.();
+}
 
 function boundedText(value: string, limit: number): string {
     let prefix = '', bytes = 0;
@@ -92,6 +99,8 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
     let seenProducerSeq = 0;
     let seenSourceEpoch = 0;
     const entries = new Map<string, SnapshotEntry>();
+    const readReady = () => status === 'ready' ? current?.snapshot : undefined;
+    const liveReader = new WeakRef(readReady);
 
     function clock(): number {
         const value = now();
@@ -268,6 +277,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             // The following mutation block has no await and publishes one pointer.
             if (current) retire(current);
             entries.set(snapshot.id, record);
+            liveReaders.set(snapshot, liveReader);
             current = record;
             seenSourceEpoch = draft.sourceEpoch;
             lastIssue = undefined;
@@ -284,9 +294,8 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
         readLatest(appId: string): SnapshotRead {
             if (!identity) return Object.freeze({ status: 'stopped' });
             if (identity.appId !== appId) return Object.freeze({ status: 'unready' });
-            if (status === 'ready' && current) {
-                return Object.freeze({ status: 'ready', snapshot: current.snapshot });
-            }
+            const snapshot = readReady();
+            if (snapshot) return Object.freeze({ status: 'ready', snapshot });
             if (status === 'degraded') {
                 return Object.freeze({
                     status: 'degraded',
@@ -338,21 +347,6 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             if (!ref) return Object.freeze({ status: 'rejected', issue: issue('REF_NOT_FOUND',
                 'Ref not present in source snapshot', { snapshotId: selector.snapshotId }) });
             return Object.freeze({ status: 'resolved', ref, target: ref.target });
-        },
-        getTool(selector: ToolSelector): ToolLookup {
-            if (!identity) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_UNAVAILABLE', 'Snapshot Core is closed') });
-            const lookup = store.getById(selector.snapshotId);
-            if (lookup.status === 'rejected') return lookup;
-            const snapshot = lookup.snapshot;
-            if (snapshot.appId !== selector.appId || snapshot.instanceId !== selector.instanceId) {
-                return Object.freeze({
-                    status: 'rejected', issue: issue('APP_INSTANCE_MISMATCH', 'Tool source identity mismatch', { snapshotId: selector.snapshotId }),
-                });
-            }
-            const tool = snapshot.tools[selector.toolId];
-            if (tool) return Object.freeze({ status: 'found', tool });
-            return Object.freeze({ status: 'rejected', issue: issue('TOOL_UNAVAILABLE',
-                'Tool unavailable in source snapshot', { snapshotId: selector.snapshotId }) });
         },
         inspect(): SnapshotStoreStats {
             const held = [...entries.values()].filter(entry => entry !== current);

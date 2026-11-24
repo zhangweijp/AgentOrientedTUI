@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { commitAppFrame, SemanticProjectionCoordinator, type AppFrameRef, type CompleteProjectionFrame } from './coordinator.js';
-import { hostedObservationCapacityIssue } from '../invocation/observation-registry.js';
+import { hostedObservationCapacityIssue } from '../invocation/observation-projection.js';
 import { createSnapshotCore } from '../snapshot/store.js';
 import type { JsonValue, ViewSnapshot } from '../snapshot/types.js';
 import type { ProjectionOptions } from './coordinator.js';
@@ -14,7 +14,8 @@ const view = (owner = aa, value = 'body'): ViewSnapshot => ({
     toolBindings: [], id: owner.viewId, name: owner.viewId, type: 'File', viewInstanceId: owner.viewInstanceId,
     region: 'dynamic', content: { format: 'markdown-v1', value },
 });
-const ref = (owner: typeof aa, id: string, value: JsonValue) => ({ ...owner, id, value, scope: 'protected' as const });
+const ref = (owner: typeof aa, id: string, value: JsonValue) => ({ ...owner, id, value, scope: 'protected' as const,
+    valueSchema: { anyOf: [{ type: 'null' }, { type: 'number' }, { type: 'boolean' }, { type: 'string' }, { type: 'object' }] } });
 
 function fixture(checkCapacity?: typeof hostedObservationCapacityIssue) {
     const identity = () => ({ appId: 'app', instanceId: 'run' });
@@ -28,6 +29,22 @@ function fixture(checkCapacity?: typeof hostedObservationCapacityIssue) {
 const preparedRefs = (projection: SemanticProjectionCoordinator) => Object.values(projection['prepared']?.refs ?? {});
 
 describe('shared complete projection frame', () => {
+    it('reads only unambiguous IDs from the healthy accepted frame', () => {
+        const { c, frame } = fixture();
+        const opened = { ...view(), name: 'Second file' };
+        expect(c.readPreparedViewId('File', opened.name)).toBeUndefined();
+        c.commit(() => frame([opened]));
+        expect(c.readPreparedViewId('File', opened.name)).toBe('aa');
+        expect(c.readPreparedViewId('Other', opened.name)).toBeUndefined();
+        c.commit(() => frame([opened, { ...view(bb), name: opened.name }]));
+        expect(c.readPreparedViewId('File', opened.name)).toBeUndefined();
+        c.commit(() => frame([opened]));
+        c.commit(() => { throw new Error('render fault'); });
+        expect(c.readPreparedViewId('File', opened.name)).toBeUndefined();
+        c.commit(() => frame([opened]));
+        c.close();
+        expect(c.readPreparedViewId('File', opened.name)).toBeUndefined();
+    });
     it('confirms only a healthy publication and retains the actual identity of an unchanged delivery', () => {
         const { c, frame, core } = fixture();
         const publish = () => {
@@ -82,7 +99,7 @@ describe('shared complete projection frame', () => {
         const first = c.nextPublication();
         expect(first).toHaveProperty('draft.producerSeq', 1);
         expect(c.readPreparedProjection()).toEqual(prepared);
-        expect(c.readPreparedProjection()).toEqual({ status: 'prepared', sourceEpoch: 1 });
+        expect(c.readPreparedProjection()).toEqual({ status: 'prepared' });
         await Promise.resolve();
         expect(build).toHaveBeenCalledOnce();
         expect(notice).toHaveBeenCalledOnce();
@@ -94,8 +111,8 @@ describe('shared complete projection frame', () => {
         expect(() => c.readPreparedProjection()).toThrow(expect.objectContaining({
             code: fault.code, path: fault.path, message: fault.message, cause: fault,
         }));
-        expect(c.commit(build)).toEqual({ status: 'prepared', sourceEpoch: 2 });
-        expect(c.readPreparedProjection()).toEqual({ status: 'prepared', sourceEpoch: 2 });
+        expect(c.commit(build)).toEqual({ status: 'prepared' });
+        expect(c.readPreparedProjection()).toEqual({ status: 'prepared' });
         c.close();
         expect(() => c.readPreparedProjection()).toThrow(expect.objectContaining({ code: 'PROJECTION_CLOSED' }));
     });
@@ -106,7 +123,7 @@ describe('shared complete projection frame', () => {
         registry.defineViewTypes([{ name: "File", multiplicity: 'multiple', tools: [{ name: 'read', description: 'Read the current file', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }] }]);
         const owner = {};
         const commit = (mount: object, file: string, refs: readonly AppFrameRef[] = []) => commitAppFrame(c, registry, () => ({
-            views: [{ createId: () => 'editor', type: 'File', name: 'Editor', region: 'dynamic', content: { format: 'markdown-v1', value: 'Editor' },
+            views: [{ idPrefix: 'editor', type: 'File', name: 'Editor', region: 'dynamic', content: { format: 'markdown-v1', value: 'Editor' },
                 owner: mount, refs, bindings: [{ name: 'read', enabled: true, execute: () => ({ success: true, data: { file } }) }] }],
         }));
         try {
@@ -116,14 +133,14 @@ describe('shared complete projection frame', () => {
             if (source.status !== 'ready') throw new Error('Expected a published editor');
             const tool = Object.values(source.snapshot.tools)[0]!;
             const receiver = viewToolReceiver(source.snapshot.views[0]!, tool.id)!;
-            const selected = { id: 'selected', value: 1, scope: 'private' as const };
+            const selected = { id: 'selected', value: 1, valueSchema: { type: 'number' }, scope: 'private' as const };
 
             // A replacement mount is valid in the registry. Its duplicate Ref fails in the coordinator.
             expect(commit({}, 'discarded.txt', [selected, selected])).toMatchObject({
                 status: 'failed', issue: { code: 'SNAPSHOT_INVALID', path: '$.refs' },
             });
             expect(publish().status).toBe('rejected');
-            expect(registry.getView('editor')?.viewInstanceId).toBe(receiver.viewInstanceId);
+            expect(registry.getView('editor_1')?.viewInstanceId).toBe(receiver.viewInstanceId);
             // Probe the registry directly to identify which handler it retained while the source is degraded.
             expect(await registry.invokeTypeTool(tool, receiver, {})).toMatchObject({ result: { data: { file: 'test.txt' } } });
 
@@ -141,7 +158,7 @@ describe('shared complete projection frame', () => {
         const { c, frame, core, publish } = fixture(hostedObservationCapacityIssue);
         const accept = vi.fn();
         const complete = (views: ViewSnapshot[], options?: ProjectionOptions) => c.commit(() => frame(views, [], accept), options);
-        expect(complete([view()])).toMatchObject({ status: 'prepared', sourceEpoch: 1 });
+        expect(complete([view()])).toMatchObject({ status: 'prepared' });
         expect(publish().status).toBe('published');
         const large = [view(aa, 'a'.repeat(400 * 1024)), view(bb, 'b'.repeat(400 * 1024))];
 

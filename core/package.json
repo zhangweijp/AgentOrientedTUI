@@ -10,16 +10,24 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./internal": {
-      "types": "./dist/internal.d.ts",
-      "import": "./dist/internal.js"
+    "./producer": {
+      "types": "./dist/producer.d.ts",
+      "import": "./dist/producer.js"
+    },
+    "./host": {
+      "types": "./dist/host.d.ts",
+      "import": "./dist/host.js"
+    },
+    "./persistence": {
+      "types": "./dist/persistence.d.ts",
+      "import": "./dist/persistence.js"
     }
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
     "test": "vitest",
     "test:run": "vitest run",
-    "prepublishOnly": "npm run build"
+    "prepack": "npm run build 1>&2"
   },
   "files": ["dist", "examples/public-core.ts"],
   "license": "Apache-2.0",

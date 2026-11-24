@@ -12,7 +12,6 @@ type FileContext = {
 };
 const File = defineViewType<FileContext>()({
     name: 'file', multiplicity: 'multiple', region: 'dynamic',
-    createId: ({ prefix, context }) => prefix + '_' + context.name[0],
     tools: {
         edit: {
             description: 'Write exact text to this file.',
@@ -118,7 +117,7 @@ export default createApp({
                 const content = ref('content', text[name], { scope: 'protected', schema: Type.String() });
                 const hidden = ref('hidden', 'private data', { scope: 'private', schema: Type.String() });
                 const lines = arrayRef('lines', Array.from({ length: 100 }, (_, i) => 'line ' + i),
-                    { scope: 'protected', itemType: 'Line' });
+                    { schema: Type.Array(Type.String()), scope: 'protected', itemType: 'Line' });
                 const quoted = ref('lines[0]', 'literal bracket name', { scope: 'protected', schema: Type.String() });
                 const count = ref('count', 7, { scope: 'protected', schema: Type.Integer() });
                 return {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
+import { RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
 import { compileToolParameters } from './tool-parameters.js';
 
-const ref = (kind = 'File', value: any = { type: 'object' }) => ({ type: 'string', minLength: 1,
+const ref = (kind = 'File', value: any = { type: 'object' }) => ({
     'x-aotui-ref-kind': kind, 'x-aotui-ref-value': value });
 const schema = (properties: Record<string, any> = { file: ref() }, required = ['file'], additionalProperties = false) =>
     ({ type: 'object', properties, required, additionalProperties });
@@ -11,13 +11,11 @@ function compile(value = schema()) {
     if (!c.ok) throw Error(JSON.stringify(c.issue)); return c.contract;
 }
 describe('Ref parameters in the shared qualified compiler', () => {
-    it('captures one immutable contract for model input and resolved payload validation', () => {
+    it('captures one immutable contract for resolved payload validation', () => {
         const source = schema({ file: ref(), choice: { type: 'string', enum: ['ok'] } });
         const c = compile(source); source.properties.file['x-aotui-ref-kind'] = 'changed';
-        expect(c.hasRefs).toBe(true);
-        expect(c.validateModelInput({ file: '$app.file.a', choice: 'ok' }).ok).toBe(true);
         expect(c.validateResolvedInput({ file: { path: 'a' }, choice: 'ok' }).ok).toBe(true);
-        expect(c.validateResolvedInput({ file: '$app.file.a', choice: 'ok' }).ok).toBe(false);
+        expect(c.validateResolvedInput({ file: '$ref.app.file.a', choice: 'ok' }).ok).toBe(false);
         expect(compileToolParameters(c.schema)).toMatchObject({ ok: true, contract: { schema: c.schema } });
         expect(Object.isFrozen(c.schema)).toBe(true);
     });
@@ -31,19 +29,14 @@ describe('Ref parameters in the shared qualified compiler', () => {
         if (kind === 'optional') s.required = [];
         if (kind === 'multiple') { s.properties.other = ref(); s.required.push('other'); }
         const c = compile(s);
-        const raw = kind === 'optional' ? {} : { file: '$app.file.a', other: '$app.file.b' };
         const resolved = kind === 'optional' ? {} : { file: { path: 'a' }, other: { path: 'b' } };
-        expect(c.validateModelInput(raw).ok).toBe(true);
         expect(c.validateResolvedInput(resolved).ok).toBe(true);
         expect(compileToolParameters(c.schema)).toMatchObject({ ok: true, contract: { schema: c.schema } });
     });
     it('admits a bounded array of Ref names with a readonly object value per selection', () => {
         const c = compile(schema({ file: { type: 'array', items: ref(), maxItems: 2 } }));
-        expect(c.validateModelInput({ file: ['$app.file.a', '$app.file.b'] }).ok).toBe(true);
         expect(c.validateResolvedInput({ file: [{ path: 'a' }, { path: 'b' }] }).ok).toBe(true);
-        expect(c.validateModelInput({ file: [{ path: 'a' }] }).ok).toBe(false);
-        expect(c.validateResolvedInput({ file: ['$app.file.a'] }).ok).toBe(false);
-        expect(c.validateModelInput({ file: ['a', 'b', 'c'] }).ok).toBe(false);
+        expect(c.validateResolvedInput({ file: ['$ref.app.file.a'] }).ok).toBe(false);
         expect(compileToolParameters(c.schema)).toMatchObject({ ok: true, contract: { schema: c.schema } });
     });
     it.each(['nested', 'nested-names-array', 'union'])('rejects unsupported Ref shape %s', kind => {
@@ -55,13 +48,8 @@ describe('Ref parameters in the shared qualified compiler', () => {
     });
     it('keeps an object-list payload as one Ref and validates every business item', () => {
         const c = compile(schema({ file: ref('Files', { type: 'array', items: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false } }, { scope: 'protected' }) }));
-        expect(c.validateModelInput({ file: '$app.file.all' }).ok).toBe(true);
-        expect(c.validateModelInput({ file: ['$app.file.a'] }).ok).toBe(false);
         expect(c.validateResolvedInput({ file: [{ path: 'a' }] }).ok).toBe(true);
         expect(c.validateResolvedInput({ file: [{ path: 7 }] }).ok).toBe(false);
-    });
-    it.each(['', {}, null, [], 7, true])('rejects invalid raw Ref %j', file => {
-        expect(compile().validateModelInput({ file }).ok).toBe(false);
     });
     it.each([null, [], 'id', 7, true])('rejects invalid resolved object %j', file => {
         expect(compile().validateResolvedInput({ file }).ok).toBe(false);
@@ -78,7 +66,6 @@ describe('Ref parameters in the shared qualified compiler', () => {
         let reads = 0;
         const bad = Object.defineProperty({}, 'file', { enumerable: true, get() { reads++; return 'secret'; } });
         expect(compileToolParameters(schema(bad)).ok).toBe(false);
-        expect(compile().validateModelInput(bad).ok).toBe(false);
         expect(compile().validateResolvedInput(bad).ok).toBe(false); expect(reads).toBe(0);
     });
     it('includes Ref type and complete payload Schema in canonical identity and byte limits', () => {
@@ -87,12 +74,9 @@ describe('Ref parameters in the shared qualified compiler', () => {
         const a = compile(schema({ file: ref(), z: { type: 'string' } }));
         const b = compile(schema({ z: { type: 'string' }, file: ref() })); expect(a.schema).toEqual(b.schema);
     });
-    it('enforces each node limit for the complete raw and resolved arguments', () => {
+    it('enforces the complete resolved argument node limit', () => {
         const c = compile(schema({ file: ref() }, ['file'], true));
-        const rawItemsAtLimit = RAW_TOOL_ARGUMENT_LIMITS.maxNodes - 3;
         const resolvedItemsAtLimit = RESOLVED_TOOL_ARGUMENT_LIMITS.maxNodes - 3;
-        expect(c.validateModelInput({ file: '$app.file.a', nodes: Array(rawItemsAtLimit).fill(null) }).ok).toBe(true);
-        expect(c.validateModelInput({ file: '$app.file.a', nodes: Array(rawItemsAtLimit + 1).fill(null) }).ok).toBe(false);
         expect(c.validateResolvedInput({ file: {}, nodes: Array(resolvedItemsAtLimit).fill(null) }).ok).toBe(true);
         expect(c.validateResolvedInput({ file: {}, nodes: Array(resolvedItemsAtLimit + 1).fill(null) }).ok).toBe(false);
     });

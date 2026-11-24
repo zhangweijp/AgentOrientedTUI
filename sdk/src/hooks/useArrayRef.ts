@@ -3,12 +3,13 @@
  *
  * 创建一个指向数据数组的引用。
  *
- * @module @aotui/sdk/useArrayRef
+ * @module @aotui/sdk
  *
  * @example
  * ```tsx
+ * const MessageList = Type.Array(Type.Object({ id: Type.String(), role: Type.String(), content: Type.String() }));
  * function ChatView({ messages }) {
- *   const [listRef, itemRef] = useArrayRef('messages', messages, { scope: 'private', itemType: 'Message' });
+ *   const [listRef, itemRef] = useArrayRef('messages', messages, { scope: 'private', itemType: 'Message', schema: MessageList });
  *
  *   return <ul>{messages.map((msg, idx) => (
  *     <li key={msg.id}>{itemRef(idx, `${msg.role}: ${msg.content}`)}</li>

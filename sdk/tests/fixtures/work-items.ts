@@ -13,7 +13,7 @@ const operation = Type.Enum(['null', 'reset', 'reverse', 'empty', 'close', 'open
 
 type ItemContext = { change(update: (state: State) => State): ToolResult | void };
 
-export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOptions }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
+export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOptions }>()({ multiplicity: 'multiple',
     name: 'Workspace',
     tools: {
         update: {
@@ -52,7 +52,7 @@ export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOpt
     },
 });
 
-export const ItemType = defineViewType<ItemContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
+export const ItemType = defineViewType<ItemContext>()({ multiplicity: 'multiple',
     name: 'Item',
     tools: {
         inspect: {
@@ -83,8 +83,10 @@ export const ItemType = defineViewType<ItemContext>()({ multiplicity: 'multiple'
 export const workViewTypes = [WorkspaceType, ItemType] as const;
 
 export const label = 'Selected [work] \\ item';
-export const selectedViewId = 'billing_export_2026_11';
-export const otherViewId = 'b';
+export const selectedViewPrefix = 'billing_export_2026_11';
+export const otherViewPrefix = 'b';
+export const selectedViewId = 'billing_export_2026_11_1';
+export const otherViewId = 'b_1';
 const initialItems = [0, false, '', null, { nested: [1, [false]] }] as const;
 
 export interface State {

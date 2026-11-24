@@ -5,11 +5,11 @@ import { createTUIApp, defineViewType, StaticView, DynamicView, useAppRuntimeCon
     type ToolResult } from '@aotui/sdk';
 import { AUTHOR_TABLE, BACKSLASH_CODE, DIAGRAM, FILES, ORDINARY_PIPES, PIPE_CODE, PREACT_APP, RAW, RAW_PARTS, SPACES } from './batch-five-content.js';
 
-const Raw = defineViewType({ name: 'raw_markdown', multiplicity: 'multiple', createId: ({ prefix }) => prefix });
+const Raw = defineViewType({ name: 'raw_markdown', multiplicity: 'multiple' });
 const Stock = defineViewType({ name: 'inventory', multiplicity: 'single', region: 'static' });
 const string = Type.String();
 const Item = defineViewType<{ writable: boolean; apply(value: string): ToolResult }>()({
-    name: 'item', multiplicity: 'multiple', region: 'dynamic', createId: ({ prefix }) => prefix,
+    name: 'item', multiplicity: 'multiple', region: 'dynamic',
     tools: { apply: { description: 'Apply a value to the selected item.', enabled: context => context.writable,
         inputSchema: Type.Object({ value: string }), execute: ({ input, context }) => context.apply(input.value) } },
 });

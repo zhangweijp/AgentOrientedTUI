@@ -1,57 +1,43 @@
 #!/usr/bin/env node
-import { isTUIAppFactory, hasViewTypeToolAuthoringProtocol, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '@aotui/core';
-import { hasUnsupportedPersistence } from '@aotui/core/internal';
+import { APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '@aotui/core';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readFile, realpath, writeFile } from 'node:fs/promises';
+import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.length > 0;
 }
 
-async function readJson(filePath) {
-  return JSON.parse(await readFile(filePath, 'utf-8'));
-}
-
-async function loadBuiltModule(appDir, main) {
-  const entryPath = path.resolve(appDir, main);
-  return import(`${pathToFileURL(entryPath).href}?t=${Date.now()}`);
+function invalid(field, reason) {
+  return Object.assign(new TypeError(`package.json ${field}: ${reason}`), { code: 'APP_MANIFEST_INVALID', path: field });
 }
 
 export async function buildAoappManifest(appDir) {
-  const pkg = await readJson(path.join(appDir, 'package.json'));
-  const main = pkg.main ?? './dist/index.js';
-  if (!isNonEmptyString(main)) throw Object.assign(new TypeError('package.json main must name the built App entry'), { code: 'APP_MANIFEST_INVALID' });
-  const moduleNamespace = await loadBuiltModule(appDir, main);
-
-  const factory = moduleNamespace.default;
-  if (hasUnsupportedPersistence(factory)) throw Object.assign(new Error('Rebuild with the matching SDK persistence contract'), { code: 'PERSISTENCE_UNAVAILABLE' });
-  if (!isTUIAppFactory(factory)) throw Object.assign(new TypeError('Built app must export a managed createApp or createTUIApp factory'), { code: 'APP_INVALID_EXPORT' });
-  if (!hasViewTypeToolAuthoringProtocol(factory)) throw Object.assign(new TypeError('Build with the matching SDK authoring contract'), { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' });
-  const kernelConfig = factory.kernelConfig;
-  const metadata = captureAppMetadata({ app_name: kernelConfig.appName,
-    ...((kernelConfig.description ?? pkg.description) === undefined ? {} : { description: kernelConfig.description ?? pkg.description }),
-    ...(kernelConfig.whatItIs === undefined ? {} : { whatItIs: kernelConfig.whatItIs }),
-    ...(kernelConfig.whenToUse === undefined ? {} : { whenToUse: kernelConfig.whenToUse }),
+  const pkg = JSON.parse(await readFile(path.join(appDir, 'package.json'), 'utf8'));
+  if (!pkg?.aotui || typeof pkg.aotui !== 'object' || Array.isArray(pkg.aotui))
+    throw invalid('aotui', 'Declare the App metadata in an object');
+  const { app_name, whatItIs, whenToUse, persistence } = pkg.aotui;
+  const { description, version, main, types } = pkg;
+  if (persistence !== undefined && typeof persistence !== 'boolean')
+    throw invalid('aotui.persistence', 'Expected a boolean');
+  if (typeof version !== 'string' || !version.trim()) throw invalid('version', 'Provide a version');
+  const metadata = captureAppMetadata({ app_name,
+    ...(description === undefined ? {} : { description }),
+    ...(whatItIs === undefined ? {} : { whatItIs }),
+    ...(whenToUse === undefined ? {} : { whenToUse }),
   });
-
-  const result = {
+  for (const [field, file] of [['main', main], ...(types === undefined ? [] : [['types', types]])]) {
+    if (!isNonEmptyString(file) || !file.trim() || !await stat(path.resolve(appDir, file)).then(info => info.isFile(), () => false))
+      throw invalid(field, 'Name an existing built file');
+  }
+  return {
     ...metadata,
+    version,
+    entry: { main, ...(types === undefined ? {} : { types }) },
     toolAuthoringProtocol: VIEW_TYPE_TOOL_PROTOCOL,
-    persistenceSupport: Object.getOwnPropertyDescriptor(factory, 'persistenceSupport')?.value,
-    appLifecycleSupport: Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport')?.value,
-    version: pkg.version ?? '0.1.0',
-    author: pkg.author,
-    license: pkg.license,
-    entry: {
-      main,
-      types: pkg.types,
-    },
+    appLifecycleSupport: APP_LIFECYCLE_PROTOCOL,
+    ...(persistence === true ? { persistenceSupport: STATE_SESSION_PROTOCOL } : {}),
   };
-
-  return Object.fromEntries(
-    Object.entries(result).filter(([, value]) => value !== undefined)
-  );
 }
 
 export async function writeAoappManifest(appDir, manifest) {

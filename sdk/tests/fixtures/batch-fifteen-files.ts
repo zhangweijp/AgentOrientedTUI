@@ -57,7 +57,8 @@ const app: ReturnType<typeof createApp> = createApp({
                 onClose: () => { editor = undefined; publish(); return success(); },
                 render: () => {
                     const text = readFileSync(path, 'utf8');
-                    const content = ref('content', failed ? () => text : text, { scope: 'protected' });
+                    // @ts-expect-error Exercise Runtime validation of a non-JSON Ref from a JavaScript App.
+                    const content = ref('content', failed ? () => text : text, { schema: Type.String(), scope: 'protected' });
                     return {
                         body: 'File body\n\n' + text + '\n\n' + formatRef('File contents', content),
                         refs: [content],
