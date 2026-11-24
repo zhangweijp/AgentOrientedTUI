@@ -1,6 +1,6 @@
 import type { PendingAppReceipt } from '@aotui/agent-driver-adapter';
 import type { ToolResult } from '@aotui/agent-driver-v2';
-import type { IDesktop, IKernel, ReceiptAccess } from '@aotui/runtime';
+import type { IDesktop, ReceiptAccess } from '@aotui/runtime';
 
 export interface AppReceiptMessageQuery {
     readonly messageId: string;
@@ -10,7 +10,6 @@ export interface AppReceiptMessageQuery {
 
 interface ReceiptSession {
     desktop: IDesktop;
-    kernel: IKernel;
     isCurrent(): boolean;
     isAppEnabled(installationId: string): boolean;
 }
@@ -60,9 +59,9 @@ export class PendingAppReceipts {
         const readAccess = () => {
             if (!session.isCurrent())
                 return { status: 'rejected' as const, issue: { code: 'RECEIPT_SESSION_CHANGED', message: 'The owning session is no longer current.' } };
-            const access = session.kernel.getAppInteraction(locator.desktopId, locator.appId, locator.appInstanceId);
+            const access = session.desktop.getRunningApp(locator.appId, locator.appInstanceId);
             if (access.status === 'rejected') return access;
-            const app = session.desktop.getInstalledApps().find(app => app.appId === locator.appId && app.appInstanceId === locator.appInstanceId);
+            const app = session.desktop.listApps().find(app => app.appId === locator.appId && app.appInstanceId === locator.appInstanceId);
             if (!app || !session.isAppEnabled(app.installationId))
                 return { status: 'rejected' as const, issue: { code: 'APP_DISABLED', message: 'This application is disabled in the current session.' } };
             return access;
@@ -74,13 +73,13 @@ export class PendingAppReceipts {
         };
         const access = readAccess();
         if (access.status === 'rejected') return rejected(access.issue);
-        const { observationId, invocationId } = locator;
         let result: ReceiptAccess;
-        try { result = await access.interaction.readReceipt({ observationId, invocationId }, timeoutMs); }
+        try { result = await session.desktop.readReceipt({ desktopId: locator.desktopId, appId: locator.appId,
+            instanceId: locator.appInstanceId, observationId: locator.observationId, invocationId: locator.invocationId }, timeoutMs); }
         catch { result = unavailable('RECEIPT_READ_FAILED', 'The original App receipt could not be read.'); }
         const current = readAccess();
         if (current.status === 'rejected') return rejected(current.issue);
-        if (current.interaction !== access.interaction)
+        if (current.app !== access.app)
             return rejected({ code: 'APP_INSTANCE_MISMATCH', message: 'The original application instance is no longer current.' });
         if (result.kind === 'receipt' || result.code === 'RESULT_UNAVAILABLE' || result.code === 'RESULT_EXPIRED') this.locators.delete(key);
         return result;

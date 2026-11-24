@@ -221,7 +221,7 @@ export class AppCatalog {
                 installationId = await desktop.registerPendingApp({ installationId: name, localPath, config,
                     toolsEnabled: options?.toolsEnabled, projectionLimits: options?.projectionLimits });
                 if (options?.startAll || (entry.autoStart ?? true)) {
-                    const appId = await desktop.openApp(installationId);
+                    const { appId } = await desktop.openApp(installationId);
                     results.push({ name, installationId, status: 'installed', appId });
                 } else {
                     results.push({ name, installationId, status: 'registered' });
@@ -232,7 +232,7 @@ export class AppCatalog {
                     'APP_AUTHORING_PROTOCOL_UNSUPPORTED', 'PERSISTENCE_UNAVAILABLE'].includes(result.issue.code);
                 const phase = manifestFailure || !localPath ? 'discovery' : result.phase;
                 const appId = installationId
-                    ? desktop.getInstalledApps().find(app => app.installationId === installationId)?.appId
+                    ? desktop.listApps().find(app => app.installationId === installationId)?.appId
                     : undefined;
                 results.push({ ...result, phase, ...(installationId ? { installationId } : {}), ...(appId ? { appId } : {}) });
             }

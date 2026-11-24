@@ -40,7 +40,6 @@ describe('SessionManagerV3 compaction integration', () => {
     manager = new SessionManagerV3(
       {} as any,
       {} as any,
-      {} as any,
       messageService as any,
     );
   });

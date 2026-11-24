@@ -159,7 +159,7 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
     fixture.view = 'Visible content ' + 'x'.repeat(2_800);
     const host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);
     const kernel = createRuntime();
-    const desktop = kernel.getDesktop(await kernel.createDesktop(createDesktopId('probe-desktop')));
+    const desktop = await kernel.createDesktop(createDesktopId('probe-desktop'));
     const desktops = { createDesktop: async () => ({ desktop }), getAppsConfig: async () => ({}) };
     type Init = Parameters<HostManagerV2['initAgentDriver']>;
     const gui = vi.fn(), off = host.onGuiUpdate(gui);
@@ -270,7 +270,7 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
     try {
       host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);
       const kernel = createRuntime();
-      const desktop = kernel.getDesktop(await kernel.createDesktop(createDesktopId('probe-desktop')));
+      const desktop = await kernel.createDesktop(createDesktopId('probe-desktop'));
       const desktops = { createDesktop: async () => ({ desktop }), getAppsConfig: async () => ({ 'probe-app': {} }) };
       type Init = Parameters<HostManagerV2['initAgentDriver']>;
       await host.initAgentDriver(kernel as unknown as Init[0], desktops as unknown as Init[1]);

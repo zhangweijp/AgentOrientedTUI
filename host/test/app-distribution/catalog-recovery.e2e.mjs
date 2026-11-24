@@ -224,7 +224,7 @@ export default createApp({ app_name: ${JSON.stringify(appName)}, viewTypes: [Not
     const hash = value => createHash('sha256').update(value).digest('hex');
     async function confirmPages(entries, expected) {
         const runtime = createRuntime();
-        const desktop = runtime.getDesktop(await runtime.createDesktop());
+        const desktop = await runtime.createDesktop();
         const facts = [];
         try {
             for (const [installationId, entry] of Object.entries(entries)) {
@@ -232,19 +232,16 @@ export default createApp({ app_name: ${JSON.stringify(appName)}, viewTypes: [Not
                 const registered = await desktop.registerPendingApp({ installationId, localPath: entry.distribution.installedPath,
                     config: { AOTUI_DATA_DIR: join(home, 'runtime') } });
                 assert.equal(registered, installationId);
-                const appId = await desktop.openApp(installationId);
-                const instance = desktop.getInstalledApps().find(item => item.appId === appId);
-                const access = runtime.getAppInteraction(desktop.id, appId, instance.appInstanceId);
-                assert.equal(access.status, 'ready');
-                const result = await access.interaction.observe({ all: true });
-                assert.equal(result.status, 'observed');
-                const body = result.observation.views[0].content.value;
+                const app = await desktop.openApp(installationId);
+                const result = await app.observe();
+                assert.equal(result.status, 'prepared');
+                const body = result.candidate.observation.views[0].content.value;
                 assert.equal(body, expected[installationId]);
-                access.interaction.releaseObservation(result.observation.observationId);
-                facts.push({ installationId, appId, body, packageVersion: packageInfo.version, path: entry.distribution.installedPath });
+                result.candidate.discard();
+                facts.push({ installationId, appId: app.appId, body, packageVersion: packageInfo.version, path: entry.distribution.installedPath });
             }
         } finally {
-            const closed = await runtime.beginShutdown().completion;
+            const closed = await runtime.beginClose().completion;
             assert.ok(closed.ok && closed.resourcesReleased, JSON.stringify(closed));
         }
         return facts;

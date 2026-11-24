@@ -1,6 +1,24 @@
 /* Adapted from DeepSeek Harness ts-types.ts at 2e39e70496aa02986ca6a820c5d497e816b69d7e.
  * Copyright (c) 2026 DeepSeek. See LICENSE.deepseek-harness. */
-import type { ConsoleInputPath, ProgramToolInput } from '@aotui/runtime';
+import type { JsonValue } from '@aotui/core';
+import { NATIVE_REF_ADDRESS_SCHEMA, type PresentedRef } from '@aotui/runtime/adapters';
+
+type JsonObject = Readonly<Record<string, JsonValue>>;
+export interface ProgramToolInput {
+    readonly schema: JsonObject;
+    readonly refOnly: readonly { parameter: string; refType: string; arrayElement: boolean }[];
+}
+export function programToolInput(schema: JsonObject, business: JsonObject): ProgramToolInput {
+    const properties = business.properties as JsonObject;
+    const refOnly = Object.entries(properties).flatMap(([parameter, field]) => {
+        if (!object(field)) return [];
+        const direct = field['x-aotui-ref-kind'];
+        if (typeof direct === 'string') return [{ parameter, refType: direct, arrayElement: false }];
+        const element = object(field.items) ? field.items['x-aotui-ref-kind'] : undefined;
+        return typeof element === 'string' ? [{ parameter, refType: element, arrayElement: true }] : [];
+    });
+    return { schema, refOnly };
+}
 
 export interface ConsoleToolDeclaration {
     readonly name: string;
@@ -27,6 +45,7 @@ function scalar(value: unknown, path: string): string {
 }
 
 function schemaType(schema: unknown, path: string, untyped: string): string {
+    if (schema === NATIVE_REF_ADDRESS_SCHEMA) return 'AppRefAddress';
     if (schema === undefined) return untyped;
     if (!object(schema)) throw new UnsupportedSchema(path);
     for (const name of Object.keys(schema)) if (!schemaKeys.has(name)) throw new UnsupportedSchema(field(path, name));
@@ -39,7 +58,6 @@ function schemaType(schema: unknown, path: string, untyped: string): string {
     let base: string | undefined;
     switch (schema.type) {
         case undefined: break;
-        case 'address': base = 'AppRefAddress'; break;
         case 'string': case 'boolean': case 'null': base = schema.type; break;
         case 'integer': case 'number': base = 'number'; break;
         case 'array': {
@@ -74,24 +92,25 @@ function schemaType(schema: unknown, path: string, untyped: string): string {
 function inputType(input: ProgramToolInput): string {
     const properties = { ...input.schema.properties as Record<string, unknown> };
     for (const { parameter, arrayElement } of input.refOnly) {
-        const address = { type: 'address' };
+        const address = NATIVE_REF_ADDRESS_SCHEMA;
         properties[parameter] = arrayElement ? { ...(properties[parameter] as object), items: address } : address;
     }
     return schemaType({ ...input.schema, properties }, '$', 'JsonValue');
 }
 
 type Branch = { children: Map<string, Branch>; schema?: unknown; leaf?: true };
-function refsType(paths: readonly ConsoleInputPath[]): string {
+function refsType(refs: readonly PresentedRef[]): string {
     const root: Branch = { children: new Map() };
-    for (const { appId, viewId, refId, path, schema } of paths) {
+    for (const { source: { appId }, ref: { viewId, refId, valueSchema, scope } } of refs) {
+        if (scope !== 'public') continue;
         let branch = root;
-        for (const segment of [appId, viewId, refId, ...path.map(String)]) {
+        for (const segment of [appId, viewId, refId]) {
             const child: Branch = branch.children.get(segment) ?? { children: new Map() };
             branch.children.set(segment, child);
             branch = child;
         }
         branch.leaf = true;
-        branch.schema = schema;
+        branch.schema = valueSchema;
     }
     const draw = (branch: Branch): string => {
         if (branch.leaf) {
@@ -107,7 +126,7 @@ function refsType(paths: readonly ConsoleInputPath[]): string {
 export const RUN_CODE = 'run_code';
 const types = [
     'type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };',
-    'type AppRefAddress = `$${string}`;',
+    'type AppRefAddress = `$ref.${string}`;',
     'declare function inspect(...values: unknown[]): void;',
     'declare class ToolCallError extends Error {',
     '  private constructor();',
@@ -117,7 +136,7 @@ const types = [
     '}',
 ];
 
-export function consoleDeclarations(tools: readonly ConsoleToolDeclaration[], refs: readonly ConsoleInputPath[]) {
+export function consoleDeclarations(tools: readonly ConsoleToolDeclaration[], refs: readonly PresentedRef[]) {
     const names: string[] = [];
     const signatures: string[] = [];
     const issues: { tool: string; path: string }[] = [];

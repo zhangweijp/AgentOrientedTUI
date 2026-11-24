@@ -21,7 +21,7 @@ describe('DesktopManager', () => {
             const { desktop, thirdPartyAppCount } = await desktopManager.createDesktop();
             expect(desktop.id).toMatch(/^dt_/);
             expect(desktopManager.getKernel().getDesktop(desktop.id)).toBe(desktop);
-            expect(thirdPartyAppCount).toBe(desktop.getInstalledApps().length);
+            expect(thirdPartyAppCount).toBe(desktop.listApps().length);
         });
 
         it('should allow multiple Desktops to be created', async () => {

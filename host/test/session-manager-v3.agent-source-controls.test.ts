@@ -26,7 +26,7 @@ describe('SessionManagerV3 persisted source controls', () => {
     };
     vi.spyOn(db, 'getTopic').mockReturnValue({ id: 'topic', sourceControls: controls } as any);
     const persist = vi.spyOn(db, 'updateTopic').mockImplementation(() => {});
-    manager = new SessionManagerV3({} as any, {} as any, {} as any, {} as any);
+    manager = new SessionManagerV3({} as any, {} as any, {} as any);
     expect(await manager.getSourceControlState('topic')).toEqual(controls);
     await manager.setSourceItemEnabled('topic', 'apps', 'system_ide', true);
     const expected = { ...controls, apps: { enabled: true, disabledItems: ['terminal'] } };
@@ -50,7 +50,7 @@ describe('SessionManagerV3 persisted source controls', () => {
     const kernel = createRuntime();
     const llm = new LLMConfigService(new ModelRegistry());
     vi.spyOn(llm, 'resolveLLMConfig').mockResolvedValue({ model: 'synthetic', provider: { id: 'openai' } });
-    manager = new SessionManagerV3(kernel, new DesktopManager({ kernel }), llm, new MessageService());
+    manager = new SessionManagerV3(new DesktopManager({ kernel }), llm, new MessageService());
 
     expect((await manager.getSourceControlState(topicId)).mcp).toEqual({ enabled: false, allowedServers: ['tools'], disabledItems: ['tools::search'] });
     await manager.ensureSession(topicId);

@@ -20,7 +20,7 @@ import type { LanguageModelUsage, ModelMessage, Tool } from 'ai';
  * - **executing**: LLM 返回 ToolCalls，正在执行工具
  */
 export type AgentState = 'idle' | 'thinking' | 'executing';
-export type ContextRegion = 'static' | 'session' | 'dynamic';
+export type ContextRegion = 'static' | 'session' | 'dynamic' | 'request';
 
 /**
  * MessageWithTimestamp - 带时间戳的消息
@@ -37,7 +37,7 @@ export type ContextRegion = 'static' | 'session' | 'dynamic';
 export type MessageWithTimestamp = ModelMessage & {
     /** Unix timestamp (ms) */
     timestamp: number;
-    /** Context layering hint for region-first assembly */
+    /** Request messages are appended after the conversation and its active tail. */
     region?: ContextRegion;
 };
 

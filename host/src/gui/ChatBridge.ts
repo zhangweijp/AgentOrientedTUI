@@ -26,7 +26,9 @@ export interface ChatUpdateEvent {
 
 export type ChatSubscriber = (event: ChatUpdateEvent) => void;
 
-type SessionSubscription = { subscription?: Unsubscribable; snapshotRead?: Promise<void>; snapshotDirty?: boolean };
+type PreviewSubscription = { read?: Promise<void>; dirty?: boolean; timer?: ReturnType<typeof setTimeout> };
+type SessionSubscription = { subscription?: Unsubscribable; preview?: PreviewSubscription };
+const PREVIEW_INTERVAL_MS = 150;
 
 // ============ ChatBridge ============
 
@@ -97,10 +99,6 @@ export class ChatBridge {
         } catch (error) {
             console.error(`[ChatBridge] Failed to load messages for topic ${topicId}:`, error);
         }
-    }
-
-    isConnected(): boolean {
-        return this.isIpcAvailable();
     }
 
     // ============ API - Topics ============
@@ -187,32 +185,53 @@ export class ChatBridge {
     async requestDesktopPreview(topicId: string): Promise<void> {
         let owner = this.trpcSubscriptions.get(topicId);
         if (!owner) { owner = {}; this.trpcSubscriptions.set(topicId, owner); }
+        const preview = owner.preview ??= {};
         await this.ensureSessionReady(topicId, true);
-        if (this.trpcSubscriptions.get(topicId) === owner) await this.refreshSnapshot(topicId, owner);
+        preview.dirty = true;
+        while (preview.dirty && this.trpcSubscriptions.get(topicId)?.preview === preview)
+            await this.refreshSnapshot(topicId, preview);
     }
 
-    private refreshSnapshot(topicId: string, owner: SessionSubscription): Promise<void> {
-        owner.snapshotDirty = true;
-        if (owner.snapshotRead) return owner.snapshotRead;
-        // One read per connection; invalidations during a read request the latest state again.
-        owner.snapshotRead = Promise.resolve().then(async () => {
+    stopDesktopPreview(topicId: string): void {
+        const owner = this.trpcSubscriptions.get(topicId);
+        if (!owner?.preview) return;
+        clearTimeout(owner.preview.timer);
+        owner.preview = undefined;
+    }
+
+    private queueSnapshot(topicId: string, preview: PreviewSubscription): void {
+        preview.dirty = true;
+        if (preview.timer || preview.read) return;
+        preview.timer = setTimeout(() => {
+            void this.refreshSnapshot(topicId, preview).catch(error => {
+                if (this.trpcSubscriptions.get(topicId)?.preview === preview) this.handleSessionEvent({
+                    type: 'snapshot_error', topicId, error: error instanceof Error ? error.message : String(error),
+                });
+            });
+        }, PREVIEW_INTERVAL_MS);
+    }
+
+    private refreshSnapshot(topicId: string, preview: PreviewSubscription): Promise<void> {
+        if (preview.read) return preview.read;
+        clearTimeout(preview.timer);
+        preview.timer = undefined;
+        preview.dirty = false;
+        const watching = () => this.trpcSubscriptions.get(topicId)?.preview === preview;
+        preview.read = Promise.resolve().then(async () => {
             try {
-                while (owner.snapshotDirty && this.trpcSubscriptions.get(topicId) === owner) {
-                    owner.snapshotDirty = false;
-                    try {
-                        const preview = await this.getTrpcClient().session.preview.query({ id: topicId });
-                        if (this.trpcSubscriptions.get(topicId) !== owner) return;
-                        if (owner.snapshotDirty) continue;
-                        this.previews.set(topicId, preview);
-                        this.notify({ type: 'snapshot', topicId });
-                    } catch (error) {
-                        if (this.trpcSubscriptions.get(topicId) !== owner) return;
-                        if (!owner.snapshotDirty) throw error;
-                    }
-                }
-            } finally { owner.snapshotRead = undefined; }
+                if (!watching()) return;
+                const result = await this.getTrpcClient().session.preview.query({ id: topicId });
+                if (!watching() || preview.dirty) return;
+                this.previews.set(topicId, result);
+                this.notify({ type: 'snapshot', topicId });
+            } catch (error) {
+                if (watching() && !preview.dirty) throw error;
+            } finally {
+                preview.read = undefined;
+                if (watching() && preview.dirty) this.queueSnapshot(topicId, preview);
+            }
         });
-        return owner.snapshotRead;
+        return preview.read;
     }
 
     // ============ [RFC-014] Agent Lifecycle Control ============
@@ -388,8 +407,7 @@ export class ChatBridge {
      * Explicitly activate the desktop connection
      */
     async activateDesktop(topicId: string): Promise<void> {
-        if (!this.previews.has(topicId)) await this.requestDesktopPreview(topicId);
-        else await this.ensureSessionReady(topicId, true);
+        await this.ensureSessionReady(topicId, true);
     }
 
     // ============ Subscription ============
@@ -515,6 +533,7 @@ export class ChatBridge {
 
     private releaseSessionSubscription(topicId: string): void {
         const owner = this.trpcSubscriptions.get(topicId);
+        this.stopDesktopPreview(topicId);
         this.trpcSubscriptions.delete(topicId);
         owner?.subscription?.unsubscribe();
     }
@@ -559,13 +578,8 @@ export class ChatBridge {
         const { type: eventType, topicId, message } = event;
 
         if (eventType === 'snapshot' && topicId) {
-            const owner = this.trpcSubscriptions.get(topicId);
-            if (owner?.snapshotRead) owner.snapshotDirty = true;
-            else if (owner) void this.refreshSnapshot(topicId, owner).catch(error => {
-                if (this.trpcSubscriptions.get(topicId) === owner) this.handleSessionEvent({
-                    type: 'snapshot_error', topicId, error: error instanceof Error ? error.message : String(error),
-                });
-            });
+            const preview = this.trpcSubscriptions.get(topicId)?.preview;
+            if (preview) this.queueSnapshot(topicId, preview);
             return;
         }
 

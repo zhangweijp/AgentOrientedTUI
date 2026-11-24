@@ -217,7 +217,8 @@ const sessionRouter = router({
                 let session: Session | undefined;
                 let closed = false;
                 let unsubscribe: (() => void) | undefined;
-                const changed = () => {
+                const changed: (signal?: import('@aotui/runtime').UpdateSignal) => void = signal => {
+                    if (signal?.reason === 'attention_requested') return;
                     if (!closed && session && session.state !== 'destroyed' && manager?.getSession(input.id) === session) {
                         emit.next({ topicId: input.id, type: 'snapshot' });
                     }

@@ -20,11 +20,11 @@ function fixture() {
     ]);
     const clients: any[] = [];
     const forbidden = vi.fn(() => { throw new Error('PREVIEW_MUST_NOT_ADOPT_OR_INVOKE'); });
-    const desktop = { id: 'preview', getInstalledApps: () => apps,
-        getAppInteraction: vi.fn((appId: string, instanceId: string) => {
+    const desktop = { id: 'preview', listApps: () => apps,
+        getRunningApp: vi.fn((appId: string, instanceId: string) => {
             const client = { preview: vi.fn(async () => ({ status: 'previewed', source: { appId, instanceId, snapshotId: 'snapshot', revision: 1 },
-                views: views.get(appId) ?? [] })), observe: forbidden, releaseObservation: forbidden };
-            clients.push(client); return { status: 'ready', interaction: client };
+                views: views.get(appId) ?? [] })), observe: forbidden };
+            clients.push(client); return { status: 'ready', app: client };
         }),
     };
     return { apps, views, view, clients, forbidden, desktop, preview: () => readDesktopPreview(desktop as any) };
@@ -129,8 +129,8 @@ describe('Semantic Desktop preview → GUI', () => {
     });
     it('reports an App projection fault alongside healthy applications', async () => {
         const f = fixture();
-        f.desktop.getAppInteraction.mockReturnValueOnce({
-            status: 'unavailable', issue: { code: 'SNAPSHOT_INVALID', message: 'Broken projection', path: '$.views' },
+        f.desktop.getRunningApp.mockReturnValueOnce({
+            status: 'rejected', issue: { code: 'SNAPSHOT_INVALID', message: 'Broken projection', path: '$.views' },
         } as any);
         const { applications, diagnostics } = await f.preview();
         expect(applications[0].views).toEqual([]);

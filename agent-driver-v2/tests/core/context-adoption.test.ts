@@ -49,9 +49,9 @@ describe('Driver serial adoption boundary', () => {
         expect(f.onRunError).not.toHaveBeenCalled();
     });
 
-    it('preserves partial App adoption diagnostics, skips the model and still releases the turn', async () => {
-        const error = Object.assign(new Error('Partial adoption'), { code: 'SEMANTIC_ADOPTION_PARTIAL',
-            results: [{ appId: 'a', status: 'adopted' }, { appId: 'b', status: 'rejected' }] });
+    it('preserves a failed turn adoption diagnostic, skips the model and still releases the candidate', async () => {
+        const error = Object.assign(new Error('The prepared context could not be adopted.'), { code: 'SEMANTIC_ADOPTION_FAILED',
+            cause: { code: 'TURN_SELECTION_INVALID', message: 'Select one retained candidate per App from this Desktop.' } });
         const release = vi.fn();
         const f = fixture({ messages: [{ role: 'user', timestamp: 1, content: 'Current' }], tools: {}, adopt: () => { throw error; }, release });
         const call = provider(() => {});

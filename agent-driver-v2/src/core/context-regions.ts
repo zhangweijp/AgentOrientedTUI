@@ -138,6 +138,11 @@ export function assembleContextRegions(messages: MessageWithTimestamp[]): ModelM
     .sort((a, b) => a.timestamp - b.timestamp)
     .map(stripTiming);
 
+  const requestMessages = messages
+    .filter((message) => message.region === 'request')
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map(stripTiming);
+
   const { sessionMessages: compactedSessionMessages, activeTailMessages } = splitActiveTail(sessionMessages);
 
   return [
@@ -145,5 +150,6 @@ export function assembleContextRegions(messages: MessageWithTimestamp[]): ModelM
     ...compactedSessionMessages,
     ...dynamicMessages,
     ...activeTailMessages,
+    ...requestMessages,
   ];
 }

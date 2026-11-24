@@ -66,9 +66,6 @@ export interface Session {
     /** Session 状态 */
     state: SessionState;
 
-    /** 创建时间 (Unix timestamp ms) */
-    createdAt: number;
-
     /** 最后访问时间 (Unix timestamp ms) */
     lastAccessTime: number;
 }

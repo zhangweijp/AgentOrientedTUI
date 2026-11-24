@@ -21,12 +21,12 @@ export interface DesktopPreview {
 export async function readDesktopPreview(desktop: IDesktop): Promise<DesktopPreview> {
     const applications: DesktopPreviewApp[] = [];
     const diagnostics: string[] = [];
-    for (const { installationId, appId, appInstanceId, name, status } of desktop.getInstalledApps()) {
+    for (const { installationId, appId, appInstanceId, name, status } of desktop.listApps()) {
         const views: DesktopPreviewView[] = [];
         if (status === 'running' && appId && appInstanceId) {
             try {
-                const access = desktop.getAppInteraction(appId, appInstanceId);
-                const preview = access.status === 'ready' ? await access.interaction.preview() : access;
+                const access = desktop.getRunningApp(appId, appInstanceId);
+                const preview = access.status === 'ready' ? await access.app.preview() : access;
                 if (preview.status === 'previewed') {
                     for (const view of preview.views) {
                         if (view.content) views.push({ id: view.id, name: view.name, content: view.content.value });

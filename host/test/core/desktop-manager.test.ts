@@ -8,7 +8,7 @@ describe('DesktopManager', () => {
     beforeEach(() => {
         mockKernel = {
             createDesktop: vi.fn().mockResolvedValue('dt_test'),
-            getDesktop: vi.fn().mockReturnValue({ id: 'dt_test', getInstalledApps: () => [{ id: 'app' }] }),
+            getDesktop: vi.fn().mockReturnValue({ id: 'dt_test', listApps: () => [{ id: 'app' }] }),
         };
 
         mockCatalog = {

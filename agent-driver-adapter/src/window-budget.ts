@@ -1,7 +1,7 @@
 import type { DrivenSourceContext, FittedModelRequest, MeasureModelRequest, ModelInputMeasurement } from '@aotui/agent-driver-v2';
-import { fitWindowPresentation, type WindowPresentation } from '@aotui/runtime/adapters';
+import { DESKTOP_TOOL_NAMES, fitWindowPresentation, type WindowPresentation } from '@aotui/runtime/adapters';
 
-export const BUDGET_TOOL = 'system-read_window_budget';
+export const BUDGET_TOOL = DESKTOP_TOOL_NAMES.readWindowBudget;
 const ROWS_PER_PAGE = 4;
 const TRIAL_REPORT_ID = '00000000-0000-0000-0000-000000000000';
 export interface WindowCost {

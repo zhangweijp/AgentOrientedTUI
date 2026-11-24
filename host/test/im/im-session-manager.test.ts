@@ -6,7 +6,7 @@ import { createRuntime, createDesktopId } from '@aotui/runtime'
 function desktopFactory() {
   const runtime = createRuntime()
   return vi.fn(async (sessionKey: string) =>
-    runtime.getDesktop(await runtime.createDesktop(createDesktopId(sessionKey))))
+    await runtime.createDesktop(createDesktopId(sessionKey)))
 }
 
 function createManager() {
