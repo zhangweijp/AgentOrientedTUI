@@ -3,9 +3,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { RuntimeOptions } from '../facades/facades.js';
 import { createSqliteStateStorage } from '../adapters/storage/sqlite-state-storage.js';
@@ -15,7 +16,7 @@ const repo=resolve(process.cwd(),'..'),url=(file:string)=>pathToFileURL(file).hr
 const sdkDist=process.env.AOTUI_C03_SDK_DIST??join(repo,'sdk/dist/index.js');
 const runtimeDist=process.env.AOTUI_C03_RUNTIME_DIST??join(repo,'runtime/dist');
 const { createRuntime }: typeof import('../facades/facades.js') = await import(url(join(runtimeDist, 'index.js')));
-const { WorkerSandbox }: typeof import('../engine/app/worker-sandbox.js') = await import(url(join(runtimeDist, 'engine/app/worker-sandbox.js')));
+const resolveSdkDependency = createRequire(sdkDist).resolve;
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(yes=>{resolve=yes;});return {promise,resolve};};
 async function capture(file:string,body:string){
     await writeFile(file,body);const root=process.env.AOTUI_W08_C1_FACTS_DIR;
@@ -25,16 +26,22 @@ async function facts(name:string,value:object){const root=process.env.AOTUI_W08_
 async function fixture(scenario='normal'){
     const dir=await mkdtemp(join(tmpdir(),'aotui-c2-kernel-')),app=join(dir,'app.mjs'),entered=join(dir,'entered'),release=join(dir,'release');
     await mkdir(join(dir,'node_modules'),{recursive:true});
-    await symlink(join(repo,'sdk/node_modules/preact'),join(dir,'node_modules/preact'),'dir');
-    await symlink(join(repo,'sdk/node_modules/typebox'),join(dir,'node_modules/typebox'),'dir');
+    await symlink(dirname(resolveSdkDependency('preact/package.json')),join(dir,'node_modules/preact'),'dir');
+    await symlink(resolve(dirname(resolveSdkDependency('typebox')), '..'),join(dir,'node_modules/typebox'),'dir');
     const body=`import {writeFile} from 'node:fs/promises';import {existsSync} from 'node:fs';
 import {h} from 'preact';import {Type} from 'typebox';import { createTUIApp, useState, useEffect, useAppLifecycle, useAppRuntimeContext, defineViewType, DynamicView } from ${JSON.stringify(url(sdkDist))};
 let setter,value,port,draft;function Detail(){
 return h('section',{},h('p',{},String(value)));}
-const DetailType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Detail', tools: {
+const DetailType = defineViewType()({ multiplicity: 'multiple', name: 'Detail', tools: {
     set: {
         description: 'Set persisted value', inputSchema: Type.Object({ value: Type.Number() }, { additionalProperties: false }),
-        async execute({ input }) { draft=input.value;setter(input.value); return { success: true, data: { value: input.value } }; },
+        async execute({ input }) {
+            ${scenario==='held-write' ? `await port.save('value',input.value);
+            await writeFile(${JSON.stringify(entered)},'saved');
+            while(!existsSync(${JSON.stringify(release)}))await new Promise(resolve=>setTimeout(resolve,5));`
+            : 'draft=input.value;setter(input.value);'}
+            return { success: true, data: { value: input.value } };
+        },
     },
     flush: {
         description: 'Flush persisted state', inputSchema: Type.Object({}, { additionalProperties: false }),
@@ -55,10 +62,10 @@ export default factory;`;
 }
 const makeRuntime=(options?: RuntimeOptions)=>createRuntime({worker:{timeoutMs:4000,maxWorkers: 4}},options);
 function appRecord(runtime: any, desktop: string, installationId: string) {
-    return runtime.getDesktop(desktop).getInstalledApps().find((item: any) => item.installationId === installationId);
+    return runtime.getDesktop(desktop).listApps().find((item: any) => item.installationId === installationId);
 }
 function sandbox(runtime:any,id='d',app='app'):any{
-    return (runtime.getDesktop(id) as any).appManager.getWorkerSandbox(appRecord(runtime, id, app)?.appId ?? 'close');
+    return (runtime.getDesktop(id) as any).appManager.getManagedApp(appRecord(runtime, id, app)?.appId ?? 'close');
 }
 async function install(runtime:any,f:Awaited<ReturnType<typeof fixture>>,id='d',app='app',extra={}){
     try { runtime.getDesktop(id); }
@@ -66,59 +73,58 @@ async function install(runtime:any,f:Awaited<ReturnType<typeof fixture>>,id='d',
         expect(error).toHaveProperty('code', 'DESKTOP_NOT_FOUND');
         await runtime.createDesktop(id);
     }
-    return runtime.installDynamicWorkerApp(id,url(f.app),{installationId:app,name:'close',config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_KEY:'close'},...extra});
+    return (await runtime.getDesktop(id).installDynamicWorkerApp(url(f.app),{installationId:app,name:'close',config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_KEY:'close'},...extra})).appId;
 }
 async function invoke(runtime:any,id='d',app='app',name='set',input={value:1}){
     const current = appRecord(runtime, id, app);
-    const opened=runtime.getAppInteraction(id,current?.appId,current?.appInstanceId);
-    if(opened.status!=='ready')throw new Error(opened.issue.code);const client=opened.interaction;
-    let observation:any;
+    const desktop=runtime.getDesktop(id), opened=desktop.getRunningApp(current?.appId,current?.appInstanceId);
+    if(opened.status!=='ready')throw new Error(opened.issue.code);
+    let candidate:any, turn:any;
     try{
-        await vi.waitFor(async()=>{const result=await client.observe({all:true});expect(result.status).toBe('observed');if(result.status==='observed')observation=result.observation;},{timeout:6000});
-        expect(client.adoptObservation(observation.observationId)).toEqual({status:'adopted'});
-        const tool=observation.tools.find((item:any)=>item.name===name);
+        await vi.waitFor(async()=>{const result=await opened.app.observe();expect(result.status).toBe('prepared');if(result.status==='prepared')candidate=result.candidate;},{timeout:6000});
+        const adopted=desktop.adoptTurn({apps:[{candidate}]});expect(adopted.status).toBe('adopted');turn=adopted.turn;
+        const {observation}=candidate, tool=observation.tools.find((item:any)=>item.name===name);
         if(!tool)throw new Error('Missing View Tool '+name);
-        const result=await client.invoke({invocationId:randomUUID(),observationId:observation.observationId,toolId:tool.id,input:{view_id:'detail',...input}});
+        const result=await turn.invoke(opened.app.appId,{invocationId:randomUUID(),observationId:observation.observationId,toolId:tool.id,viewId: 'detail_1', input:{...input}});
         if(result.kind!=='receipt'||result.receipt.outcome.status!=='succeeded')return {success:false};
         return result.receipt.outcome.value as any;
-    }finally{if(observation)client.releaseObservation(observation.observationId);}
+    }finally{turn?.release();candidate?.discard();}
 }
-function inject(extra:(box:any)=>object){const original=WorkerSandbox.prototype.installDynamic;vi.spyOn(WorkerSandbox.prototype,'installDynamic').mockImplementation(function(this:any){Object.assign(this.config,extra(this));return original.call(this);});}
 afterEach(()=>{vi.restoreAllMocks();});
 
 it('C2-26 actual default Kernel/SDK saves two Desktop values and closes all physical Workers',async()=>{
     const f=await fixture(),runtime=makeRuntime();
     try{
-        await install(runtime,f,'a');await install(runtime,f,'b');const boxes=[sandbox(runtime,'a'),sandbox(runtime,'b')],workers=boxes.map(box=>box.workerHost.worker);
+        await install(runtime,f,'a');await install(runtime,f,'b');const boxes=[sandbox(runtime,'a'),sandbox(runtime,'b')],workers=boxes.map(box=>box.host.worker);
         expect((await invoke(runtime,'a','app','set',{value:11})).success).toBe(true);expect((await invoke(runtime,'b','app','set',{value:22})).success).toBe(true);
-        const closing=runtime.beginShutdown(),before=closing.inspect();const report=await closing.completion;await runtime.shutdown();
-        expect(report).toMatchObject({state:'settled',ok:true,verification:'managed',apps:{accepted:2,settled:2,pending:0,notVerifiedReleased:0},desktops:{accepted:2,settled:2,pending:0},persistence:{managedApps:2,confirmedFlushes:2,failedFlushes:0},resources:{storageActualIO:0,retainedStorageOwners:0,openingStorageOwners:0},workers:{ownership:'owned',report:{state:'closed',total:0}}});
+        const closing=runtime.beginClose(),before=closing.inspect();const report=await closing.completion;await runtime.beginClose().completion;
+        expect(report).toMatchObject({state:'settled',ok:true,verification:'managed',apps:{accepted:2,settled:2,pending:0,notVerifiedReleased:0},desktops:{accepted:2,settled:2,pending:0},persistence:{managedApps:2,confirmedFlushes:2,failedFlushes:0},resources:{pendingOperations:0,retainedOwners:0},workers:{ownership:'owned',report:{state:'closed',total:0}}});
         expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);
         for (const id of ['a', 'b']) expect(() => runtime.getDesktop(id)).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));
         expect(JSON.parse(f.read('a')!).value).toBe(11);expect(JSON.parse(f.read('b')!).value).toBe(22);expect(before.state).toBe('closing');await facts('normal',{before,report,physicalThreadIds:workers.map(worker=>worker.threadId)});
-    }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
+    }finally{await runtime.beginClose().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
 it('C2-25 Desktop close exits its own Worker and preserves other Desktops in the Runtime',async()=>{
     const f=await fixture(),runtime=makeRuntime();
     try{
-        await install(runtime,f,'first');await install(runtime,f,'second');const first=sandbox(runtime,'first'),second=sandbox(runtime,'second'),workers=[first.workerHost.worker,second.workerHost.worker];
-        const closed=await runtime.beginDesktopShutdown('first').completion;expect(closed).toMatchObject({ok:true,resourcesReleased:true,workers:{ownership:'not-owned',report:null},apps:{accepted:1,settled:1}});
-        expect(first.getCloseReport()).toMatchObject({host:{worker:'exited'}});expect(workers[0].threadId).toBe(-1);expect(workers[1].threadId).toBeGreaterThan(0);
+        await install(runtime,f,'first');await install(runtime,f,'second');const first=sandbox(runtime,'first'),second=sandbox(runtime,'second'),workers=[first.host.worker,second.host.worker];
+        const closed=await runtime.getDesktop('first').beginClose().completion;expect(closed).toMatchObject({ok:true,resourcesReleased:true,workers:{ownership:'not-owned',report:null},apps:{accepted:1,settled:1}});
+        expect(first.host.getResourceReport()).toMatchObject({worker:'exited'});expect(workers[0].threadId).toBe(-1);expect(workers[1].threadId).toBeGreaterThan(0);
         expect((await invoke(runtime,'second')).success).toBe(true);
-        const report=await runtime.beginShutdown().completion;expect(report).toMatchObject({ok:true,apps:{accepted:1,settled:1},desktops:{accepted:1,settled:1},workers:{report:{state:'closed',total:0}}});expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);await facts('desktop-close',{closed,report,first:first.getCloseReport(),threadIds:workers.map(worker=>worker.threadId)});
-    }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
+        const report=await runtime.beginClose().completion;expect(report).toMatchObject({ok:true,apps:{accepted:1,settled:1},desktops:{accepted:1,settled:1},workers:{report:{state:'closed',total:0}}});expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);await facts('desktop-close',{closed,report,first:first.host.getResourceReport(),threadIds:workers.map(worker=>worker.threadId)});
+    }finally{await runtime.beginClose().completion;await rm(f.dir,{recursive:true,force:true});}
 },15000);
 
 it('C2-25/26 Q02 real SDK async unmount keeps ownership before the terminal flush',async()=>{
     const f=await fixture('async-unmount'),runtime=makeRuntime();
     try{
-        await install(runtime,f);await invoke(runtime,'d','app','set',{value:31});const box=sandbox(runtime),worker=box.workerHost.worker,closing=runtime.beginShutdown();
+        await install(runtime,f);await invoke(runtime,'d','app','set',{value:31});const box=sandbox(runtime),worker=box.host.worker,closing=runtime.beginClose();
         await vi.waitFor(()=>expect(existsSync(f.entered)).toBe(true),{timeout:3000});const before=closing.inspect();
         expect(before).toMatchObject({state:'closing',hasFailures:false,resourcesReleased:false,persistence:{closeReceipts:0,confirmedFlushes:0,failedFlushes:0}});
         expect((await closing.wait({timeoutMs:5})).status).toBe('deadline');expect(worker.threadId).toBeGreaterThan(0);expect(f.read()).toBeUndefined();
         await writeFile(f.release,'go');const report=await closing.completion;expect(report.ok).toBe(true);expect(worker.threadId).toBe(-1);expect(JSON.parse(f.read()!).value).toBe(31);expect(before.state).toBe('closing');expect(before.hasFailures).toBe(false);await facts('async-unmount',{before,report,threadId:worker.threadId});
-    }finally{await writeFile(f.release,'go');await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
+    }finally{await writeFile(f.release,'go');await runtime.beginClose().completion;await rm(f.dir,{recursive:true,force:true});}
 },15000);
 
 it('forces actual Worker exit after a held cleanup outlives the grace period', async () => {
@@ -127,8 +133,8 @@ it('forces actual Worker exit after a held cleanup outlives the grace period', a
     try {
         await install(runtime, f);
         await invoke(runtime, 'd', 'app', 'set', { value: 32 });
-        const box = sandbox(runtime), worker = box.workerHost.worker;
-        const closing = runtime.beginShutdown();
+        const box = sandbox(runtime), worker = box.host.worker;
+        const closing = runtime.beginClose();
         await vi.waitFor(() => expect(existsSync(f.entered)).toBe(true));
         const waiting = await closing.wait({ timeoutMs: 5 });
         expect(waiting).toMatchObject({ status: 'deadline', report: {
@@ -142,35 +148,68 @@ it('forces actual Worker exit after a held cleanup outlives the grace period', a
         expect(f.read()).toBeUndefined();
     } finally {
         await writeFile(f.release, 'go');
-        await runtime.beginShutdown().completion;
+        await runtime.beginClose().completion;
+        await rm(f.dir, { recursive: true, force: true });
+    }
+}, 10000);
+
+it.each(['confirmed', 'unknown'] as const)('reports the %s outcome of the final dispatched write on the App close handle', async mode => {
+    const f = await fixture('held-write');
+    const runtime = createRuntime({ worker: { timeoutMs: 1500, maxWorkers: 1 } });
+    try {
+        await install(runtime, f);
+        const desktop = runtime.getDesktop('d'), record = appRecord(runtime, 'd', 'app');
+        const opened = desktop.getRunningApp(record.appId, record.appInstanceId);
+        if (opened.status !== 'ready') throw Error(opened.issue.code);
+        const observed = await opened.app.observe();
+        if (observed.status !== 'prepared') throw Error(observed.issue.code);
+        const { candidate } = observed, adopted = desktop.adoptTurn({ apps: [{ candidate }] });
+        if (adopted.status !== 'adopted') throw Error(adopted.issue.code);
+        const { observationId, tools } = candidate.observation, invocationId = 'last-write';
+        const pending = adopted.turn.invoke(opened.app.appId, { observationId, invocationId,
+            toolId: tools.find(tool => tool.name === 'set')!.id, viewId: 'detail_1', input: { value: 84 } });
+        await vi.waitFor(() => expect(existsSync(f.entered)).toBe(true));
+        const worker = sandbox(runtime).host.worker, handle = opened.app.beginClose();
+        if (mode === 'confirmed') await writeFile(f.release, 'go');
+        const report = await handle.completion;
+        await pending;
+        expect(report).toMatchObject({ resourcesReleased: true, worker: 'exited', ok: mode === 'confirmed',
+            closingInvocation: { observationId, invocationId, executionPhase: mode === 'confirmed' ? 'entered-returned' : 'unknown',
+                status: mode === 'confirmed' ? 'succeeded' : 'unknown' } });
+        expect(worker.threadId).toBe(-1);
+        expect(JSON.parse(f.read()!).value).toBe(84);
+        await facts('last-write-' + mode, { report, threadId: worker.threadId, saved: 84 });
+    } finally {
+        await writeFile(f.release, 'go');
+        await runtime.beginClose().completion;
         await rm(f.dir, { recursive: true, force: true });
     }
 }, 10000);
 
 it.each(['open','replace'] as const)('C2-27 real Node storage %s crosses a caller deadline while the original Kernel retains the actual owner',async held=>{
-    const f=await fixture(),backend=createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS),entered=deferred(),finish=deferred(),runtime=makeRuntime();
-    inject(()=>({persistenceBackend:{async open(input:any){const result=await backend.open(input);if(result.status!=='opened')return result;
+    const f=await fixture(),backend=createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS),entered=deferred(),finish=deferred();
+    const runtime=makeRuntime({storageBackend:{async open(input:any){const result=await backend.open(input);if(result.status!=='opened')return result;
         if(held==='open'){entered.resolve();await finish.promise;}
-        return {status:'opened',storage:{...result.storage,async replace(address:any,text:string){if(held==='replace'){entered.resolve();await finish.promise;}return result.storage.replace(address,text);}}};}}}));
+        return {status:'opened',storage:{...result.storage,async replace(address:any,text:string){if(held==='replace'){entered.resolve();await finish.promise;}return result.storage.replace(address,text);}}};}}});
     let installing:Promise<unknown>|undefined;
     try{
         installing=install(runtime,f);const observedInstall=installing.catch(error=>error);
         if(held==='replace'){await installing;await invoke(runtime,'d','app','set',{value:41});}
         else await entered.promise;
-        const box=sandbox(runtime),worker=box.workerHost.worker,closing=runtime.beginShutdown();if(held==='replace')await entered.promise;
+        const box=sandbox(runtime),worker=box.host.worker,closing=runtime.beginClose();if(held==='replace')await entered.promise;
         const deadline=await closing.wait({timeoutMs:5}),before=deadline.report;expect(deadline.status).toBe('deadline');
-        expect(before).toMatchObject({state:'closing',resourcesReleased:false,resources:{storageActualIO:1,retainedStorageOwners:held==='open'?0:1}});expect(backend.getStats().ownerSlots).toBe(1);
-        if(held==='open')expect(before.resources.openingStorageOwners).toBe(1);expect(worker.threadId).toBeGreaterThan(0);expect(runtime.getDesktop('d')).toBeDefined();
+        expect(before).toMatchObject({state:'closing',resourcesReleased:false,resources:{pendingOperations:1,retainedOwners:held==='open'?0:1}});expect(backend.getStats().ownerSlots).toBe(1);
+        if(held==='open')expect(box.host.getPersistenceReport().opening).toBe(true);expect(worker.threadId).toBeGreaterThan(0);expect(runtime.getDesktop('d')).toBeDefined();
         finish.resolve();const report=await closing.completion;const result=await observedInstall;
-        expect(report.resourcesReleased).toBe(true);expect(report.state).toBe('settled');expect(worker.threadId).toBe(-1);expect(backend.getStats().ownerSlots).toBe(0);expect(before.resources.storageActualIO).toBe(1);
+        expect(report.resourcesReleased).toBe(true);expect(report.state).toBe('settled');expect(worker.threadId).toBe(-1);expect(backend.getStats().ownerSlots).toBe(0);expect(before.resources.pendingOperations).toBe(1);
         if(held==='replace'){expect(report.ok).toBe(true);expect(JSON.parse(f.read()!).value).toBe(41);}else{
             // SDK OPEN may already have acknowledged before hydration requests this open.
             // If admission is still pending it must fail safely; either outcome leaves no owner.
-            if(result instanceof Error){expect((result as any).code).toBe('INSTALL_FAILED');expect(report.hasFailures).toBe(true);}else expect(result).toBe('close');
+            if(result instanceof Error){expect((result as any).code).toBe('INSTALL_FAILED');}else expect(result).toBe('close');
             expect(() => runtime.getDesktop('d')).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));
         }
         await facts('held-storage-'+held,{before,report,backend:backend.getStats(),physicalThreadId:worker.threadId,installOutcome:result instanceof Error?(result as any).code:result,barrier:'controlled adapter around real Node backend'});
-    }finally{finish.resolve();await installing?.catch(()=>{});await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
+    }finally{finish.resolve();await installing?.catch(()=>{});await runtime.beginClose().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
 it('C2-28 two Runtime capacity owners / two Desktop IDs are isolated',async()=>{
@@ -178,33 +217,34 @@ it('C2-28 two Runtime capacity owners / two Desktop IDs are isolated',async()=>{
     const a=makeRuntime(),b=makeRuntime();
     try{
         for(const runtime of [a,b]){await install(runtime,f,'one','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});await install(runtime,f,'two','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});}
-        const aWorkers=['one','two'].map(id=>sandbox(a,id).workerHost.worker),bWorkers=['one','two'].map(id=>sandbox(b,id).workerHost.worker);expect(new Set([...aWorkers,...bWorkers]).size).toBe(4);
-        const aReport=await a.beginShutdown().completion;expect(aReport.ok).toBe(true);expect(aWorkers.every(worker=>worker.threadId===-1)).toBe(true);expect(bWorkers.every(worker=>worker.threadId>0)).toBe(true);
+        const aWorkers=['one','two'].map(id=>sandbox(a,id).host.worker),bWorkers=['one','two'].map(id=>sandbox(b,id).host.worker);expect(new Set([...aWorkers,...bWorkers]).size).toBe(4);
+        const aReport=await a.beginClose().completion;expect(aReport.ok).toBe(true);expect(aWorkers.every(worker=>worker.threadId===-1)).toBe(true);expect(bWorkers.every(worker=>worker.threadId>0)).toBe(true);
         for(const id of ['one','two'])expect((await invoke(b,id,'app','set',{value:52})).success).toBe(true);
-        const bReport=await b.beginShutdown().completion;expect(bReport.ok).toBe(true);expect(bWorkers.every(worker=>worker.threadId===-1)).toBe(true);await facts('isolation',{aReport,bReport,threadIds:[...aWorkers,...bWorkers].map(worker=>worker.threadId)});
-    }finally{await Promise.all([a.beginShutdown().completion,b.beginShutdown().completion]);await rm(f.dir,{recursive:true,force:true});}
+        const bReport=await b.beginClose().completion;expect(bReport.ok).toBe(true);expect(bWorkers.every(worker=>worker.threadId===-1)).toBe(true);await facts('isolation',{aReport,bReport,threadIds:[...aWorkers,...bWorkers].map(worker=>worker.threadId)});
+    }finally{await Promise.all([a.beginClose().completion,b.beginClose().completion]);await rm(f.dir,{recursive:true,force:true});}
 },30000);
 
-it.each(['failed','unknown','unmount'] as const)('C2-25/27 actual Kernel preserves %s failure after real resource release and keeps its old void wrapper rejected',async mode=>{
-    const f=await fixture(mode==='unmount'?'failed-unmount':'normal'),backend=createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS),runtime=makeRuntime();
-    if(mode!=='unmount')inject(()=>({persistenceBackend:{async open(input:any){const result=await backend.open(input);return result.status!=='opened'?result:{status:'opened',storage:{...result.storage,async replace(address:any,text:string){if(mode==='unknown'){await result.storage.replace(address,text);return {status:'unknown',issue:{code:'UNKNOWN_OUTCOME'}};}return {status:'failed',effects:'none',issue:{code:'IO_FAILED'}};}}};}}}));
+it.each(['failed','unknown','unmount'] as const)('C2-25/27 actual Kernel preserves %s failure after real resource release',async mode=>{
+    const f=await fixture(mode==='unmount'?'failed-unmount':'normal'),backend=createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
+    const storageBackend = mode === 'unmount' ? undefined : {async open(input:any){const result=await backend.open(input);return result.status!=='opened'?result:{status:'opened',storage:{...result.storage,async replace(address:any,text:string){if(mode==='unknown'){await result.storage.replace(address,text);return {status:'unknown',issue:{code:'UNKNOWN_OUTCOME'}};}return {status:'failed',effects:'none',issue:{code:'IO_FAILED'}};}}};}} satisfies RuntimeOptions['storageBackend'];
+    const runtime = makeRuntime({ storageBackend });
     try{
-        await install(runtime,f);await invoke(runtime,'d','app','set',{value:63});const box=sandbox(runtime),worker=box.workerHost.worker,promise=runtime.shutdown();
-        await expect(promise).rejects.toHaveProperty('code','RUNTIME_CLOSE_FAILED');expect(runtime.shutdown()).toBe(promise);await expect(runtime.shutdown()).rejects.toHaveProperty('code','RUNTIME_CLOSE_FAILED');
-        const report=await runtime.beginShutdown().completion;expect(report).toMatchObject({state:'settled',hasFailures:true,resourcesReleased:true,persistence:{managedApps:1},workers:{report:{state:'closed',total:0}}});expect(worker.threadId).toBe(-1);
+        await install(runtime,f);await invoke(runtime,'d','app','set',{value:63});const box=sandbox(runtime),worker=box.host.worker,promise=runtime.beginClose().completion;
+        expect(runtime.beginClose().completion).toBe(promise);
+        const report=await runtime.beginClose().completion;expect(report).toMatchObject({state:'settled',hasFailures:true,resourcesReleased:true,persistence:{managedApps:1},workers:{report:{state:'closed',total:0}}});expect(worker.threadId).toBe(-1);
         if(mode==='unmount'){
             expect(report.persistence).toMatchObject({ confirmedFlushes: 1, failedFlushes: 0, unknownApps: 0, unsavedKeys: 0 });
             expect(report.failures.flatMap(item=>item.codes)).toContain('APP_UNMOUNT_FAILED');
             expect(report.failures.some(item=>item.stage==='persistence')).toBe(false);
             expect(JSON.parse(f.read()!).value).toBe(63);
         }
-        else{expect(report.persistence.failedFlushes).toBe(1);expect(report.persistence.unsavedKeys).toBe(1);
-            expect(box.getCloseReport().host.storage.uncertain).toBe(mode==='unknown');expect(report.persistence.unknownApps).toBe(mode==='unknown'?1:0);expect(backend.getStats().ownerSlots).toBe(0);}
+        else{expect(report.persistence?.failedFlushes).toBe(1);expect(report.persistence?.unsavedKeys).toBe(1);
+            expect(box.host.getPersistenceReport().uncertain).toBe(mode==='unknown');expect(report.persistence?.unknownApps).toBe(mode==='unknown'?1:0);expect(backend.getStats().ownerSlots).toBe(0);}
         if(mode==='unknown')expect(JSON.parse(f.read()!).value).toBe(63);expect(JSON.stringify(report)).not.toContain('private unmount detail');await facts('failure-'+mode,{report,threadId:worker.threadId,backend:backend.getStats(),fault:'controlled receipt failure around actual Node storage'});
-    }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
+    }finally{await runtime.beginClose().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
-it.each(['app', 'desktop'] as const)('releases the original storage owner through the public %s close path', async path => {
+it.each(['app', 'desktop', 'runtime'] as const)('releases the original storage owner through the public %s close path', async path => {
     const f = await fixture(), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
     const retryEntered = deferred(), finishRetry = deferred();
     let releases = 0, writes = 0, completedCleanups = 0;
@@ -229,74 +269,67 @@ it.each(['app', 'desktop'] as const)('releases the original storage owner throug
     try {
         await install(runtime, f);
         const desktop = runtime.getDesktop('d')!;
-        const box = sandbox(runtime), worker = box.workerHost.worker;
+        const box = sandbox(runtime), worker = box.host.worker;
         worker.on('message', (message: any) => {
             if (message.appCleanup?.state === 'completed') completedCleanups++;
         });
         expect((await invoke(runtime, 'd', 'app', 'set', { value: 73 })).success).toBe(true);
-        const closeApp = () => desktop.closeApp(box.appId, box.appInstanceId).catch(error => error.report);
-        const initialHandle = path === 'desktop' ? desktop.beginClose() : undefined;
-        const initial = initialHandle ? await initialHandle.completion : await closeApp();
+        const opened = desktop.getRunningApp(box.appId, box.appInstanceId);
+        if (opened.status !== 'ready') throw Error(opened.issue.code);
+        const close = path === 'app' ? opened.app.beginClose
+            : path === 'desktop' ? () => desktop.beginClose() : () => runtime.beginClose();
+        const initialHandle = close();
+        const initial = await initialHandle.completion;
         expect(initial).toMatchObject({ state: 'settled', hasFailures: true, resourcesReleased: false,
-            resources: { retainedStorageOwners: 1 }, appCleanup: { completedApps: 1 } });
+            resources: { retainedOwners: 1 }, persistence: { confirmedFlushes: 1 }, appCleanup: { completedApps: 1 } });
         expect(worker.threadId).toBe(-1);
         expect(backend.getStats().ownerSlots).toBe(1);
         expect([releases, writes, completedCleanups]).toEqual([1, 1, 1]);
-        expect(runtime.getAppInteraction('d', box.appId, box.appInstanceId).status).toBe('rejected');
+        expect(desktop.getRunningApp(box.appId, box.appInstanceId).status).toBe('rejected');
         expect(JSON.parse(f.read()!).value).toBe(73);
-
-        let retry: Promise<unknown>;
-        if (path === 'app') {
-            retry = Promise.all([closeApp(), closeApp()]).then(([first, second]) => {
-                expect(first).toEqual(second);
-                return first;
-            });
-        } else {
-            expect(runtime.getDesktop('d')).toBe(desktop);
+        if (path === 'desktop') {
             await expect(runtime.createDesktop('d')).rejects.toHaveProperty('code', 'DESKTOP_ALREADY_EXISTS');
-            const handle = runtime.beginDesktopShutdown('d');
-            expect(desktop.beginClose()).toBe(handle);
-            expect(handle).not.toBe(initialHandle);
-            retry = handle.completion;
         }
+        const handle = close();
+        expect(close()).toBe(handle);
+        expect(handle).not.toBe(initialHandle);
+        const retry = handle.completion;
         await retryEntered.promise;
         expect([releases, writes, completedCleanups]).toEqual([2, 1, 1]);
         expect(backend.getStats().ownerSlots).toBe(1);
         finishRetry.resolve();
         expect(await retry).toMatchObject({ hasFailures: true, resourcesReleased: true,
-            resources: { retainedStorageOwners: 0 }, appCleanup: { completedApps: 1 } });
+            resources: { retainedOwners: 0 }, persistence: { confirmedFlushes: 1 }, appCleanup: { completedApps: 1 } });
         expect(initial.resourcesReleased).toBe(false);
         expect(Object.isFrozen(initial)).toBe(true);
         expect(backend.getStats().ownerSlots).toBe(0);
-        if (path === 'app') await desktop.closeApp('close');
-        else {
-            expect(await runtime.beginDesktopShutdown('d').completion).toMatchObject({ found: false });
+        if (path !== 'app') expect(() => runtime.getDesktop('d')).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));
+        if (path === 'desktop') {
             await runtime.createDesktop('d');
             expect(runtime.getDesktop('d')).not.toBe(desktop);
-            expect(await initialHandle?.completion).toEqual(initial);
-            expect(await desktop.beginClose().completion).toMatchObject({ resourcesReleased: true });
-            await facts('desktop-release-retry', { initial, retry: await retry, releases, writes, completedCleanups,
-                physicalThreadId: worker.threadId, saved: JSON.parse(f.read()!).value, reopened: true });
         }
+        expect(await initialHandle.completion).toEqual(initial);
+        expect(await close().completion).toMatchObject({ resourcesReleased: true });
+        await facts(path + '-release-retry', { initial, retry: await retry, releases, writes, completedCleanups,
+            physicalThreadId: worker.threadId, saved: JSON.parse(f.read()!).value });
         expect([releases, writes, completedCleanups]).toEqual([2, 1, 1]);
         if (path === 'app') {
-            const appId = await desktop.openApp('app');
-            const instance = desktop.getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
+            const appId = (await desktop.openApp('app')).appId;
+            const instance = desktop.listApps().find(app => app.appId === appId)?.appInstanceId;
             expect(instance).toBeTruthy();
             expect(instance).not.toBe(box.appInstanceId);
-            const reopened = runtime.getAppInteraction('d', appId, instance!);
+            const reopened = desktop.getRunningApp(appId, instance!);
             if (reopened.status !== 'ready') throw Error(reopened.issue.code);
             await vi.waitFor(async () => {
-                const preview = await reopened.interaction.preview();
+                const preview = await reopened.app.preview();
                 expect(preview).toMatchObject({ status: 'previewed', views: [
-                    { id: 'detail', content: { value: expect.stringContaining('73') } },
+                    { id: 'detail_1', content: { value: expect.stringContaining('73') } },
                 ] });
             });
         }
     } finally {
         finishRetry.resolve();
-        await runtime.beginShutdown().completion;
-        await runtime.beginDesktopShutdown('d').completion;
+        await runtime.beginClose().completion;
         await rm(f.dir, { recursive: true, force: true });
     }
 }, 15000);
@@ -307,17 +340,17 @@ it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',a
         "import assert from 'node:assert/strict';",
         `import {createRuntime} from ${JSON.stringify(url(join(runtimeDist,'index.js')))};`,
         "const runtime=createRuntime({worker:{timeoutMs:4000,maxWorkers: 1}});",
-        "await runtime.createDesktop('d');",
-        `await runtime.installDynamicWorkerApp('d',${JSON.stringify(url(f.app))},{installationId:'app',name:'close',config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_KEY:'close'}});`,
-        "const desktop=runtime.getDesktop('d'),box=desktop.appManager.getWorkerSandbox('close'),worker=box.workerHost.worker;",
-        "const opened=runtime.getAppInteraction('d','close',box.appInstanceId);",
+        "const desktop=await runtime.createDesktop('d');",
+        `await desktop.installDynamicWorkerApp(${JSON.stringify(url(f.app))},{installationId:'app',name:'close',config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_KEY:'close'}});`,
+        "const box=desktop.appManager.getManagedApp('close'),worker=box.host.worker;",
+        "const opened=desktop.getRunningApp('close',box.appInstanceId);",
         "assert.equal(opened.status,'ready');",
-        "const observed=await opened.interaction.observe({all:true});assert.equal(observed.status,'observed');",
-        "assert.equal(opened.interaction.adoptObservation(observed.observation.observationId).status,'adopted');",
-        "const observation=observed.observation,tool=observation.tools.find(item=>item.name==='set');assert.ok(tool);",
-        "const result=await opened.interaction.invoke({invocationId:'child-call',observationId:observation.observationId,toolId:tool.id,input:{view_id:'detail',value:74}});",
-        "assert.equal(result.kind,'receipt');assert.equal(result.receipt.outcome.status,'succeeded');opened.interaction.releaseObservation(observation.observationId);",
-        "await runtime.shutdown();const report=await runtime.beginShutdown().completion;",
+        "const observed=await opened.app.observe();assert.equal(observed.status,'prepared');",
+        "const adopted=desktop.adoptTurn({apps:[{candidate:observed.candidate}]});assert.equal(adopted.status,'adopted');",
+        "const observation=observed.candidate.observation,tool=observation.tools.find(item=>item.name==='set');assert.ok(tool);",
+        "const result=await adopted.turn.invoke(opened.app.appId,{invocationId:'child-call',observationId:observation.observationId,toolId:tool.id,viewId:'detail_1',input:{value:74}});",
+        "assert.equal(result.kind,'receipt');assert.equal(result.receipt.outcome.status,'succeeded');adopted.turn.release();",
+        "await runtime.beginClose().completion;const report=await runtime.beginClose().completion;",
         "assert.equal(report.ok,true);assert.equal(report.workers.report.total,0);assert.equal(worker.threadId,-1);",
         "console.log('C2_NATURAL_END '+JSON.stringify({report,threadId:worker.threadId,value:74}));",
     ].join('\n');

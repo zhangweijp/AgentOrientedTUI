@@ -1,11 +1,11 @@
 import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { WorkerSandbox } from './worker-sandbox.js';
+import { ManagedApp } from './managed-app.js';
 import { defineRuntimeConfig } from '../../spi/config/index.js';
 import { invokeObservedTool, linkPreactPeer } from '../../../tests/fixtures/semantic-worker-tools.js';
 
@@ -20,7 +20,7 @@ it.each(['sync', 'async'] as const)('C2-18/20 actual SDK %s unmount failure is f
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c2-unmount-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
     await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, defineViewType, StaticView } from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-const RootType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root', tools: {
+const RootType = defineViewType()({ multiplicity: 'multiple', name: 'Root', tools: {
     save: {
         description: 'Save a value',
         inputSchema: Type.Object({ value: Type.Number() }, { additionalProperties: false }),
@@ -34,29 +34,15 @@ function Root() {
 }
 const factory=createTUIApp({persistence:true,viewTypes:[RootType], app_name:'close',component:Root});
 const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}close(){renderer.close();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private renderer detail');}};};export default factory;`);
-    const sandbox = new WorkerSandbox({ appId: 'app', desktopId: 'd', appModulePath: url(app),
-        workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_KEY: 'close' } });
+    const sandbox = new ManagedApp({ appId: 'app', desktopId: 'd', appModulePath: url(app),
+        workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_KEY: 'close' } }, () => {});
     try {
-        await sandbox.installDynamic();await invokeObservedTool((sandbox as any).workerHost,'save',{value:7},'root');const worker = (sandbox as any).workerHost.worker;
-        const close = sandbox.close();await expect(close).rejects.toHaveProperty('code','SANDBOX_CLOSE_FAILED');const report = await sandbox.disposeAsync();
-        expect(report).toMatchObject({ state:'settled', resourcesReleased:true, ok:false, host:{ worker:'exited', storage:{ support:'managed', unsafe:false,
-            lifecycle:{ ok:true, unmount:'failed', flush:{ok:true}, dispose:{release:{status:'released'}} } } } });
+        await sandbox.start();await invokeObservedTool((sandbox as any).host,'save',{value:7},'root_1');const worker = (sandbox as any).host.worker;
+        const close = sandbox.beginClose();expect(sandbox.beginClose()).toBe(close);const report = await close.completion;
+        expect(report).toMatchObject({ state:'settled', resourcesReleased:true, ok:false, worker:'exited',
+            persistence: { confirmedFlushes: 1, failedFlushes: 0 } });
+        expect(report.failures).toEqual([{ stage: 'apps', appId: 'app', desktopId: 'd', codes: ['APP_UNMOUNT_FAILED'] }]);
         expect(worker.threadId).toBe(-1);expect(JSON.parse(readSqliteState(join(dir, 'data/app-state'), 'd', 'close', 'value')!).value).toBe(7);
         expect(JSON.stringify(report)).not.toContain('private renderer detail');await facts('unmount-'+mode,{report,threadId:worker.threadId});
-    } finally { await sandbox.disposeAsync();await rm(dir,{recursive:true,force:true}); }
+    } finally { await sandbox.beginClose().completion;await rm(dir,{recursive:true,force:true}); }
 }, 15000);
-
-it.each(['sync','async'] as const)('C2-20 actual SDK %s onDelete failure sends a fixed failed lifecycle response exactly once and still unmounts', async mode => {
-    const dir=await mkdtemp(join(tmpdir(),'aotui-c2-delete-')),app=join(dir,'app.mjs'),deleted=join(dir,'delete.txt'),unmounted=join(dir,'unmount.txt');
-    await capture(app, `import {appendFile,writeFile} from 'node:fs/promises';import {appendFileSync} from 'node:fs';import { createTUIApp, defineViewType } from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-const factory=createTUIApp({viewTypes:[], app_name:'delete',component:()=>null,onDelete:${mode==='async'?'async ':''}()=>{${mode==='async'?`await appendFile(${JSON.stringify(deleted)},'delete\\n');`:`appendFileSync(${JSON.stringify(deleted)},'delete\\n');`}throw Error('private delete detail');}});
-const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,async close(){renderer.close();await writeFile(${JSON.stringify(unmounted)},'done');}};};export default factory;`);
-    const sandbox=new WorkerSandbox({appId:'app',desktopId:'d',appModulePath:url(app),workerScriptPath:join(repo,'runtime/dist/worker-runtime/index.js'),runtimeConfig:defineRuntimeConfig({worker:{timeoutMs:3000,maxWorkers: 1}})});
-    try {
-        await sandbox.installDynamic();const worker=(sandbox as any).workerHost.worker,replies:any[]=[];worker.on('message',(value:any)=>{if(value.type==='LIFECYCLE_RESPONSE'&&value.error?.code==='APP_DELETE_FAILED')replies.push(value);});
-        const closing=sandbox.delete();expect(sandbox.delete()).toBe(closing);await expect(closing).rejects.toHaveProperty('code','SANDBOX_CLOSE_FAILED');
-        const report=await sandbox.disposeAsync();expect(report.issues).toContain('DELETE_FAILED');expect(report.resourcesReleased).toBe(true);expect(worker.threadId).toBe(-1);
-        expect(await readFile(deleted,'utf8')).toBe('delete\n');expect(await readFile(unmounted,'utf8')).toBe('done');expect(replies).toHaveLength(1);
-        expect(replies[0]).toMatchObject({success:false,error:{code:'APP_DELETE_FAILED',message:'APP_DELETE_FAILED'}});expect(JSON.stringify(replies)).not.toContain('private delete detail');await facts('delete-'+mode,{report,replies,threadId:worker.threadId});
-    } finally { await sandbox.disposeAsync();await rm(dir,{recursive:true,force:true}); }
-},15000);

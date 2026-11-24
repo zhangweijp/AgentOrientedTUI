@@ -4,7 +4,7 @@
  * 定义 Runtime 发出的信号类型。
  */
 
-import type { DesktopID } from '@aotui/core';
+import type { AppID, DesktopID } from '@aotui/core';
 
 /**
  * 更新信号
@@ -12,7 +12,9 @@ import type { DesktopID } from '@aotui/core';
  * 当 Desktop 状态发生变化时发出。
  */
 export interface UpdateSignal {
-    desktopId: DesktopID;
-    timestamp: number;
-    reason: 'dom_mutation' | 'app_opened' | 'app_closed' | 'manual_refresh';
+    readonly desktopId: DesktopID;
+    readonly appId: AppID;
+    readonly instanceId: string;
+    readonly timestamp: number;
+    readonly reason: 'view_updated' | 'projection_failed' | 'projection_recovered' | 'app_opened' | 'app_closed' | 'attention_requested';
 }

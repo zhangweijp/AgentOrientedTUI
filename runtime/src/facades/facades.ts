@@ -1,4 +1,4 @@
-import type { StateStorageBackend } from '../engine/app/state-storage-host.js';
+import type { StateStorageBackend } from '@aotui/core/persistence';
 /**
  * SDK Layer - Runtime Facade
  * 
@@ -43,8 +43,8 @@ export interface RuntimeOptions {
  * });
  * const runtime = createRuntime(config);
  * 
- * const desktopId = await runtime.createDesktop();
- * await runtime.installDynamicWorkerApp(desktopId, '/absolute/path/to/app.mjs');
+ * const desktop = await runtime.createDesktop();
+ * const app = await desktop.installDynamicWorkerApp('/absolute/path/to/app.mjs', { name: 'my_app' });
  * ```
  */
 export function createRuntime(input: RuntimeConfigInput = {}, options?: RuntimeOptions): IKernel {

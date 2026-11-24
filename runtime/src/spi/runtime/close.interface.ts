@@ -1,60 +1,56 @@
-export interface ShutdownOptions {
-    /** 超时时间(ms)，默认 30000 */
-    timeoutMs?: number;
-    /** 关闭前回调 */
-    beforeClose?: () => Promise<void>;
-}
-export interface DesktopCloseOptions extends ShutdownOptions { intent?: 'close' | 'delete' }
+import type { InteractionStats } from '@aotui/core';
 
 export interface InteractionCloseReport {
     readonly verified: boolean;
     readonly retainedOperations: number;
-    /** Core JSON/UTF-8 combinedBytes, not heap or RSS. */
-    readonly retainedBytes: number;
 }
 
 export interface CloseReport {
-    readonly scope: 'app-manager' | 'desktop' | 'runtime';
-    readonly state: 'active' | 'closing' | 'settled';
+    readonly scope: 'app' | 'desktop' | 'runtime';
+    readonly state: 'closing' | 'settled';
     readonly ok: boolean;
     readonly hasFailures: boolean;
     readonly resourcesReleased: boolean;
     readonly interactions?: InteractionCloseReport;
-    readonly verification: 'managed' | 'mixed' | 'unverified';
-    readonly intent: 'close' | 'delete' | null;
+    readonly verification: 'managed' | 'mixed';
     readonly apps: { readonly accepted: number; readonly settled: number; readonly pending: number; readonly notVerifiedReleased: number };
     readonly desktops: { readonly accepted: number; readonly settled: number; readonly pending: number; readonly notVerifiedReleased: number };
     readonly pendingTasks: number;
     readonly unverifiedParticipants: number;
     readonly appCleanup?: { readonly managedApps: number; readonly completedApps: number; readonly failedApps: number };
-    readonly persistence: {
-        readonly managedApps: number; readonly unnegotiatedApps: number; readonly notUsedApps: number;
+    readonly persistence?: {
+        readonly managedApps: number;
         readonly closeReceipts: number; readonly missingCloseReceipts: number; readonly confirmedFlushes: number; readonly failedFlushes: number;
-        readonly absentFlushes: number; readonly unknownApps: number; readonly unsavedKeys: number;
+        readonly unknownApps: number; readonly unsavedKeys: number;
     };
-    readonly resources: { readonly retainedStorageOwners: number; readonly storageActualIO: number; readonly openingStorageOwners: number };
-    readonly workers: { readonly ownership: 'owned' | 'not-owned' | 'unverified'; readonly report: null | {
+    readonly resources: { readonly retainedOwners: number; readonly pendingOperations: number };
+    readonly workers: { readonly ownership: 'owned' | 'not-owned'; readonly report: null | {
         readonly state: 'open' | 'closing' | 'closed'; readonly limit: number; readonly total: number;
     } };
-    readonly beforeClose: 'not-provided' | 'pending' | 'running' | 'done' | 'failed' | 'skipped-drain-failed' | 'skipped-deadline';
     readonly cleanup: {
-        readonly signalBus: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
-        readonly logger: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
+        readonly signalBus: 'pending' | 'done' | 'failed' | 'not-owned';
+        readonly logger: 'pending' | 'done' | 'failed' | 'not-owned';
     };
     readonly failures: readonly {
-            readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'before-close' | 'signals' | 'logger';
-        readonly codes: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'APP_CLOSE_DEADLINE_EXCEEDED' | 'RESOURCE_RELEASE_FAILED' |
+        readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'signals' | 'logger';
+        readonly codes: readonly ('INSTALL_FAILED' | 'APP_CLOSE_FAILED' | 'APP_CLOSE_DEADLINE_EXCEEDED' | 'RESOURCE_RELEASE_FAILED' |
             'WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'PERSISTENCE_CLOSE_FAILED' |
-            'APP_UNMOUNT_FAILED' | 'APP_DELETE_FAILED' | 'BEFORE_CLOSE_FAILED' | 'BEFORE_CLOSE_SKIPPED' | 'DESKTOP_CLEANUP_FAILED' |
-            'MANAGER_CLEANUP_FAILED')[];
+            'APP_UNMOUNT_FAILED' | 'DESKTOP_CLEANUP_FAILED')[];
         readonly desktopId?: string; readonly appId?: string;
     }[];
     readonly failureCount: number;
     readonly samplesTruncated: boolean;
 }
-export interface AppManagerCloseReport extends CloseReport { readonly scope: 'app-manager' }
-export interface DesktopCloseReport extends CloseReport { readonly scope: 'desktop'; readonly intent: 'close' | 'delete'; readonly desktopId: string; readonly found: boolean }
-export interface RuntimeCloseReport extends CloseReport { readonly scope: 'runtime'; readonly intent: 'close' }
+export interface AppCloseReport extends CloseReport {
+    readonly scope: 'app';
+    readonly desktopId: string;
+    readonly appId: string;
+    readonly instanceId: string;
+    readonly worker: 'not-created' | 'owned' | 'retiring' | 'exited';
+    readonly closingInvocation?: NonNullable<InteractionStats['closingInvocation']>;
+}
+export interface DesktopCloseReport extends CloseReport { readonly scope: 'desktop'; readonly desktopId: string }
+export interface RuntimeCloseReport extends CloseReport { readonly scope: 'runtime' }
 export interface CloseHandle<R extends CloseReport> {
     readonly completion: Promise<R>;
     inspect(): R;
@@ -64,4 +60,4 @@ export interface CloseHandle<R extends CloseReport> {
 }
 export type DesktopCloseHandle = CloseHandle<DesktopCloseReport>;
 export type RuntimeCloseHandle = CloseHandle<RuntimeCloseReport>;
-export type AppManagerCloseHandle = CloseHandle<AppManagerCloseReport>;
+export type AppCloseHandle = CloseHandle<AppCloseReport>;

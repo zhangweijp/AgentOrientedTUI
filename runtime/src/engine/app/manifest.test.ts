@@ -27,7 +27,7 @@ async function app(fields: Record<string, unknown> = {}) {
 it('discovers the same immutable metadata from a directory or its generated entry without importing it', async () => {
     const { modulePath } = await app();
     const result = await readAppManifest(directory);
-    expect(result).toEqual({ metadata: { app_name: '3' + 'a'.repeat(50), description: 'Declared description' }, modulePath });
+    expect(result).toEqual({ metadata: { app_name: '3' + 'a'.repeat(50), description: 'Declared description' }, modulePath, persistenceSupport: null });
     expect(Object.isFrozen(result) && Object.isFrozen(result.metadata)).toBe(true);
     expect(await readAppManifest(modulePath)).toEqual(result);
     expect(await readAppManifest(pathToFileURL(modulePath).href)).toEqual(result);
@@ -71,16 +71,16 @@ it('requires explicit identity for a bare entry and never infers it from package
 it('admits two installations of the same manifest on one empty Desktop without starting either', async () => {
     const { modulePath } = await app();
     const runtime = createRuntime();
-    const desktop = runtime.getDesktop(await runtime.createDesktop());
+    const desktop = await runtime.createDesktop();
     try {
         await expect(desktop.registerPendingApp({ installationId: 'a', localPath: directory })).resolves.toBe('a');
         await expect(desktop.registerPendingApp({ installationId: 'b', localPath: modulePath })).resolves.toBe('b');
         await expect(desktop.registerPendingApp({ installationId: 'a', localPath: directory }))
             .rejects.toMatchObject({ code: 'APP_ALREADY_EXISTS' });
-        expect(desktop.getInstalledApps().map(item => [item.installationId, item.status, item.appId, item.description]))
+        expect(desktop.listApps().map(item => [item.installationId, item.status, item.appId, item.description]))
             .toEqual([['a', 'pending', undefined, 'Declared description'], ['b', 'pending', undefined, 'Declared description']]);
     } finally {
-        const report = await runtime.beginShutdown().completion;
+        const report = await runtime.beginClose().completion;
         expect(report).toMatchObject({ resourcesReleased: true, workers: { report: { total: 0 } } });
     }
 });

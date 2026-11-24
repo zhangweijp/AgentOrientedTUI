@@ -1,9 +1,8 @@
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
-import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
 import { AppWorkerHost } from './worker-host.js';
-import { WorkerSandbox } from './worker-sandbox.js';
 import { AppManager } from './manager.js';
 import { Desktop } from '../core/desktop.js';
 
@@ -28,15 +27,15 @@ it('rejects invalid Tool setting descriptors before allocation without running g
     const manager = new AppManager({ id: 'd', logSystem() {} } as any);
     for (const input of badOptions) {
         const merge = (base: object) => Object.defineProperties(Object.setPrototypeOf(base, Object.getPrototypeOf(input)), Object.getOwnPropertyDescriptors(input));
-        for (const run of [() => captureToolsEnabled(input), () => new WorkerSandbox(merge({ ...hostConfig }) as any),
+        for (const run of [() => captureToolsEnabled(input),
             () => new AppWorkerHost(merge({ ...hostConfig }) as any), () => manager.registerPendingApp(merge({ modulePath: '/unused' }) as any)]) {
             expect(run).toThrow(expect.objectContaining({ code: 'TOOLS_ENABLED_INVALID' }));
         }
     }
     expect(getters).toBe(0);
-    expect(manager.getInstalledApps()).toEqual([]);
+    expect(manager.listApps()).toEqual([]);
     expect(manager.registerPendingApp({ modulePath: '/unused', name: 'unused' })).toBe('app_0');
-    await manager.cleanupAsync();
+    manager.clearInactiveInstallations();
 });
 
 it('rejects unknown Host options before allocating a Worker or pending App', async () => {
@@ -53,9 +52,9 @@ it('rejects unknown Host options before allocating a Worker or pending App', asy
     });
     await expect(desktop.installDynamicWorkerApp('/unused', [] as never)).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
     expect(reads).toBe(0);
-    expect(desktop.getInstalledApps()).toEqual([]);
+    expect(desktop.listApps()).toEqual([]);
     expect(await desktop.registerPendingApp({ installationId: 'pending', localPath, toolsEnabled: false })).toBe('pending');
-    await desktop.dispose();
+    await desktop.beginClose().completion;
 });
 
 it('copies just the trusted projection limits and forwards the same frozen effective value', () => {
@@ -91,7 +90,7 @@ it('rejects out-of-range, unknown and accessor limits before an instance is rese
     await expect(desktop.registerPendingApp({ installationId: 'pending', localPath, projectionLimits: { maxViews: 0 } }))
         .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.projectionLimits.maxViews' } });
     expect(reads).toBe(0);
-    expect(desktop.getInstalledApps()).toEqual([]);
+    expect(desktop.listApps()).toEqual([]);
     expect(await desktop.registerPendingApp({ installationId: 'pending', localPath })).toBe('pending');
-    await desktop.dispose();
+    await desktop.beginClose().completion;
 });

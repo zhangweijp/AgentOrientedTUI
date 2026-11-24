@@ -12,6 +12,7 @@ function inFlightHost() {
     });
     const request = vi.spyOn(host as any, 'sendRequest').mockResolvedValue(undefined);
     (host as any).status = 'running';
+    (host as any).appLifecycleSupport = 'managed';
     return { host, worker, request };
 }
 
@@ -27,13 +28,13 @@ describe('Worker Host lifecycle and physical resource release', () => {
         await Promise.resolve();
         const closing = host.close();
         expect(host.getStatus()).toBe('closing');
-        expect(request.mock.calls.map(([message]) => message.type)).toEqual(['APP_OPEN']);
+        expect(request.mock.calls.map(([message]) => message.type)).toEqual(['APP_OPEN', 'APP_STOP']);
         finishLifecycle();
         await Promise.all([pending, closing]);
         expect(await pending).toMatchObject({ completed: false });
         expect(host.getStatus()).toBe('closed');
         expect(request.mock.calls.map(([message]) => message.type))
-            .toEqual(['APP_OPEN', 'APP_SHUTDOWN', 'APP_CLOSE']);
+            .toEqual(['APP_OPEN', 'APP_STOP', 'APP_CLOSE']);
     });
 
     it('a failed shutdown kills the Worker instead of leaving it stranded in closing', async () => {
@@ -41,7 +42,7 @@ describe('Worker Host lifecycle and physical resource release', () => {
         request.mockRejectedValueOnce(new Error('Worker shutdown IPC failed'));
         await expect(host.close()).rejects.toThrow(/Worker shutdown IPC failed/);
         expect(request.mock.calls.map(([message]) => message.type))
-            .toEqual(['APP_SHUTDOWN', 'APP_CLOSE']);
+            .toEqual(['APP_STOP', 'APP_CLOSE']);
         expect(worker.terminate).toHaveBeenCalledTimes(1);
         expect(host.getStatus()).toBe('closed');
     });
@@ -54,19 +55,19 @@ describe('Worker Host lifecycle and physical resource release', () => {
         expect(host.getStatus()).toBe('closing');
         await Promise.all([first, second]);
         expect(request.mock.calls.map(([message]) => message.type))
-            .toEqual(['APP_SHUTDOWN', 'APP_CLOSE']);
+            .toEqual(['APP_STOP', 'APP_CLOSE']);
         expect(host.getStatus()).toBe('closed');
         await host.close();
         expect(request).toHaveBeenCalledTimes(2);
     });
 
-    it('reinitialize cannot send IPC after close starts', async () => {
+    it('open cannot send IPC after close starts', async () => {
         const { host, request } = inFlightHost();
         const closing = host.close();
-        await expect(host.reinitialize('concurrent maintenance')).rejects.toThrow(/shutdown is pending/);
+        await expect(host.open()).rejects.toThrow(/shutdown is pending/);
         await closing;
         expect(request.mock.calls.map(([message]) => message.type))
-            .toEqual(['APP_SHUTDOWN', 'APP_CLOSE']);
+            .toEqual(['APP_STOP', 'APP_CLOSE']);
     });
 
     it('close joins the physical exit even after all lifecycle responses', async () => {
@@ -78,7 +79,7 @@ describe('Worker Host lifecycle and physical resource release', () => {
         await terminating;
         expect(host.close()).toBe(closing);
         expect(host.getResourceReport()).toMatchObject({ worker: 'retiring', resourcesReleased: false });
-        expect(request.mock.calls.map(([message]) => message.type)).toEqual(['APP_SHUTDOWN', 'APP_CLOSE']);
+        expect(request.mock.calls.map(([message]) => message.type)).toEqual(['APP_STOP', 'APP_CLOSE']);
         worker.emit('exit', 0);
         await closing;
         expect(await host.waitForResourceRelease()).toMatchObject({ worker: 'exited', resourcesReleased: true });

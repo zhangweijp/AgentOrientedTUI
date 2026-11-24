@@ -1,39 +1,46 @@
-import type { ToolParameterContract } from '@aotui/core';
-import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ENVELOPE_LIMITS, TOOL_REQUEST_LIMITS } from '@aotui/core/internal';
-import { reconstructToolParameters } from '@aotui/core/internal';
-import { captureInvocationJson, captureToolInvocationTerminal,
-  exact, invocationReceiver, invocationObject, invocationToolDescriptor, text } from './worker-message-capture.js';
+import { checkWireJson, copyWireJson, isToolResultData } from '@aotui/core';
+import { TOOL_REQUEST_LIMITS } from '@aotui/core/producer';
+import { WORKER_MESSAGE_LIMITS, exact, invocationReceiver, invocationObject, text } from './worker-message-capture.js';
 import type { ViewToolInvokeMessage, ViewToolInvokeResponse } from '../spi/worker-protocol/messages.js';
 
+/** The transport already detached this message. Validate and freeze that received copy. */
 export function captureToolInvocation(input: unknown): ViewToolInvokeMessage {
-  const value = captureInvocationJson(input, TOOL_REQUEST_LIMITS);
-  if (!invocationObject(value) || !exact(value, ['type', 'requestId', 'appId', 'instanceId', 'snapshotId', 'tool',
-      'observationId', 'receiver', 'rawArgs', 'refSources']) || value.type !== 'VIEW_TOOL_INVOKE' ||
-      !['requestId', 'appId', 'instanceId', 'snapshotId', 'observationId'].every(k => text(value[k])) ||
-      !invocationToolDescriptor(value.tool) || !invocationReceiver(value.receiver) ||
-      !invocationObject(value.rawArgs) || !Array.isArray(value.refSources)) throw new Error('Invalid Tool invocation');
-  captureInvocationJson(value.rawArgs, RAW_TOOL_ARGUMENT_LIMITS);
-  captureInvocationJson({ source: { appId: value.appId, instanceId: value.instanceId, snapshotId: value.snapshotId,
-    toolId: (value.tool as { id: string }).id, receiver: value.receiver }, refSources: value.refSources }, RESOLVED_TOOL_ENVELOPE_LIMITS);
-  return value as unknown as ViewToolInvokeMessage;
+    checkWireJson(input, TOOL_REQUEST_LIMITS, true);
+    if (!invocationObject(input) || !exact(input, ['type', 'requestId', 'appId', 'instanceId', 'tool',
+        'receiver', 'effectiveArgs', 'localRefs']) || input.type !== 'VIEW_TOOL_INVOKE' ||
+        !['requestId', 'appId', 'instanceId'].every(key => text(input[key])) ||
+        !invocationObject(input.tool) || !exact(input.tool, ['id', 'name', 'viewType']) ||
+        !['id', 'name', 'viewType'].every(key => text((input.tool as Record<string, unknown>)[key])) ||
+        !invocationReceiver(input.receiver) || !invocationObject(input.effectiveArgs) || !Array.isArray(input.localRefs))
+        throw new Error('Invalid Tool invocation');
+    const args = input.effectiveArgs;
+    const slots = new Set<string>();
+    for (const ref of input.localRefs) {
+        if (!invocationObject(ref) || !exact(ref, ['param', 'refId', 'viewId', 'viewInstanceId', ...(ref.index === undefined ? [] : ['index'])]) ||
+            typeof ref.param !== 'string' || !text(ref.refId) || !text(ref.viewId) || !text(ref.viewInstanceId) || !Object.hasOwn(args, ref.param))
+            throw new Error('Invalid local Ref source');
+        if (ref.index !== undefined) {
+            const items = args[ref.param];
+            if (typeof ref.index !== 'number' || !Number.isSafeInteger(ref.index) || !Array.isArray(items) || !Object.hasOwn(items, ref.index))
+                throw new Error('Invalid local Ref argument slot');
+        }
+        const slot = JSON.stringify([ref.param, ref.index]);
+        if (slots.has(slot)) throw new Error('Duplicate local Ref argument slot');
+        slots.add(slot);
+    }
+    return input as unknown as ViewToolInvokeMessage;
 }
 
-/** Captured request after full binding verification, using that registration's compiled contract. */
-export function validateInvocationParameters(message: ViewToolInvokeMessage, contract: ToolParameterContract | undefined | null) {
-  if (!contract) return { status: 'rejected' as const, issue: { code: 'REF_CONTRACT_UNSUPPORTED', path: '$',
-    message: 'Tool has no registered parameter contract' } };
-  return reconstructToolParameters(contract, message.rawArgs, message, message.refSources);
-}
 export function toolInvocationResponse(input: unknown, terminal: ViewToolInvokeResponse['terminal']): ViewToolInvokeResponse | null {
-  try {
     if (!invocationObject(input)) return null;
-    const header: Record<string, string> = {};
-    for (const key of ['requestId', 'appId', 'instanceId']) {
-      const field = Object.getOwnPropertyDescriptor(input, key);
-      if (!field || !('value' in field) || !text(field.value)) return null;
-      header[key] = field.value;
-    }
-    const response = captureInvocationJson({ ...header, type: 'VIEW_TOOL_INVOKE_RESPONSE', success: true, terminal });
-    return captureToolInvocationTerminal(response, header as { requestId: string; appId: string; instanceId: string }) ? response as unknown as ViewToolInvokeResponse : null;
-  } catch { return null; }
+    const { requestId, appId, instanceId } = input;
+    if (!text(requestId) || !text(appId) || !text(instanceId)) return null;
+    try {
+        const response = copyWireJson({ requestId, appId, instanceId, type: 'VIEW_TOOL_INVOKE_RESPONSE', success: true, terminal },
+            WORKER_MESSAGE_LIMITS) as unknown as ViewToolInvokeResponse;
+        const owned = response.terminal;
+        if (owned.phase === 'finished-unknown') return Object.keys(owned).length === 1 ? response : null;
+        return Object.keys(owned).length === 2 && isToolResultData(owned.result) &&
+            (owned.phase === 'entered-returned' || owned.phase === 'not-entered' && owned.result.success === false) ? response : null;
+    } catch { return null; }
 }

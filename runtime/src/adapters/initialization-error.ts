@@ -1,4 +1,5 @@
-import { captureInvocationJson, exact, invocationObject } from './worker-message-capture.js';
+import { copyWireJson } from '@aotui/core';
+import { exact, invocationObject } from './worker-message-capture.js';
 import type { WorkerError, WorkerInitializationDiagnostic } from '../spi/worker-protocol/messages.js';
 
 type Phase = WorkerInitializationDiagnostic['phase'];
@@ -37,7 +38,7 @@ export function initializationFailure(phase: Phase, thrown: unknown): WorkerErro
 export function initializationError(input: unknown, appId: string, phase: Phase): Error & { readonly code: string } {
     let failure: WorkerError | undefined;
     try {
-        const value = captureInvocationJson(input, { maxDepth: 2, maxNodes: 16,
+        const value = copyWireJson(input, { maxDepth: 2, maxNodes: 16,
             maxApproxBytes: 64 * 1024, maxCanonicalBytes: 64 * 1024 });
         if (invocationObject(value) && exact(value, ['code', 'message', ...(Object.hasOwn(value, 'diagnostic') ? ['diagnostic'] : [])]) &&
             typeof value.code === 'string' && value.code.length > 0 && value.code.length <= 128 &&

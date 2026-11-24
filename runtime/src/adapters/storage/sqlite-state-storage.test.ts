@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { StateStorage } from '@aotui/core';
-import { decodeStateRecord } from '@aotui/core/internal';
+import { decodeStateRecord } from '@aotui/core/persistence';
 import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { DEFAULT_NODE_STATE_LIMITS } from '../../engine/app/state-storage-host.js';
 import { DEFAULT_STATE_SESSION_LIMITS } from './state-storage-protocol.js';

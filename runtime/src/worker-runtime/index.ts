@@ -1,13 +1,13 @@
-import { APP_LIFECYCLE_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '@aotui/core';
-import { APP_LIFECYCLE_VERSION } from '../spi/runtime/app-lifecycle.interface.js';
-import { STATE_SESSION_VERSION } from '../adapters/storage/state-storage-protocol.js';
+import {
+    AOTUIError, APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL,
+    captureAppMetadata, normalizeProjectionLimits, readAppFactory,
+} from '@aotui/core';
 import { WORKER_PROTOCOL } from '../spi/worker-protocol/types.js';
 import { initializationFailure } from '../adapters/initialization-error.js';
 import { captureAppLifecycleAck } from '../adapters/app-lifecycle-protocol.js';
-import { hasViewTypeToolAuthoringProtocol } from '@aotui/core';
-import { createStateStorageProxy } from './state-storage-proxy.js';
-import { createAppStatePersistence } from './state-persistence.js';
-import { capturePersistenceOffer, STATE_SESSION_PROTOCOL } from '../adapters/storage/state-storage-protocol.js';
+import type { StatePersistenceAck } from '../adapters/storage/state-storage-protocol.js';
+import type { createStateStorageProxy } from './state-storage-proxy.js';
+import type { createAppStatePersistence } from './state-persistence.js';
 import { parentPort } from 'node:worker_threads';
 
 import type {
@@ -18,14 +18,11 @@ import type {
     WorkerInitializationDiagnostic,
     RequestID,
     AppID,
+    AppEventMessage,
 } from '../spi/worker-protocol/index.js';
 
-import type { SignalPolicy } from '@aotui/core';
 import { createAppId } from '../spi/core/id-factory.js';
-import { isTUIAppFactory } from '@aotui/core';
-import { AOTUIError } from '@aotui/core';
-import { captureSnapshotDraftEnvelope, captureSnapshotPrepareIssue, hasUnsupportedPersistence, type SnapshotDraftEnvelope } from '@aotui/core/internal';
-import { normalizeProjectionLimits } from '@aotui/core/internal';
+import { captureSnapshotDraftEnvelope, captureSnapshotPrepareIssue, type SnapshotDraftEnvelope } from '@aotui/core/producer';
 
 import { AppKernel } from './app-kernel/AppKernel.js';
 import { invokeViewTool } from './tool-invocation.js';
@@ -38,7 +35,6 @@ type WorkerApp = Readonly<{
     instanceId: string;
     toolsEnabled: boolean;
     generation: number;
-    signalPolicy: SignalPolicy;
     persistence?: PersistenceRecord;
 }>;
 let app: WorkerApp | undefined;
@@ -49,25 +45,25 @@ const persistenceCloseFailure = { code: 'PERSISTENCE_CLOSE_FAILED', message: 'Ma
 const appUnmountFailure = { code: 'APP_UNMOUNT_FAILED', message: 'App cleanup did not complete successfully' };
 
 async function closeApplication(kernel: AppKernel, record: PersistenceRecord | undefined): Promise<WorkerError | undefined> {
-    kernel.beginShutdown();
+    const closing = kernel.onClose();
     if (record) {
-        const result = await record.session.close(() => kernel.onClose());
+        const result = await record.session.close(() => closing);
         if (result.unmount === 'failed') return appUnmountFailure;
         return result.ok ? undefined : persistenceCloseFailure;
     }
-    try { await kernel.onClose(); }
+    try { await closing; }
     catch { return appUnmountFailure; }
 }
 
 let projectionUnsubscribe: (() => void) | undefined;
-let publicationTimer: ReturnType<typeof setTimeout> | null = null;
-const PUBLICATION_THROTTLE_MS = 16;
+let updateTimer: ReturnType<typeof setTimeout> | undefined;
 
 // ============================================================================
 // IPC 消息处理
 // ============================================================================
 
 parentPort?.on('message', async (msg: MainToWorkerMessage) => {
+    if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'STATE_STORAGE_RESPONSE') { app?.persistence?.proxy.receive(msg);return; }
     if (msg.type === 'FLUSH_PROJECTION') {
         const current = app;
@@ -88,16 +84,11 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 appId: current.appId, instanceId: current.instanceId,
                 toolsEnabled: current.toolsEnabled && current.generation === lifecycleGeneration,
                 validateBinding: (tool, receiver) => kernel.validateBoundTypeTool(tool, receiver),
-                getParameterContract: (tool, receiver) => kernel.getBoundTypeToolContract(tool, receiver),
                 isRefViewLive: (id, instanceId) => kernel.isRefViewLive(id, instanceId),
                 refScope: (id, instanceId, refId) => kernel.refScope(id, instanceId, refId),
                 invokeBinding: (tool, receiver, args) => kernel.invokeBoundTypeTool(tool, receiver, args),
             } : undefined);
-            if (response) {
-                // Projection is a separate fact. It cannot erase a trusted business terminal.
-                try { if (publicationTimer) flushInteractionProjection(); }
-                finally { parentPort?.postMessage(response); }
-            }
+            if (response) parentPort?.postMessage(response);
         } catch { /* No trusted terminal: Host records unknown. */ }
         return;
     }
@@ -111,20 +102,15 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
         } else {
             try { terminal = await current.kernel.closeView(msg.viewId, msg.viewInstanceId); }
             catch { terminal = { phase: 'finished-unknown' }; }
-            try {
-                await current.kernel.whenProjectionCommitted();
-                if (app === current) flushInteractionProjection();
-            } catch { /* The close result and the accepted projection are separate. */ }
         }
         const response = toolInvocationResponse(msg, terminal) ?? toolInvocationResponse(msg, { phase: 'finished-unknown' });
         if (response) parentPort?.postMessage(response);
         return;
     }
-    if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(msg.type)) lifecycleGeneration++;
+    if (msg.type === 'APP_STOP' || msg.type === 'APP_CLOSE') lifecycleGeneration++;
     // STOP revokes business admission while allowing an already-started render
     // to commit its sole resource owner. Final close joins that initialization.
     if (msg.type === 'APP_STOP') app?.kernel.stopApplication();
-    if (msg.type === 'APP_SHUTDOWN' || msg.type === 'APP_CLOSE') app?.kernel.beginShutdown();
     try {
         switch (msg.type) {
             case 'INIT':
@@ -136,17 +122,8 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
             case 'APP_STOP':
                 sendLifecycleResponse(msg.requestId);
                 break;
-            case 'APP_SHUTDOWN':
-                sendLifecycleResponse(msg.requestId);
-                break;
-            case 'APP_REINITIALIZE':
-                await handleAppReinitialize(msg.requestId, msg.reason);
-                break;
             case 'APP_CLOSE':
                 await handleAppClose(msg.requestId);
-                break;
-            case 'APP_DELETE':
-                await handleAppDelete(msg.requestId);
                 break;
         }
     } catch (error) {
@@ -172,15 +149,13 @@ async function handleInit(msg: InitMessage): Promise<void> {
             sendError(msg.requestId, 'APP_INSTANCE_MISMATCH', 'App, Desktop and execution identities are required'); return;
         }
     }
-    const protocol = Object.getOwnPropertyDescriptor(msg, 'protocol');
-    if (!protocol?.enumerable || protocol.value !== WORKER_PROTOCOL) {
+    if (msg.protocol !== WORKER_PROTOCOL) {
         sendError(msg.requestId, 'WORKER_PROTOCOL_UNSUPPORTED', 'Worker requires ' + WORKER_PROTOCOL); return;
     }
-    const tools = Object.getOwnPropertyDescriptor(msg, 'toolsEnabled');
-    if (!tools?.enumerable || typeof tools.value !== 'boolean') {
+    const { toolsEnabled } = msg;
+    if (typeof toolsEnabled !== 'boolean') {
         sendError(msg.requestId, 'APP_INIT_INVALID', 'INIT.toolsEnabled must be a boolean'); return;
     }
-    const toolsEnabled: boolean = tools.value;
     if (msg.config && Object.hasOwn(msg.config, 'AOTUI_APP_NAME')) {
         sendError(msg.requestId, 'APP_CONFIG_UNSUPPORTED', 'Use AOTUI_APP_KEY for the Host-owned state namespace; App identity comes from the generated manifest');return;
     }
@@ -188,79 +163,84 @@ async function handleInit(msg: InitMessage): Promise<void> {
     const launchConfig = msg.config;
     let persistence: PersistenceRecord | undefined;
     try {
-        const limitsField = Object.getOwnPropertyDescriptor(msg, 'projectionLimits');
-        const projectionLimits = normalizeProjectionLimits(limitsField?.enumerable ? limitsField.value : undefined,
-            'INIT.projectionLimits', true);
+        const projectionLimits = normalizeProjectionLimits(msg.projectionLimits, 'INIT.projectionLimits', true);
         const appModule = await import(msg.appModulePath);
         if (generation !== lifecycleGeneration) {
             sendError(msg.requestId, 'E_INIT_INVALIDATED', 'App initialization was invalidated');
             return;
         }
 
-        const factory: unknown = appModule.default;
-        if (hasUnsupportedPersistence(factory)) {
-            sendError(msg.requestId, 'PERSISTENCE_UNAVAILABLE', 'This Runtime requires ' + STATE_SESSION_PROTOCOL);
+        const factory = readAppFactory(appModule.default);
+        if (factory === 'PERSISTENCE_UNAVAILABLE') {
+            sendError(msg.requestId, factory, 'This Runtime requires ' + STATE_SESSION_PROTOCOL);
             return;
         }
-        if (!isTUIAppFactory(factory)) {
-            throw new AOTUIError('APP_INVALID_EXPORT', { modulePath: msg.appModulePath });
+        if (factory === 'APP_INVALID_EXPORT') {
+            throw new AOTUIError(factory, { modulePath: msg.appModulePath });
         }
-        if (!hasViewTypeToolAuthoringProtocol(factory)) {
-            sendError(msg.requestId, 'APP_AUTHORING_PROTOCOL_UNSUPPORTED',
+        if (factory === 'APP_AUTHORING_PROTOCOL_UNSUPPORTED') {
+            sendError(msg.requestId, factory,
                 'This Runtime requires a TUIAppFactory using ' + VIEW_TYPE_TOOL_PROTOCOL);
             return;
         }
-        const kernelConfig = factory.kernelConfig;
-        const metadata = captureAppMetadata({ app_name: kernelConfig.appName });
+        const metadata = captureAppMetadata({ app_name: factory.app_name });
         if (msg.appName !== undefined && msg.appName !== metadata.app_name) {
             const error = new AOTUIError('APP_IDENTITY_MISMATCH', { expected: metadata.app_name, actual: msg.appName, path: 'INIT.appName' });
             sendError(msg.requestId, error.code, error.message);
             return;
         }
-        const lifecycleOffer = Object.getOwnPropertyDescriptor(msg, 'appLifecycle');
-        if (!lifecycleOffer || !('value' in lifecycleOffer) || !captureAppLifecycleAck(lifecycleOffer.value, msg.appInstanceId))
+        if (!captureAppLifecycleAck(msg.appLifecycle, msg.appInstanceId))
             throw new Error('APP_LIFECYCLE_UNSUPPORTED');
 
-        let offer: ReturnType<typeof capturePersistenceOffer> = null;
-        let appKey = String(msg.appId);
-        if (Object.getOwnPropertyDescriptor(factory, 'persistenceSupport')?.value === STATE_SESSION_PROTOCOL) {
-            const field = Object.getOwnPropertyDescriptor(msg, 'persistence');
-            offer = field?.enumerable && 'value' in field ? capturePersistenceOffer(field.value, msg.appInstanceId) : null;
-            if (!offer) {
-                sendError(msg.requestId, 'PERSISTENCE_UNAVAILABLE', 'App requires a valid ' + STATE_SESSION_PROTOCOL + ' persistence offer in INIT');
-                return;
-            }
+        const persistenceSupport = factory.persistenceSupport ?? null;
+        if (msg.manifestPersistence !== undefined && msg.manifestPersistence !== persistenceSupport) {
+            sendError(msg.requestId, 'PERSISTENCE_UNAVAILABLE',
+                `aoapp.json persistenceSupport is ${msg.manifestPersistence ?? 'absent'}, but the App declares ${persistenceSupport ?? 'no persistence'}. Generate the manifest from the App's package.json.`);
+            return;
+        }
+        let storageRequest: StatePersistenceAck | undefined;
+        if (persistenceSupport === STATE_SESSION_PROTOCOL) {
             const configured = launchConfig?.AOTUI_APP_KEY;
             if (configured !== undefined && (typeof configured !== 'string' || !configured.length)) {
                 sendError(msg.requestId, 'APP_STATE_KEY_INVALID', 'AOTUI_APP_KEY must be a non-empty string when provided');
                 return;
             }
-            appKey = configured ?? appKey;
-        }
-
-        if (offer) {
-            const proxy = createStateStorageProxy(offer.instanceId, offer.transport, request => {
+            const timeoutMs = msg.timeoutMs;
+            if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000) {
+                sendError(msg.requestId, 'PERSISTENCE_UNAVAILABLE', 'INIT.timeoutMs must be between 1 and 300000.');
+                return;
+            }
+            const { createStateStorageProxy } = await import('./state-storage-proxy.js');
+            const { createAppStatePersistence } = await import('./state-persistence.js');
+            const { DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_VERSION } = await import('../adapters/storage/state-storage-protocol.js');
+            if (generation !== lifecycleGeneration) {
+                sendError(msg.requestId, 'E_INIT_INVALIDATED', 'App initialization was invalidated');
+                return;
+            }
+            const proxy = createStateStorageProxy(msg.appInstanceId, { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs }, request => {
                 if (!parentPort) return false;
                 parentPort.postMessage(request);
             });
             try {
-                const session = createAppStatePersistence({ instanceId: offer.instanceId, desktopId: msg.desktopId,
-                    appKey, storage: proxy.storage, limits: offer.limits });
+                const session = createAppStatePersistence({ instanceId: msg.appInstanceId, desktopId: msg.desktopId,
+                    appKey: configured ?? String(msg.appId), storage: proxy.storage });
                 persistence = { proxy, session };
+                storageRequest = { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: msg.appInstanceId };
             } catch (error) {
                 proxy.disconnect();
                 throw error;
             }
         }
-        const kernel = new AppKernel({ ...kernelConfig, appName: metadata.app_name, factory, launchConfig,
+        const kernel = new AppKernel({ factory, launchConfig,
             appId: msg.appId, desktopId: msg.desktopId, instanceId: msg.appInstanceId, projectionLimits,
+            requestAttention: () => emitAppEvent('attention_requested'),
             ...(persistence ? { persistence: persistence.session.port } : {}),
         });
         app = { kernel, appId: msg.appId, instanceId: msg.appInstanceId, toolsEnabled, generation,
-            signalPolicy: kernelConfig.signalPolicy ?? 'auto', ...(persistence ? { persistence } : {}) };
+            ...(persistence ? { persistence } : {}) };
         parentPort?.postMessage({ type: 'INIT_RESPONSE', requestId: msg.requestId, success: true,
-            appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: msg.appInstanceId },
-            ...(offer ? { persistence: { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: offer.instanceId } } : {}),
+            appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, instanceId: msg.appInstanceId },
+            ...(storageRequest ? { persistence: storageRequest } : {}),
             protocol: WORKER_PROTOCOL, toolsEnabled,
             appInstanceId: msg.appInstanceId,
             projectionLimits,
@@ -296,7 +276,25 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
     }
 
     projectionUnsubscribe?.();
-    projectionUnsubscribe = kernel.getProjectionCoordinator().subscribe(schedulePublication);
+    const projection = kernel.getProjectionCoordinator();
+    let fault = projection.failure, epoch = projection.token().epoch;
+    projectionUnsubscribe = projection.subscribe(current => {
+        if (generation !== lifecycleGeneration) return;
+        const nextFault = projection.failure;
+        if (nextFault !== fault) {
+            clearTimeout(updateTimer);
+            updateTimer = undefined;
+            if (nextFault) pushSemanticSnapshot();
+            else emitAppEvent('projection_recovered');
+        } else if (!nextFault && current.epoch !== epoch && !updateTimer) {
+            updateTimer = setTimeout(() => {
+                updateTimer = undefined;
+                emitAppEvent('view_updated');
+            }, 16);
+        }
+        fault = nextFault;
+        epoch = current.epoch;
+    });
     pushSemanticSnapshot();
 
     sendLifecycleResponse(requestId);
@@ -305,10 +303,8 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
 async function handleAppClose(requestId: RequestID): Promise<void> {
     projectionUnsubscribe?.();
     projectionUnsubscribe = undefined;
-    if (publicationTimer) {
-        clearTimeout(publicationTimer);
-        publicationTimer = null;
-    }
+    clearTimeout(updateTimer);
+    updateTimer = undefined;
     const closingApp = app;
     if (!closingApp) { sendError(requestId, 'E_NOT_INITIALIZED', 'App not initialized');return; }
     const { kernel, persistence } = closingApp;
@@ -316,39 +312,17 @@ async function handleAppClose(requestId: RequestID): Promise<void> {
     sendLifecycleResponse(requestId, failure, persistence, kernel);
 }
 
-async function handleAppReinitialize(requestId: RequestID, _reason?: string): Promise<void> {
-    await app?.kernel.onReinitialize(_reason);
-    sendLifecycleResponse(requestId);
-}
-
-async function handleAppDelete(requestId: RequestID): Promise<void> {
-    try { await app?.kernel.onDelete(); }
-    catch {
-        parentPort?.postMessage({ type: 'LIFECYCLE_RESPONSE', requestId, success: false,
-            error: { code: 'APP_DELETE_FAILED', message: 'APP_DELETE_FAILED' } } as WorkerToMainMessage);
-        return;
-    }
-    sendLifecycleResponse(requestId);
-}
-
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
-function schedulePublication(): void {
-    if (publicationTimer) return;
-    publicationTimer = setTimeout(() => {
-        publicationTimer = null;
-        pushSemanticSnapshot();
-    }, PUBLICATION_THROTTLE_MS);
+function emitAppEvent(reason: AppEventMessage['reason']): void {
+    if (app?.generation === lifecycleGeneration)
+        parentPort?.postMessage({ type: 'APP_EVENT', appId: app.appId, instanceId: app.instanceId, reason } satisfies AppEventMessage);
 }
 
-function flushInteractionProjection(requestId?: RequestID, known?: SnapshotDraftEnvelope): void {
-    if (publicationTimer) {
-        clearTimeout(publicationTimer);
-        publicationTimer = null;
-    }
-    if (requestId && known && app?.kernel.getProjectionCoordinator().confirmsPublication(known)) {
+function flushInteractionProjection(requestId: RequestID, known?: SnapshotDraftEnvelope): void {
+    if (known && app?.kernel.getProjectionCoordinator().confirmsPublication(known)) {
         parentPort?.postMessage({ type: 'PROJECTION_CURRENT', requestId, ...known } satisfies WorkerToMainMessage);
     } else pushSemanticSnapshot(requestId);
 }
@@ -358,7 +332,7 @@ function pushSemanticSnapshot(requestId?: RequestID): void {
     const projection = app.kernel.getProjectionCoordinator();
     if (!projection.token().ready) return;
     const publication = projection.nextPublication();
-    const delivery = { ...(requestId ? { requestId } : {}), suppressSignal: app.signalPolicy === 'never' };
+    const delivery = requestId ? { requestId } : {};
     if ('draft' in publication) {
         parentPort.postMessage({ type: 'SNAPSHOT_PREPARED', draft: publication.draft, ...delivery } satisfies WorkerToMainMessage);
         return;

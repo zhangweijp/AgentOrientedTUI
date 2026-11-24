@@ -1,7 +1,6 @@
 import type { AppLifecycleAck } from '../../adapters/app-lifecycle-protocol.js';
 import type { AppCleanupReport } from '../runtime/app-lifecycle.interface.js';
-import type { StatePersistenceOffer, StatePersistenceAck, StateStorageRequest, StateStorageResponse } from '../../adapters/storage/state-storage-protocol.js';
-import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
+import type { StatePersistenceAck, StateStorageRequest, StateStorageResponse, ManagedPersistenceReport } from '../../adapters/storage/state-storage-protocol.js';
 /**
  * Worker Protocol - Message Definitions
  * 
@@ -19,14 +18,14 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  * 2. 请求消息都有 `requestId` 用于匹配响应
  * 3. Worker 可以主动推送 Semantic Snapshot 发布结果
  * 
- * @module @aotui/runtime/spi/worker-protocol
  */
 
 import type { WORKER_PROTOCOL, RequestID, AppID, DesktopID } from './types.js';
-import type { AppLaunchConfig } from '@aotui/core';
-import type { JsonValue, ViewToolReceiver, SnapshotDraftEnvelope, SnapshotPrepareIssue, ToolInvocationDescriptor } from '@aotui/core/internal';
+import type { AppLaunchConfig, STATE_SESSION_PROTOCOL } from '@aotui/core';
+import type { JsonValue, ViewToolReceiver } from '@aotui/core';
+import type { SnapshotDraftEnvelope, SnapshotPrepareIssue } from '@aotui/core/producer';
 import type { ProjectionLimits } from '@aotui/core';
-import type { SnapshotValueRefSource } from '@aotui/core';
+import type { UpdateSignal } from '../core/signals.js';
 
 // ============================================================================
 // Main → Worker Messages
@@ -38,7 +37,9 @@ import type { SnapshotValueRefSource } from '@aotui/core';
  */
 export interface InitMessage {
     type: 'INIT';
-    persistence?: StatePersistenceOffer;
+    /** Absent for a bare module. Null means its manifest does not request storage. */
+    manifestPersistence?: typeof STATE_SESSION_PROTOCOL | null;
+    timeoutMs: number;
     appLifecycle: AppLifecycleAck;
     projectionLimits: ProjectionLimits;
     requestId: RequestID;
@@ -60,21 +61,20 @@ export interface InitMessage {
  * App 生命周期消息
  */
 export interface AppLifecycleMessage {
-    type: 'APP_STOP' | 'APP_OPEN' | 'APP_CLOSE' | 'APP_DELETE' | 'APP_SHUTDOWN' | 'APP_REINITIALIZE';
+    type: 'APP_STOP' | 'APP_OPEN' | 'APP_CLOSE';
     requestId: RequestID;
-    reason?: string;
 }
 
-import type { ViewToolInvocationTerminal } from '@aotui/core';
+import type { LocalRefUse, ToolRoute, ViewToolInvocationTerminal } from '@aotui/core';
 export type { ViewToolInvocationTerminal } from '@aotui/core';
 
 /** The qualified receiver and Ref provenance are distinct from business parameters. */
 export type ViewToolInvokeMessage = Readonly<{
-    type: 'VIEW_TOOL_INVOKE'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string; observationId: string;
-    tool: ToolInvocationDescriptor;
+    type: 'VIEW_TOOL_INVOKE'; requestId: RequestID; appId: AppID; instanceId: string;
+    tool: ToolRoute;
     receiver: ViewToolReceiver;
-    rawArgs: Readonly<Record<string, JsonValue>>;
-    refSources: readonly SnapshotValueRefSource[];
+    effectiveArgs: Readonly<Record<string, JsonValue>>;
+    localRefs: readonly LocalRefUse[];
 }>;
 export type ViewCloseMessage = Readonly<{
     type: 'VIEW_CLOSE'; requestId: RequestID; appId: AppID; instanceId: string;
@@ -131,6 +131,7 @@ export interface ResponseBase {
  */
 export interface InitResponse extends ResponseBase {
     type: 'INIT_RESPONSE';
+    /** Sent only after the App requests managed persistence. */
     persistence?: StatePersistenceAck;
     appLifecycle: AppLifecycleAck;
     projectionLimits: ProjectionLimits;
@@ -167,7 +168,6 @@ export interface SnapshotPreparedPush {
     type: 'SNAPSHOT_PREPARED';
     requestId?: RequestID;
     draft: unknown;
-    suppressSignal: boolean;
 }
 
 /** Worker could not prepare or transport a Semantic Draft. */
@@ -179,8 +179,10 @@ export interface SnapshotPrepareFailedPush {
     producerSeq: number;
     sourceEpoch: number;
     error: SnapshotPrepareIssue;
-    suppressSignal: boolean;
 }
+
+export type AppEventMessage = Readonly<{ type: 'APP_EVENT'; appId: AppID; instanceId: string;
+    reason: Extract<UpdateSignal['reason'], 'view_updated' | 'projection_recovered' | 'attention_requested'> }>;
 
 export type ProjectionCurrentMessage = SnapshotDraftEnvelope & Readonly<{ type: 'PROJECTION_CURRENT'; requestId: RequestID }>;
 
@@ -195,4 +197,5 @@ export type WorkerToMainMessage =
     | ErrorResponse
     | SnapshotPreparedPush
     | SnapshotPrepareFailedPush
-    | ProjectionCurrentMessage;
+    | ProjectionCurrentMessage
+    | AppEventMessage;

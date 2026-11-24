@@ -47,7 +47,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
 
                 const inputSchema = Type.Object({}, { additionalProperties: false });
                 const execute = async () => ({ success: true, data: { file: 'App.tsx' } });
-                const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'FileDetail', tools: {
+                const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
                     inspect: { description: 'Read the current file metadata', inputSchema, execute },
                     late_inspect: {
                         description: 'Read after enabling', inputSchema, execute,
@@ -124,6 +124,9 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
             const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
             expect(trace).toMatchObject({ viewType: 'FileDetail', submitted: false });
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
+            const opened = host.getAppInteraction();
+            if (opened.status !== 'ready') throw Error(opened.issue.code);
+            expect((await opened.interaction.preview()).status).toBe('previewed');
             await vi.waitFor(() => {
                 expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastToolCount: 2 });
             });
@@ -131,7 +134,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
             expect(report.lastIssueCode).toBeUndefined();
             const lookup = (host as any).snapshotReceiver.core.store.getById(report.snapshotId);
             expect(lookup).toMatchObject({ status:'found', snapshot:{
-                schemaVersion:7, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
+                schemaVersion:8, views:[{id:'fd_0_1', content:{value: expect.stringContaining('Stable FileDetail')}}],
             }});
             if (lookup.status === 'found') {
                 expect(lookup.snapshot.revision).toBe(2);

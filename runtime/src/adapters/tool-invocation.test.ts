@@ -1,77 +1,52 @@
-import { validateCapturedTypeParameters as validateInvocationParameters } from '../../tests/fixtures/type-parameters.js';
-import { describe, it, expect } from 'vitest';
-import { compileToolParameters } from '@aotui/core';
-import { RAW_TOOL_ARGUMENT_LIMITS, TOOL_REQUEST_LIMITS } from '@aotui/core/internal';
+import { expect, it } from 'vitest';
+import { TOOL_REQUEST_LIMITS } from '@aotui/core/producer';
+import { checkWireJson, utf8Size } from '@aotui/core';
 import { captureToolInvocation, toolInvocationResponse } from './tool-invocation.js';
 import { captureToolInvocationTerminal } from './worker-message-capture.js';
-const header = { requestId: 'r', appId: 'a', instanceId: 'i' };
-const fixture = () => {
-  const c = compileToolParameters({ type: 'object', properties: { q: { type: 'string', maxLength: 1 } }, required: ['q'], additionalProperties: false });
-  if (!c.ok) throw Error('Fixture');
-  const receiver = { viewId: 'v', viewInstanceId: 'mount', activationId: 'activation' };
-  return { ...header, type: 'VIEW_TOOL_INVOKE', snapshotId: 's', observationId: 'obs', rawArgs: { q: '😀' }, refSources: [], receiver,
-    tool: { multiplicity: 'multiple', id: 'tool', name: 'find', viewType: 'File', description: 'Find',
-      inputSchema: c.contract.schema } };
-};
-describe('Worker invocation message grammar', () => {
-  it('captures the canonical immutable request and terminal', () => {
-    const input = fixture(), message = captureToolInvocation(input);
-    expect(message).toEqual(input); expect(message).not.toBe(input); expect(Object.isFrozen(message.rawArgs)).toBe(true);
-    expect(validateInvocationParameters(message).status).toBe('prepared');
-    const terminal = { phase: 'entered-returned' as const, result: { success: false, error: { code: 'BUSINESS', message: '', context: { value: 1 } } } };
-    const response = toolInvocationResponse(header, terminal);
-    expect(captureToolInvocationTerminal(response, header)).toEqual(terminal);
-  });
-  it.each(['type', 'retired-v4', 'extra-field', 'extra', 'missing', 'receiver', 'nonjson', 'argument-bytes', 'whole-bytes'])('rejects request %s', kind => {
-    const message: any = fixture();
-    if (kind === 'type') message.type = 'VIEW_TOOL_INVOKE_ORDINARY_V2';
-    if (kind === 'retired-v4') message.type = 'VIEW_TOOL_INVOKE_V4';
-    if (kind === 'extra-field') message.unexpected = true;
-    if (kind === 'extra') message.extra = true;
-    if (kind === 'missing') delete message.snapshotId;
-    if (kind === 'receiver') message.receiver = { ...message.receiver, kind: 'view-type' };
-    if (kind === 'nonjson') message.rawArgs.q = undefined;
-    if (kind === 'argument-bytes') message.rawArgs.q = 'x'.repeat(RAW_TOOL_ARGUMENT_LIMITS.maxCanonicalBytes);
-    if (kind === 'whole-bytes') message.tool.description = 'x'.repeat(TOOL_REQUEST_LIMITS.maxCanonicalBytes);
-    expect(() => captureToolInvocation(message)).toThrow();
-  });
-  it('does not read getters and rejects non-B1 or mutated public profiles', () => {
-    let reads = 0; const input = fixture();
-    Object.defineProperty(input.rawArgs, 'q', { enumerable: true, get() { reads++; return 'x'; } });
-    expect(() => captureToolInvocation(input)).toThrow(); expect(reads).toBe(0);
-    const message: any = fixture(); message.tool.inputSchema = { ...message.tool.inputSchema, additionalProperties: true };
-    expect(validateInvocationParameters(captureToolInvocation(message)).status).toBe('prepared'); // Declared openness is valid; private qualification is separate.
-    message.tool.inputSchema['x-aotui-parameter-contract'] = 'future';
-    expect(validateInvocationParameters(captureToolInvocation(message)).status).toBe('rejected');
-  });
-  it.each(['type', 'extra-field', 'id', 'instance', 'extra', 'data', 'oversize', 'getter'])('rejects correlated terminal %s', kind => {
-    const value: any = toolInvocationResponse(header, { phase: 'entered-returned', result: { success: true, data: {} } });
-    const r: any = JSON.parse(JSON.stringify(value));
-    if (kind === 'type') r.type = 'VIEW_TOOL_INVOKE_ORDINARY_V1_RESPONSE';
-    if (kind === 'extra-field') r.unexpected = true;
-    if (kind === 'id') r.requestId = 'other';
-    if (kind === 'instance') r.instanceId = 'other';
-    if (kind === 'extra') r.terminal.other = 1;
-    if (kind === 'data') r.terminal.result.data = [];
-    if (kind === 'oversize') r.terminal.result.data = { text: 'x'.repeat(512 * 1024) };
-    if (kind === 'getter') Object.defineProperty(r.terminal.result, 'data', { enumerable: true, get() { throw Error('PRIVATE'); } });
-    expect(captureToolInvocationTerminal(r, header)).toBeNull();
-  });
-  it('captures qualified Tool metadata without an effect classification', () => {
-    const input = fixture();
-    const captured = captureToolInvocation(input);
-    expect(captured.tool).not.toHaveProperty('isMutating'); expect(validateInvocationParameters(captured).status).toBe('prepared');
-    expect(captured).not.toHaveProperty('resource'); expect(captured).not.toHaveProperty('resourceRefId');
-  });
-  it.each(['retired-v4', 'terminal-field', 'result-field', 'getter'] as const)('rejects an incompatible response: %s', kind => {
-    const response: any = JSON.parse(JSON.stringify(toolInvocationResponse(header, { phase: 'entered-returned', result: { success: false, error: { code: 'BUSINESS', message: 'Expected failure' } } })));
-    let reads = 0;
-    if (kind === 'retired-v4') response.type = 'VIEW_TOOL_INVOKE_V4_RESPONSE';
-    if (kind === 'terminal-field') response.terminal.failureEffects = 'none';
-    if (kind === 'result-field') response.terminal.result.effects = 'none';
-    if (kind === 'getter') Object.defineProperty(response.terminal.result, 'effects', { enumerable: true, get() { reads++; return 'none'; } });
-    expect(captureToolInvocationTerminal(response, header)).toBeNull();
-    expect(reads).toBe(0);
-  });
 
+const receiver = { viewId: 'file', viewInstanceId: 'mount', activationId: 'entry' };
+const source = { requestId: 'op', appId: 'app', instanceId: 'run' };
+const packet = () => ({ ...source, type: 'VIEW_TOOL_INVOKE', receiver: { ...receiver },
+    tool: { id: 'tool', name: 'write', viewType: 'file' },
+    effectiveArgs: { lines: [{ value: '中文\n' }] },
+    localRefs: [{ param: 'lines', index: 0, refId: 'line', viewId: 'file', viewInstanceId: 'mount' }],
+});
+
+it('checks and freezes the received transport copy without replacing it', () => {
+    const original = packet();
+    const received = structuredClone(original);
+    const captured = captureToolInvocation(received);
+    expect(captured).toBe(received);
+    expect(Object.isFrozen(captured.effectiveArgs)).toBe(true);
+    expect(Object.isFrozen(received.effectiveArgs.lines[0])).toBe(true);
+    expect(Object.isFrozen(original.effectiveArgs.lines[0])).toBe(false);
+});
+it.each(['protocol', 'old-raw-arguments', 'foreign-source-record', 'bad-index', 'unexpected-field'])(
+    'rejects the incompatible or malformed %s before dispatch', mode => {
+        const input: any = packet();
+        if (mode === 'protocol') input.type = 'VIEW_TOOL_INVOKE_V3';
+        if (mode === 'old-raw-arguments') input.rawArgs = input.effectiveArgs;
+        if (mode === 'foreign-source-record') input.localRefs[0].appId = 'another';
+        if (mode === 'bad-index') input.localRefs[0].index = 10;
+        if (mode === 'unexpected-field') input.tool.inputSchema = {};
+        expect(() => captureToolInvocation(input)).toThrow();
+    });
+it('enforces the exact byte size of the complete escaped Worker envelope', () => {
+    const input = packet();
+    input.effectiveArgs.lines[0]!.value = '\\"中\n'.repeat(100);
+    const exact = utf8Size(JSON.stringify(input));
+    expect(() => checkWireJson(input, { ...TOOL_REQUEST_LIMITS, maxCanonicalBytes: exact })).not.toThrow();
+    expect(() => checkWireJson(input, { ...TOOL_REQUEST_LIMITS, maxCanonicalBytes: exact - 1 })).toThrow(/Encoded JSON/);
+    const over = packet();
+    over.effectiveArgs.lines[0]!.value = '\n'.repeat(TOOL_REQUEST_LIMITS.maxCanonicalBytes / 2);
+    expect(() => captureToolInvocation(over)).toThrow(/Encoded JSON/);
+});
+it('keeps the original business fact and excludes wrong or malformed terminal identities', () => {
+    const data = { text: 'wrote once' };
+    const terminal = { phase: 'entered-returned', result: { success: true, data } } as const;
+    const output = toolInvocationResponse(packet(), terminal);
+    expect(Object.isFrozen(data)).toBe(false);
+    expect(captureToolInvocationTerminal(structuredClone(output), source)).toEqual(terminal);
+    expect(captureToolInvocationTerminal(structuredClone(output), { ...source, instanceId: 'new-run' })).toBeNull();
+    expect(captureToolInvocationTerminal({ ...output, terminal: { phase: 'not-entered', result: { success: true } } }, source)).toBeNull();
 });

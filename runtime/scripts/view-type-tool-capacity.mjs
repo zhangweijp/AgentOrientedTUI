@@ -4,9 +4,12 @@ import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const core = await import(process.argv[2]
-    ? pathToFileURL(resolve(process.argv[2])).href
-    : '@aotui/core');
+const base = process.argv[2] ? pathToFileURL(resolve(process.argv[2])).href : undefined;
+const [core, producer, host] = await Promise.all([
+    import(base ?? '@aotui/core'),
+    import(base ? new URL('./producer.js', base).href : '@aotui/core/producer'),
+    import(base ? new URL('./host.js', base).href : '@aotui/core/host'),
+]);
 const appId = 'capacity_app';
 const instanceId = 'capacity-instance';
 const names = ['read_file', 'edit_file'];
@@ -15,8 +18,8 @@ const bytes = value => Buffer.byteLength(JSON.stringify(value));
 const elapsed = start => Number((performance.now() - start).toFixed(3));
 
 async function runCase(viewCount) {
-    const snapshotCore = core.createSnapshotCore({ appId, instanceId });
-    const registry = core.createViewOwnedTools(appId, instanceId);
+    const snapshotCore = host.createSnapshotCore({ appId, instanceId });
+    const registry = producer.createViewOwnedTools(appId, instanceId);
     let client;
     let handlerEntries = 0;
     try {
@@ -26,10 +29,10 @@ async function runCase(viewCount) {
         const declarationMs = elapsed(start);
         const begin = performance.now();
         const frame = registry.prepareFrame(Array.from({ length: viewCount }, (_, index) => {
-            const id = 'file_' + index;
-            return { createId: () => id, type: 'File', owner: {}, bindings: names.map(name => ({ name, enabled: true, execute() {
+            const receiver = 'file_' + (index + 1);
+            return { idPrefix: 'file', type: 'File', owner: {}, bindings: names.map(name => ({ name, enabled: true, execute() {
                 handlerEntries++;
-                return { success: true, data: { receiver: id } };
+                return { success: true, data: { receiver } };
             } })) };
         }));
         const views = frame.instances.map(({ viewId: id, viewType: type, viewInstanceId, toolBindings }) => ({
@@ -45,17 +48,17 @@ async function runCase(viewCount) {
         const commitMs = elapsed(begin);
         const binding = {
             identity: {},
-            isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
+            isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success,
             execute: async context => ({ kind: 'tool-result', ...await registry.invokeTypeTool(
                 context.source.tool, context.source.receiver, context.effectiveInput) }),
         };
-        client = core.createAppInteraction(snapshotCore.store, { namespace: 'capacity-' + viewCount, now: Date.now, appId, instanceId,
+        client = host.createAppInteraction(snapshotCore.store, { namespace: 'capacity-' + viewCount, now: Date.now, appId, instanceId,
             policy: { project: ({ source }) => ({ refs: [], toolIds: Object.keys(source.tools) }),
                 authorize: () => true, canReadReceipt: () => true },
             execution: { resolve: () => binding },
         });
         const observing = performance.now();
-        const result = await client.observe({ all: true });
+        const result = await client.observe();
         const observeMs = elapsed(observing);
         const report = {
             views: viewCount, snapshotToolDescriptors: frame.tools.length, snapshotToolBindings: registry.inspect().bindings,
@@ -74,9 +77,9 @@ async function runCase(viewCount) {
         const dispatching = performance.now();
         for (const tool of observation.tools) {
             const result = await client.invoke({ invocationId: tool.name, observationId: observation.observationId,
-                toolId: tool.id, input: { view_id: 'file_0' } });
+                toolId: tool.id, viewId: 'file_1', input: {  } });
             assert.equal(result.kind === 'receipt' && result.receipt.outcome.status, 'succeeded', JSON.stringify(result));
-            assert.equal(result.receipt.outcome.value.data.receiver, 'file_0');
+            assert.equal(result.receipt.outcome.value.data.receiver, 'file_1');
         }
         assert.equal(handlerEntries, names.length);
         return { ...report, observationBytes: bytes(observation), handlerEntries, invokeMs: elapsed(dispatching) };
@@ -87,7 +90,10 @@ async function runCase(viewCount) {
         snapshotCore.lifecycle.dispose();
         assert.equal(snapshotCore.store.inspect().activeHolds, 0);
         assert.equal(registry.inspect().bindings, 0);
-        if (client) assert.equal(client.inspect().combinedBytes, 0);
+        if (client) {
+            const { activeInvocations, activeReads, borrowedSnapshots, observations } = client.inspect();
+            assert.deepEqual([activeInvocations, activeReads, borrowedSnapshots, observations.observationSlots], [0, 0, 0, 0]);
+        }
     }
 }
 

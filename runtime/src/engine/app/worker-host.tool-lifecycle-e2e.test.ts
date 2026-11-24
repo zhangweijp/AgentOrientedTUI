@@ -1,3 +1,6 @@
+import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
+import type { ActiveTurn, AppInvocation } from '@aotui/core';
+import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
 import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { afterAll, beforeAll, afterEach, describe, expect, it } from 'vitest';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink } from 'node:fs/promises';
@@ -5,11 +8,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Worker } from 'node:worker_threads';
-import { WorkerSandbox } from './worker-sandbox.js';
 import { defineRuntimeConfig } from '../../spi/config/index.js';
 
 const repo = resolve(process.cwd(), '..'), running: any[] = [];
 let consumer: string, AppWorkerHost: any;
+let createConsumerTurnCoordinator: typeof import('@aotui/core/host').createTurnCoordinator;
 beforeAll(async () => {
     consumer = await mkdtemp(join(tmpdir(), 'aotui-tool-consumer-'));
     const modules = join(consumer, 'node_modules'); await mkdir(join(modules, '@aotui'), { recursive: true });
@@ -25,6 +28,7 @@ beforeAll(async () => {
     }
     await cp(join(repo, 'runtime/src/e2e-test/fixtures/tool-lifecycle.mjs'), join(consumer, 'app.mjs'));
     AppWorkerHost = (await import(pathToFileURL(join(modules, '@aotui/runtime/dist/engine/app/worker-host.js')).href)).AppWorkerHost;
+    ({ createTurnCoordinator: createConsumerTurnCoordinator } = await import(pathToFileURL(join(modules, '@aotui/core/dist/host.js')).href));
 }, 20000);
 afterAll(async () => { if (consumer) await rm(consumer, { recursive: true, force: true }); });
 let sequence = 0;
@@ -44,33 +48,44 @@ async function control(x: any, action: string) {
 }
 async function start(id = 'app', options: { holdInitialization?: boolean; existingWorker?: Worker } = {}) {
     const root = await mkdtemp(join(tmpdir(), 'aotui-tool-'));
-    const host = new AppWorkerHost({ appId: id.replaceAll('-', '_') as any, desktopId: 'd' as any,
+    const authorization = policyProbe();
+    const host = new AppWorkerHost({ policy: authorization.policy, appId: id.replaceAll('-', '_') as any, desktopId: 'd' as any,
         appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
         workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), timeout: 5000,
         existingWorker: options.existingWorker,
         config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: !!options.holdInitialization },
     });
     await host.start(); const worker: Worker = (host as any).worker, messages: any[] = [];
-    worker.on('message', message => messages.push(message)); const x: any = { host, worker, messages, root, closed: false };
+    worker.on('message', message => messages.push(message)); const x: any = { authorization, host, worker, messages, root, closed: false };
     running.push(x); const opening = x.opening = host.open(); void opening.catch(() => {});
     if (options.holdInitialization) { await wait(x, m => m.type === 'TEST_INITIALIZING'); return x; }
     await opening; await wait(x, m => m.type === 'SNAPSHOT_PREPARED' && Object.keys(m.draft.tools).length > 0); return x;
 }
 function scope(x: any) {
     const controls = { authorize: (_c: any): boolean | Promise<boolean> => true };
-    const opened = x.host.getAppInteraction({
+    x.authorization.use({
         project: ({ source }: any) => ({ refs: [], toolIds: Object.keys(source.tools) }),
         authorize: (c: any) => controls.authorize(c), canReadReceipt: () => true,
     });
+    const opened = x.host.getAppInteraction();
     expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
-    return { ...opened.interaction, controls, async observeCounter() {
-        const observed = await opened.interaction.observe({ all: true });
-        if (observed.status === 'observed') expect(opened.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
-        expect(observed.status).toBe('observed'); return observed.observation;
-    } };
+    const turns = workerTurns(x.host, createConsumerTurnCoordinator());
+    let turn: ActiveTurn;
+    return { readReceipt: opened.interaction.readReceipt, controls,
+        async observeCounter() {
+            const prepared = await turns.prepare();
+            if (prepared.status !== 'prepared') throw Error(prepared.issue.code);
+            turn = turns.adopt(prepared.candidate);
+            return prepared.candidate.observation;
+        },
+        invoke: (request: AppInvocation, timeout?: number) => turn.invoke(x.host.appId, request, timeout),
+    };
 }
-const request = (observation: any, input: Record<string, unknown> = { view_id: 'counter', amount: 1 }) => ({ invocationId: 'invoke-' + ++sequence,
-    observationId: observation.observationId, toolId: observation.tools[0].id, input });
+const request = (observation: any, input: Record<string, unknown> = { view_id: 'counter_1', amount: 1 }) => {
+    const { view_id: viewId, ...business } = input;
+    return { invocationId: 'invoke-' + ++sequence, observationId: observation.observationId,
+        toolId: observation.tools[0].id, viewId, input: business };
+};
 function outcome(result: any) { expect(result.kind).toBe('receipt'); return result.receipt.outcome; }
 async function close(x: any, fail = false) {
     if (fail) await control(x, 'reject-close');
@@ -99,45 +114,57 @@ afterEach(async () => {
 });
 
 describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
-    it('stops through Sandbox before held installation settles and retains the physical Worker', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'aotui-tool-sandbox-'));
-        const sandbox = new WorkerSandbox({ appId: 'sandbox' as any, desktopId: 'd' as any, appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
-            workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 5000, maxWorkers: 1 } }),
-            config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: true } });
-        const install = sandbox.installDynamic(); void install.catch(() => {});
-        let worker: Worker | undefined;
-        for (let index = 0; index < 100 && !worker; index++) { worker = (sandbox as any).workerHost?.worker; if (!worker) await new Promise(resolve => setTimeout(resolve, 1)); }
-        expect(worker).toBeDefined(); const x: any = { worker, messages: [], host: (sandbox as any).workerHost, root, closed: false };
-        worker!.on('message', message => x.messages.push(message)); running.push(x);
-        await wait(x, m => m.type === 'TEST_INITIALIZING'); const closing = sandbox.disposeAsync();
-        await wait(x, m => m.type === 'LIFECYCLE_RESPONSE' && m.appCleanup?.protocol === 'app-lifecycle-v2' && m.appCleanup.state === 'stopped');
-        expect(sandbox.getCloseReport().state).toBe('closing'); expect(worker!.threadId).toBeGreaterThan(0);
-        worker!.postMessage({ type: 'TEST_RELEASE_INIT' }); await wait(x, m => m.type === 'TEST_STOPPED');
-        await expect(install).rejects.toMatchObject({ code: 'INSTALL_FAILED' }); await wait(x, m => m.type === 'TEST_CLEANUP_ENTERED');
-        expect(sandbox.getCloseReport().resourcesReleased).toBe(false); await control(x, 'release-cleanup');
-        const report = await closing; expect(report).toMatchObject({ ok: false, resourcesReleased: true, issues: ['INSTALL_FAILED'],
-            host: { worker: 'exited', appCleanup: { report: { state: 'completed', issues: [] } } } });
-        await wait(x, m => m.type === 'TEST_RESOURCE_CLOSED');
-        expect(worker!.threadId).toBe(-1); x.closed = true;
+    it('closes the Desktop while its accepted App is still initializing', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'aotui-tool-starting-'));
+        const { createRuntime } = await import(pathToFileURL(join(consumer, 'node_modules/@aotui/runtime/dist/index.js')).href);
+        const runtime = createRuntime({ worker: { timeoutMs: 5000, maxWorkers: 1 } });
+        const desktop = await runtime.createDesktop('d');
+        const install = desktop.installDynamicWorkerApp(pathToFileURL(join(consumer, 'app.mjs')).href, {
+            name: 'tool_lifecycle', config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: true },
+        });
+        void install.catch(() => {});
+        const host = desktop.appManager.getManagedApp('tool_lifecycle').host;
+        const worker: Worker = host.worker;
+        const x = { worker, messages: [] as any[], host, root, closed: false };
+        worker.on('message', message => x.messages.push(message));
+        running.push(x);
+        await wait(x, m => m.type === 'TEST_INITIALIZING');
+        const closing = desktop.beginClose();
+        await wait(x, m => m.type === 'LIFECYCLE_RESPONSE' && m.appCleanup?.state === 'stopped');
+        expect(closing.inspect()).toMatchObject({ state: 'closing', resourcesReleased: false, pendingTasks: 1 });
+        expect(worker.threadId).toBeGreaterThan(0);
+        worker.postMessage({ type: 'TEST_RELEASE_INIT' });
+        await wait(x, m => m.type === 'TEST_STOPPED');
+        await wait(x, m => m.type === 'TEST_CLEANUP_ENTERED');
+        expect(closing.inspect().resourcesReleased).toBe(false);
+        await control(x, 'release-cleanup');
+        await expect(install).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
+        expect(await closing.completion).toMatchObject({ ok: true, resourcesReleased: true,
+            appCleanup: { completedApps: 1 }, apps: { accepted: 1, settled: 1 } });
+        expect(x.messages.filter(message => message.type === 'TEST_RESOURCE_CLOSED')).toHaveLength(1);
+        expect(x.messages.filter(message => message.type === 'TEST_STOPPED')).toHaveLength(1);
+        expect(worker.threadId).toBe(-1);
+        x.closed = true;
+        expect((await runtime.beginClose().completion).resourcesReleased).toBe(true);
     }, 15000);
     it.each(['rebind', 'disable'])('revokes the old binding during %s before handler entry', async action => {
         const x = await start('binding-' + action), s = scope(x), old = await s.observeCounter(), from = x.messages.length;
-        await control(x, action); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', from);
+        await control(x, action); await wait(x, m => m.type === 'APP_EVENT' && m.reason === 'view_updated', from);
         expect(outcome(await s.invoke(request(old))).status).toBe('rejected'); expect((await control(x, 'inspect')).entries).toBe(0);
-        if (action === 'disable') { const at = x.messages.length; await control(x, 'enable'); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', at); }
-        expect(outcome(await s.invoke(request(await s.observeCounter()))).status).toBe('succeeded'); await close(x);
+        if (action === 'disable') { const at = x.messages.length; await control(x, 'enable'); await wait(x, m => m.type === 'APP_EVENT' && m.reason === 'view_updated', at); }
+        expect(outcome(await s.invoke(request(await s.observeCounter(), { view_id: action === 'disable' ? 'counter_1' : 'counter_2', amount: 1 }))).status).toBe('succeeded'); await close(x);
     }, 15000);
     it('revokes the replaced receiver and invokes its successor after observation', async () => {
         const x = await start('binding-remount'), s = scope(x), old = await s.observeCounter(), from = x.messages.length;
-        await control(x, 'remount'); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', from);
+        await control(x, 'remount'); await wait(x, m => m.type === 'APP_EVENT' && m.reason === 'view_updated', from);
         expect(outcome(await s.invoke(request(old)))).toMatchObject({ status: 'rejected', code: 'VIEW_INSTANCE_REVOKED' });
         expect((await control(x, 'inspect'))).toMatchObject({ value: 0, entries: 0 });
-        expect(outcome(await s.invoke(request(await s.observeCounter()))).status).toBe('succeeded');
+        expect(outcome(await s.invoke(request(await s.observeCounter(), { view_id: 'counter_2', amount: 1 }))).status).toBe('succeeded');
         expect((await control(x, 'inspect'))).toMatchObject({ value: 1, entries: 1 });
         await close(x);
     }, 15000);
     it.each(['declined', 'after-update', 'throw'])('reports %s and never executes a replay twice', async failure => {
-        const x = await start(failure), s = scope(x), req = request(await s.observeCounter(), { view_id: 'counter', amount: 2, failure });
+        const x = await start(failure), s = scope(x), req = request(await s.observeCounter(), { view_id: 'counter_1', amount: 2, failure });
         const first = await s.invoke(req);
         const result = outcome(first);
         expect(result.status).toBe(failure === 'throw' ? 'unknown' : 'failed');
@@ -176,20 +203,20 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
     it('keeps business values App-owned and rechecks binding authorization across remount', async () => {
         const a = await start('a'), b = await start('b'), sa = scope(a), sb = scope(b);
         const oa = await sa.observeCounter(), ob = await sb.observeCounter();
-        expect(await sb.invoke(request(oa))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' }); expect((await control(b, 'inspect')).entries).toBe(0);
+        expect(await sb.invoke(request(oa))).toMatchObject({ kind: 'refused', code: 'TURN_SELECTION_INVALID' }); expect((await control(b, 'inspect')).entries).toBe(0);
         expect(outcome(await sa.invoke(request(oa))).status).toBe('succeeded');
         expect((await control(a, 'inspect')).value).toBe(1); expect((await control(b, 'inspect')).value).toBe(0);
         // Before the remount, the original receiver is still live.
         expect(outcome(await sa.invoke(request(oa))).status).toBe('succeeded');
         expect((await control(a, 'inspect')).entries).toBe(2);
         const from = a.messages.length; await control(a, 'remount');
-        await wait(a, m => m.type === 'SNAPSHOT_PREPARED', from);
+        await wait(a, m => m.type === 'APP_EVENT' && m.reason === 'view_updated', from);
         const current = await sa.observeCounter(), authorized = gate(), reached = gate();
         sa.controls.authorize = () => { reached.resolve(true); return authorized.promise; };
-        const pending = sa.invoke(request(current));
+        const pending = sa.invoke(request(current, { view_id: 'counter_2', amount: 1 }));
         try {
             await reached.promise;
-            const changed = a.messages.length; await control(a, 'remount'); await wait(a, m => m.type === 'SNAPSHOT_PREPARED', changed);
+            const changed = a.messages.length; await control(a, 'remount'); await wait(a, m => m.type === 'APP_EVENT' && m.reason === 'view_updated', changed);
             authorized.resolve(true); expect(outcome(await pending)).toMatchObject({ status: 'rejected', code: 'VIEW_INSTANCE_REVOKED' });
             expect((await control(a, 'inspect')).entries).toBe(2);
         } finally { authorized.resolve(true); await pending.catch(() => undefined); }
@@ -204,10 +231,10 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
             ? { ...message, receiver: { ...message.receiver, activationId: 'stale-activation' } } : message);
         expect(outcome(await s.invoke(request(observation))).status).toBe('rejected');
         expect((await control(x, 'inspect')).entries).toBe(0); x.worker.postMessage = send;
-        const pending = s.invoke(request(observation, { view_id: 'counter', amount: 1, hold: true }));
+        const pending = s.invoke(request(observation, { view_id: 'counter_1', amount: 1, hold: true }));
         await wait(x, m => m.type === 'TEST_ENTERED'); const closed = x.host.close();
         await wait(x, m => m.type === 'TEST_STOPPED');
-        expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
+        expect(x.host.getResourceReport().interactions.retainedOperations).toBeGreaterThan(0);
         expect(x.messages.some((message: any) => message.type === 'TEST_CLEANUP_ENTERED')).toBe(false);
         const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_RESPONSE', x.messages.length);
         await control(x, 'release-handler');

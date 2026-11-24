@@ -1,5 +1,5 @@
-import { utf8Size } from '@aotui/core/internal';
-import { captureStateAddress, failedMutation, failedRead, requireStateLimits, stateFields, stateIssue, validStateOwner } from '@aotui/core/internal';
+import { utf8Size } from '@aotui/core';
+import { captureStateAddress, failedMutation, failedRead, requireStateLimits, stateFields, stateIssue, validStateOwner } from '@aotui/core/persistence';
 import type { StateAddress, StateIssue, StateStorage } from '@aotui/core';
 
 export interface MemoryStateStorageLimits {

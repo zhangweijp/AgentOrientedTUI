@@ -1,20 +1,21 @@
 import * as path from 'node:path';
 import { homedir } from 'node:os';
-import { createSqliteStateStorage, type SqliteStateStorageLimits } from '../../adapters/storage/sqlite-state-storage.js';
-import { captureStorageRequest, DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_VERSION } from '../../adapters/storage/state-storage-protocol.js';
+import type { SqliteStateStorageLimits } from '../../adapters/storage/sqlite-state-storage.js';
+import { captureManagedPersistenceReport, captureStorageRequest, DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_VERSION } from '../../adapters/storage/state-storage-protocol.js';
 import type { StateStorageRequest, StateStorageResponse, StateTransportLimits } from '../../adapters/storage/state-storage-protocol.js';
 import { captureStateReadResult, captureStateMutationResult, captureStateReleaseResult, failedRead, failedMutation,
-    stateIssue, unknownMutation } from '@aotui/core/internal';
-import type { StateStorage, StateReleaseResult, StateIssueCode, StateStorageBackend } from '@aotui/core/internal';
-export type { StateStorageBackend } from '@aotui/core/internal';
+    stateIssue, unknownMutation } from '@aotui/core/persistence';
+import type { StateStorage, StateReleaseResult, StateIssueCode, StateStorageBackend } from '@aotui/core/persistence';
 
 export const DEFAULT_NODE_STATE_LIMITS: SqliteStateStorageLimits = Object.freeze({ maxActiveOwners: 64, maxRoots: 16,
     maxClaimedNamespaces: 512, maxPendingRequests: 256, maxRecordBytes: 262272, maxAddressBytes: 1024,
     maxPathBytes: 4096, maxBufferedBytes: 16777216 });
-// Construction performs no filesystem access. All default Hosts share this exact backend.
-export const defaultStateStorageBackend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
-export function resolveStateDirectory(config: Readonly<Record<string, unknown>> | undefined, cwd = process.cwd()): string {
-    const value = config?.AOTUI_DATA_DIR;
+let defaultBackend: Promise<StateStorageBackend> | undefined;
+function defaultStateStorageBackend(): Promise<StateStorageBackend> {
+    return defaultBackend ??= import('../../adapters/storage/sqlite-state-storage.js')
+        .then(({ createSqliteStateStorage }) => createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS));
+}
+export function resolveStateDirectory(value: unknown, cwd: string): string {
     if (value !== undefined && typeof value !== 'string') throw new Error('INVALID_INPUT: Invalid persistence directory');
     if (typeof value === 'string' && value.length) {
         if (value.includes('\0')) throw new Error('INVALID_INPUT: Invalid persistence directory');
@@ -27,7 +28,7 @@ export function resolveStateDirectory(config: Readonly<Record<string, unknown>> 
 export function createStateStorageHost(options: Readonly<{ instanceId: string; desktopId: string; rootDirectory: string;
     backend?: StateStorageBackend; limits?: StateTransportLimits }>) {
     const { instanceId, desktopId, rootDirectory } = options;
-    const backend = options.backend ?? defaultStateStorageBackend, limits = options.limits ?? DEFAULT_STATE_TRANSPORT_LIMITS;
+    const limits = options.limits ?? DEFAULT_STATE_TRANSPORT_LIMITS;
     const active = new Set<Promise<unknown>>();
     let highWater = 0, closing = false, uncertain = false, opening = false, bufferedBytes = 0;
     let owner: StateStorage | undefined, openingPromise: ReturnType<StateStorageBackend['open']> | undefined;
@@ -35,7 +36,10 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
     function open() {
         if (!openingPromise) {
             opening = true;
-            openingPromise = Promise.resolve().then(() => backend.open({ owner: instanceId, rootDirectory })).then(result => {
+            openingPromise = Promise.resolve().then(async () => {
+                const backend = options.backend ?? await defaultStateStorageBackend();
+                return backend.open({ owner: instanceId, rootDirectory });
+            }).then(result => {
                 if (result.status === 'opened') owner = result.storage;
                 return result;
             }).catch(() => ({ status: 'rejected' as const, issue: stateIssue('IO_FAILED') })).finally(() => { opening = false; });
@@ -99,6 +103,7 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
         return task;
     }
     return Object.freeze({ accept, release, disconnect: () => releasePromise ?? (lastRelease ? Promise.resolve(lastRelease) : release()),
+        captureReport: (report: unknown) => captureManagedPersistenceReport(report, instanceId),
         markTransportUncertain: () => { uncertain = true; },
         getStats: () => Object.freeze({ highWater, closing, opening, pending: active.size, actualIO: active.size,
             bufferedBytes, ownerRetained: !!owner, uncertain, ...(lastRelease ? { release: lastRelease } : {}) }),

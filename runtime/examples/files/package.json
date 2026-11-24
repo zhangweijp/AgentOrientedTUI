@@ -1,0 +1,11 @@
+{
+  "name": "aotui-turn-files-example",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Open and edit files within the Host-provided directory.",
+  "main": "../../dist/examples/files/app.mjs",
+  "aotui": {
+    "app_name": "turn_files"
+  }
+}

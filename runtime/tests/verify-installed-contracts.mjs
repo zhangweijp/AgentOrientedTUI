@@ -21,7 +21,8 @@ try {
         await fs.copyFile(path.join(consumer, 'node_modules/@aotui/core/examples/public-core.ts'), path.join(folder, 'public-core.ts'));
     }
     await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, ExecutionBinding, AppSnapshot, SnapshotRead } from '@aotui/core';
-import { createSnapshotCore, SNAPSHOT_SCHEMA_VERSION, type ToolParameterCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/core';
+import { SNAPSHOT_SCHEMA_VERSION, type ToolParameterCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/core';
+import { createSnapshotCore } from '@aotui/core/host';
 // @ts-expect-error The JSON copy budget reason is internal to Core.
 import { JsonCopyLimitError } from '@aotui/core';
 const identity = { appId: 'notes', instanceId: 'limits-check' };
@@ -48,54 +49,18 @@ export function declarationCategory(result: ToolParameterCompileResult) {
   const unreachable: never = code;
   return unreachable;
 }
-// @ts-expect-error The previous register ABI is retired.
-import { ORDINARY_INVOCATION_MODE } from '@aotui/core';
-// @ts-expect-error The former invoker ABI is retired.
-import type { SafeOrdinaryInvoker } from '@aotui/core';
-// @ts-expect-error Historical aliases are retired.
-import type { AppSnapshotV4 } from '@aotui/core';
-// @ts-expect-error The older DTO is also retired.
-import type { AppSnapshotV2 } from '@aotui/core';
-// @ts-expect-error AppSnapshot is the only public AppSnapshot type name.
-import type { AppSnapshotV5 } from '@aotui/core';
-// @ts-expect-error Validation envelope details are not part of the Core package API.
-import type { SnapshotDraftEnvelope } from '@aotui/core';
-// @ts-expect-error Snapshot health is represented by SnapshotRead.status.
-import type { SnapshotHealth } from '@aotui/core';
-// @ts-expect-error ToolResult is the sole business result format.
-import type { ActionOutcome } from '@aotui/core';
-// @ts-expect-error Generic background-task polling is no longer a Core contract.
-import type { TaskProgressProvider } from '@aotui/core';
-// @ts-expect-error The earlier provider name is also removed.
-import type { OperationProvider } from '@aotui/core';
-// @ts-expect-error A separately created Scope is no longer a public type.
-import type { ScopeClient } from '@aotui/core';
 import type { AppInteraction, InstanceInteraction, ReceiptQuery } from '@aotui/core';
 export const readOriginal = (client: AppInteraction, query: ReceiptQuery) => client.readReceipt(query);
 export const inspect = (client: InstanceInteraction) => client.inspect();
-export function forwardTransport(client: InstanceInteraction, selection: unknown, request: unknown) {
-  return [client.observe(selection), client.invoke(request)];
+export function forwardTransport(client: InstanceInteraction, request: unknown) {
+  return [client.observe(), client.invoke(request)];
 }
-export function retiredAlias(client: InstanceInteraction) {
-  // @ts-expect-error Inspect owns expiry and statistics in the public Core API.
-  return client.sweepExpired();
-}
-// @ts-expect-error Factory return types are inferred rather than exported as aliases.
-import type { ViewOwnedTools } from '@aotui/core';
-// @ts-expect-error Factory return types are inferred rather than exported as aliases.
-import type { StateSession } from '@aotui/core';
-// @ts-expect-error Removed entity-only transport type is not a public API.
-import type { VersionedEntityResource } from '@aotui/core';
-// @ts-expect-error Removed entity-only terminal is not a public API.
-import type { VersionedEntityTerminal } from '@aotui/core';
-// @ts-expect-error Removed entity-only callable is not a public API.
-import type { SafeVersionedEntityInvoker } from '@aotui/core';
 const ref: RefTarget = { kind: 'snapshot-value', payload: { id: 'one', version: 1 } };
 // @ts-expect-error Snapshot Ref targets are readonly.
 ref.payload = {};
 // @ts-expect-error Business identity belongs inside the captured payload.
 const oldRef: RefTarget = { kind: 'entity', entityId: 'one' };
-const schemaVersion: 7 = SNAPSHOT_SCHEMA_VERSION;
+const schemaVersion: 8 = SNAPSHOT_SCHEMA_VERSION;
 const result: ToolResult = { success: false, error: { code: 'PARTIAL', message: 'Application reports partial work' } };
 // @ts-expect-error The former Tool failure classification is retired.
 const oldResult: ToolResult = { ...result, effects: 'none' };
@@ -126,47 +91,42 @@ void [persistenceSupport, ideLifecycleSupport, ideToolAuthoringProtocol, ideFact
 import { Type } from 'typebox';
 import { createRuntime, type AppInteractionOptions } from '@aotui/runtime';
 import type {
-  AppInteraction, AppInteractionPolicy, AppInvocation, ReceiptQuery, Observation,
-  ObservationSelection, ObservationGrant, ObserveResult, AppPreviewResult, InvocationReceipt,
+  ActiveTurn, RunningApp, AppInteractionPolicy, AppInvocation, ReceiptQuery, ObservationCandidate, Observation,
+  ObservationGrant, PrepareObservationResult, AppPreviewResult, InvocationReceipt,
   ReceiptAccess, InvokeResult, InvocationContext, ReceiptMetadata, InteractionIssue,
 } from '@aotui/runtime';
 import type { ReceiptQuery as CoreReceiptQuery } from '@aotui/core';
 // @ts-expect-error Advanced assembly remains in Core.
 import type { InstanceInteraction } from '@aotui/runtime';
 export type HostTypes = [
-  AppInteraction, AppInteractionPolicy, AppInvocation, ReceiptQuery, Observation,
-  ObservationSelection, ObservationGrant, ObserveResult, AppPreviewResult, InvocationReceipt,
+  ActiveTurn, RunningApp, AppInteractionPolicy, AppInvocation, ReceiptQuery, ObservationCandidate, Observation,
+  ObservationGrant, PrepareObservationResult, AppPreviewResult, InvocationReceipt,
   ReceiptAccess, InvokeResult, InvocationContext, ReceiptMetadata, InteractionIssue,
 ];
-export function checkHostRequests(client: AppInteraction, raw: unknown): Promise<ReceiptAccess> {
-  const selection: ObservationSelection = { all: true };
+export function checkHostRequests(app: RunningApp, turn: ActiveTurn, raw: unknown): Promise<ReceiptAccess> {
   const request: AppInvocation = { observationId: 'observed', invocationId: 'invoke-1', toolId: 'inspect',
-    input: { view_id: 'detail', record: '$notes.list.selected' } };
-  void client.observe(selection);
-  void client.invoke(request, 1000);
-  // @ts-expect-error Observation prepares all open Views.
-  void client.observe({ all: false });
-  // @ts-expect-error The old per-View selector is not part of the Host contract.
-  void client.observe({ all: true, viewIds: ['detail'] });
+    viewId: 'detail', input: { record: '$ref.notes.list.selected' } };
+  void app.observe();
+  void turn.invoke(app.appId, request, 1000);
+  // @ts-expect-error Observation prepares all open Views without a selector.
+  void app.observe({ viewIds: ['detail'] });
   // The Runtime validates the receiver using the observed Tool contract.
-  void client.invoke({ ...request, input: {} });
+  void turn.invoke(app.appId, { ...request, input: {} });
   // @ts-expect-error The retired binding id is not a request field.
-  void client.invoke({ ...request, bindingId: 'retired' });
+  void turn.invoke(app.appId, { ...request, bindingId: 'retired' });
   // @ts-expect-error A typed Host call needs a request shape.
-  void client.invoke(raw);
+  void turn.invoke(app.appId, raw);
   const query: CoreReceiptQuery = { observationId: request.observationId, invocationId: request.invocationId };
   const hostQuery: ReceiptQuery = query;
   // @ts-expect-error Receipt lookup uses the original IDs and accepts no Tool field.
-  void client.readReceipt({ ...hostQuery, toolId: 'inspect' });
-  return client.readReceipt(hostQuery);
+  void app.readReceipt({ ...hostQuery, toolId: 'inspect' });
+  return app.readReceipt(hostQuery);
 }
 import { createTUIApp, defineViewType, useDataRef, refParam, type ArgsOf, useAppLifecycle, type AppLifecycleCallbacks, StaticView, DynamicView } from '@aotui/sdk';
-// @ts-expect-error Removed per-page bindings are not an SDK author API.
-import type { ViewBindings } from '@aotui/sdk';
 ${refOnly ? '' : ideTypeImports}
 import type { AppFrameRef, AppProjectionFrame, ProjectionCommitResult, RuntimeContext, TUIAppFactory } from '@aotui/core';
 export function publishCompleteFrame(context: RuntimeContext): ProjectionCommitResult {
-  const selected: AppFrameRef = { id: 'selected', scope: 'protected', value: { title: 'Note' } };
+  const selected: AppFrameRef = { valueSchema: { type: 'object', properties: { title: { type: 'string' } } }, id: 'selected', scope: 'protected', value: { title: 'Note' } };
   // @ts-expect-error Captured JSON values replace commit-local Ref tokens.
   const token: AppFrameRef = { id: 'selected', token: {} };
   // @ts-expect-error The renderer supplies a stable owner in each complete frame.
@@ -176,10 +136,8 @@ export function publishCompleteFrame(context: RuntimeContext): ProjectionCommitR
   void token;
   return context.publishFrame(() => frame);
 }
-// @ts-expect-error Removed entity-only Hook is not a public API.
-import { experimental_useVersionedEntityTool } from '@aotui/sdk';
 import type { AppLifecyclePort } from '@aotui/core';
-const Counter = defineViewType<object>()({ name: 'Counter', multiplicity: 'multiple', createId: ({ prefix }) => prefix, tools: {
+const Counter = defineViewType<object>()({ name: 'Counter', multiplicity: 'multiple', tools: {
  increment: {
   description: 'Increment counter', inputSchema: Type.Object({ amount: Type.Number() }, { additionalProperties: false }),
   async execute({ input }) {
@@ -211,7 +169,7 @@ const Counter = defineViewType<object>()({ name: 'Counter', multiplicity: 'multi
 export type CounterRefArgs = ArgsOf<typeof Counter.tools.inspect_record>;
 function Detail() { return 'Counter'; }
 function RefDetail() {
- const current = useDataRef('current_record', { id: 'record-1' }, { scope: 'protected', refType: 'Record' });
+ const current = useDataRef('current_record', { id: 'record-1' }, { scope: 'protected', refType: 'Record', schema: Type.Object({ id: Type.String() }) });
  return h('p', {}, current('Current record'));
 }
 const owner: AppLifecycleCallbacks = { stop() {}, async close() {} };
@@ -237,23 +195,23 @@ void [writable, readOnly, oldOptions, lifecyclePort, lifecycleSupport, toolAutho
     await run([tsc, '-p', path.join(folder, 'sdk-tsconfig.json')], refOnly ? 'strict Runtime Host types, SPI and SDK Ref declarations' : 'strict Runtime Host types, SPI and SDK with IDE declarations');
     await fs.writeFile(path.join(folder, 'adapter-types.ts'), `import { SemanticAOTUIDrivenSource, type SemanticAOTUIDrivenSourceOptions } from '@aotui/agent-driver-adapter';
 import type { ContextDrivenSource } from '@aotui/agent-driver-v2';
-import type { AppInteractionPolicy, DesktopID, IDesktop, IKernel } from '@aotui/runtime';
+import type { IDesktop } from '@aotui/runtime';
 // @ts-expect-error The split-read Legacy source is no longer a public adapter.
 import type { AOTUIDrivenSource } from '@aotui/runtime/adapters';
 const options: SemanticAOTUIDrivenSourceOptions = { includeInstruction: false, instruction: 'fixture' };
 // @ts-expect-error Adapter options retain their actual public type.
 options.includeInstruction = 'yes';
-export const source = (desktop: IDesktop, kernel: IKernel): ContextDrivenSource => new SemanticAOTUIDrivenSource(desktop, kernel, options);
+export const source = (desktop: IDesktop): ContextDrivenSource => new SemanticAOTUIDrivenSource(desktop, options);
 export async function releaseContext(instance: SemanticAOTUIDrivenSource): Promise<void> {
  const context = await instance.getContext();
  await context.release?.();
  instance.dispose();
 }
-export const interaction = (kernel: IKernel, desktopId: DesktopID, appId: string, instanceId: string, policy: AppInteractionPolicy) => kernel.getAppInteraction(desktopId, appId, instanceId, policy);
+export const findApp = (desktop: IDesktop, appId: string, instanceId: string) => desktop.getRunningApp(appId, instanceId);
 `);
     await fs.writeFile(path.join(folder, 'adapter-tsconfig.json'), JSON.stringify({ compilerOptions: { ...compiler, lib: ['ES2022', 'DOM'], types: ['node'], outDir: './adapter-out' }, files: ['./adapter-types.ts'] }));
     try {
-      await run([tsc, '-p', path.join(folder, 'adapter-tsconfig.json')], 'Semantic Source, Context release, getAppInteraction, and public declarations compile with skipLibCheck false');
+      await run([tsc, '-p', path.join(folder, 'adapter-tsconfig.json')], 'Semantic Source, RunningApp and Context release compile with skipLibCheck false');
     } catch {
       // The JS behavior below does not consume this failed TS output. Keep the
       // required type gate red while collecting the independent real call proof.
@@ -271,8 +229,8 @@ const filePath = '/open/a.txt';
 // This test-only witness is outside Tool Result and the App projection.
 const witnessFile = ${JSON.stringify(witnessPath)};
 const witness = data => appendFileSync(witnessFile, JSON.stringify(data) + '\\n');
-const Guide = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root' });
-const File = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'FileDetail', tools: {
+const Guide = defineViewType({ multiplicity: 'multiple', name: 'Root' });
+const File = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
  edit_file: {
   description: 'Replace the contents of an opened file.',
   inputSchema: Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false }),
@@ -296,7 +254,7 @@ const File = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix })
  },
 } });
 function FileDetail({ content }) {
- const current = useDataRef('current_file', { filePath, content }, { scope: 'protected', refType: 'File' });
+ const current = useDataRef('current_file', { filePath, content }, { scope: 'protected', refType: 'File', schema: Type.Object({ filePath: Type.String(), content: Type.String() }) });
  return h('section', {}, [h('p', {}, current('Current file')), h('pre', {}, content)]);
 }
 function App() {
@@ -318,12 +276,12 @@ const calls = [];
 const readWitness = async () => (await readFile(${JSON.stringify(witnessPath)}, 'utf8')).trim().split('\\n').filter(Boolean).map(line => JSON.parse(line));
 let source, context, report;
 try {
- const desktopId = await runtime.createDesktop('package-tool-consumer');
- const appId = await runtime.installDynamicWorkerApp(desktopId, pathToFileURL(path.join(${JSON.stringify(folder)}, 'type-tool-app.mjs')).href, {
+ const desktop = await runtime.createDesktop('package-tool-consumer');
+ const { appId } = await desktop.installDynamicWorkerApp(pathToFileURL(path.join(${JSON.stringify(folder)}, 'type-tool-app.mjs')).href, {
   installationId: 'packagetools', name: 'package_type_tool_consumer', config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR },
  });
  assert.equal(appId, 'package_type_tool_consumer');
- source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktopId), runtime, { includeInstruction: false, instruction: 'Isolated SDK and Runtime Ref consumer verification.' });
+ source = new SemanticAOTUIDrivenSource(desktop, { includeInstruction: false, instruction: 'Isolated SDK and Runtime Ref consumer verification.' });
  async function captureReady() {
   const deadline = Date.now() + 15000;
   let names = [];
@@ -344,7 +302,7 @@ try {
  }
  context = await captureReady();
  const editName = toolName(context, 'edit_file'), refName = toolName(context, 'inspect_snapshot');
- const inspected = await context.executeTool(refName, { view_id: 'file_a', record: '$package_type_tool_consumer.file_a.current_file' }, 'snapshot-before-edit');
+ const inspected = await context.executeTool(refName, { view_id: 'file_a_1', record: '$ref.package_type_tool_consumer.file_a_1.current_file' }, 'snapshot-before-edit');
  assert.equal(inspected?.outcomeStatus, 'succeeded', JSON.stringify(inspected));
  assert.equal(inspected.result?.message, 'Snapshot inspected.');
  assert.ok(!JSON.stringify(inspected).includes('OLD_PACKAGE_VIEW_VALUE'));
@@ -352,12 +310,12 @@ try {
  assert.equal(beforeWitness.length, 1); assert.equal(beforeWitness[0].payload.filePath, '/open/a.txt');
  assert.equal(beforeWitness[0].payload.content, 'OLD_PACKAGE_VIEW_VALUE'); assert.equal(beforeWitness[0].frozen, true);
  calls.push({ name: 'inspect-before', result: inspected });
- const denied = await context.executeTool(editName, { view_id: 'file_a', filePath: '/open/b.txt', content: 'MUST_NOT_APPEAR' }, 'edit-closed-file');
+ const denied = await context.executeTool(editName, { view_id: 'file_a_1', filePath: '/open/b.txt', content: 'MUST_NOT_APPEAR' }, 'edit-closed-file');
  calls.push({ name: 'edit_file-b', result: denied });
  assert.equal(denied?.outcomeStatus, 'failed', JSON.stringify(denied));
  assert.equal(denied.error?.code, 'FILE_NOT_OPEN', JSON.stringify(denied));
  assert.ok(!JSON.stringify(denied).includes('MUST_NOT_APPEAR'));
- const changed = await context.executeTool(editName, { view_id: 'file_a', filePath: '/open/a.txt', content: 'NEW_PACKAGE_VIEW_VALUE' }, 'edit-open-file');
+ const changed = await context.executeTool(editName, { view_id: 'file_a_1', filePath: '/open/a.txt', content: 'NEW_PACKAGE_VIEW_VALUE' }, 'edit-open-file');
  calls.push({ name: 'edit_file-a', result: changed });
  assert.equal(changed?.outcomeStatus, 'succeeded', JSON.stringify(changed));
  assert.ok(!JSON.stringify(changed).includes('NEW_PACKAGE_VIEW_VALUE'), 'Tool receipt must not duplicate View data');
@@ -366,7 +324,7 @@ try {
  const latest = context.messages.map(message => String(message.content)).join('\\n');
  assert.ok(latest.includes('NEW_PACKAGE_VIEW_VALUE'), 'A fresh Source context observes the updated FileDetail View');
  assert.ok(!latest.includes('OLD_PACKAGE_VIEW_VALUE'), 'The old FileDetail snapshot is not retained as current');
- const latestRef = await context.executeTool(toolName(context, 'inspect_snapshot'), { view_id: 'file_a', record: '$package_type_tool_consumer.file_a.current_file' }, 'snapshot-after-edit');
+ const latestRef = await context.executeTool(toolName(context, 'inspect_snapshot'), { view_id: 'file_a_1', record: '$ref.package_type_tool_consumer.file_a_1.current_file' }, 'snapshot-after-edit');
  assert.equal(latestRef?.outcomeStatus, 'succeeded', JSON.stringify(latestRef));
  assert.equal(latestRef.result?.message, 'Snapshot inspected.');
  assert.ok(!JSON.stringify(latestRef).includes('NEW_PACKAGE_VIEW_VALUE'));
@@ -378,11 +336,11 @@ try {
  assert.equal(witnesses.filter(row => row.stage === 'business').length, 1);
  calls.push({ name: 'inspect-after', result: latestRef });
  await context.release?.(); context = undefined; source.dispose(); source = undefined;
- report = await runtime.beginShutdown().completion;
+ report = await runtime.beginClose().completion;
  assert.equal(report.ok, true, JSON.stringify(report)); assert.equal(report.resourcesReleased, true);
  assert.equal(report.appCleanup?.managedApps, 1); assert.equal(report.appCleanup?.completedApps, 1); assert.equal(report.appCleanup?.failedApps, 0);
  console.log('PUBLIC_TOOLS', JSON.stringify({ calls, witnesses, report, cleanupKind: 'Runtime graceful shutdown', viewTypeTool: 'edit_file', refTool: 'inspect_snapshot', oldSnapshotReplaced: true }));
-} finally { await context?.release?.(); source?.dispose(); await runtime.beginShutdown().completion; }
+} finally { await context?.release?.(); source?.dispose(); await runtime.beginClose().completion; }
 `);
     const toolsResult = await run([path.join(folder, 'public-tools.mjs')], 'packed SDK ordinary typed Ref through Runtime Worker and Semantic Source; short receipts and separate witnesses');
     const toolsLine = toolsResult.stdout.split('\n').find(line => line.startsWith('PUBLIC_TOOLS ')); assert.ok(toolsLine); facts.publicTools = JSON.parse(toolsLine.slice(13));
@@ -397,8 +355,8 @@ const base = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-publi
 const file=path.join(root,'example.ts'), unopenedFile=path.join(root,'not-open.ts'); await fs.writeFile(file,'export const answer = 1;\\n'); await fs.writeFile(path.join(root,'tsconfig.json'),'{}');
 const runtime=createRuntime({worker:{timeoutMs:45000,maxWorkers: 1}}); const outcomes=[]; let source, context, report;
 try {
- const desktopId=await runtime.createDesktop('external'); const appId=await runtime.installDynamicWorkerApp(desktopId,ideModulePath,{installationId:'publicide',name:'system_ide',config:{projectPath:root,ideSessionKey:'publicide',ideHistoryPath:path.join(base,'history.json'),AOTUI_DATA_DIR:path.join(base,'state')}});
- source=new SemanticAOTUIDrivenSource(runtime.getDesktop(desktopId),runtime,{includeInstruction:false,instruction:'Explicit full-mode IDE fixture instruction; full mode is not admitted in the Ref-only proof.'});
+ const desktop=await runtime.createDesktop('external'); const {appId}=await desktop.installDynamicWorkerApp(ideModulePath,{installationId:'publicide',name:'system_ide',config:{projectPath:root,ideSessionKey:'publicide',ideHistoryPath:path.join(base,'history.json'),AOTUI_DATA_DIR:path.join(base,'state')}});
+ source=new SemanticAOTUIDrivenSource(desktop,{includeInstruction:false,instruction:'Explicit full-mode IDE fixture instruction; full mode is not admitted in the Ref-only proof.'});
  async function capture(){context=await source.getContext();assert.equal(typeof context.executeTool,'function');await context.adopt();return context;}
  async function captureWhenToolIsAvailable(suffix){
   const deadline=Date.now()+15000;let available=[];
@@ -431,9 +389,9 @@ try {
  const currentHover=currentView?.split('### hover')[1];assert.ok(currentHover,'The receipt points to the current FileDetail hover section');
  assert.match(currentHover,/documentVersion[^0-9]*[1-9][0-9]*/,'The current FileDetail View contains an actual versioned LSP hover result');assert.match(currentHover,/answer/);
  await context.release?.();context=undefined;source.dispose();source=undefined;
- report=await runtime.beginShutdown().completion; assert.equal(report.ok,true,JSON.stringify(report));assert.equal(report.resourcesReleased,true);assert.equal(report.appCleanup?.managedApps,1);assert.equal(report.appCleanup?.completedApps,1);assert.equal(report.appCleanup?.failedApps,0);
+ report=await runtime.beginClose().completion; assert.equal(report.ok,true,JSON.stringify(report));assert.equal(report.resourcesReleased,true);assert.equal(report.appCleanup?.managedApps,1);assert.equal(report.appCleanup?.completedApps,1);assert.equal(report.appCleanup?.failedApps,0);
  console.log('PUBLIC_IDE',JSON.stringify({base,outcomes,report,defaultWorkerResolution:true,ordinaryMutation:true,actualLspHover:hover.result}));
-} finally {await context?.release?.();source?.dispose();await runtime.beginShutdown().completion;}
+} finally {await context?.release?.();source?.dispose();await runtime.beginClose().completion;}
 `);
     const publicResult = await run([path.join(folder, 'public-ide.mjs')], 'public default Runtime Worker uses Semantic Context/release for ordinary IDE mutation, actual LSP, and managed shutdown');
     const line = publicResult.stdout.split('\n').find(line => line.startsWith('PUBLIC_IDE ')); assert.ok(line); facts.publicIDE = JSON.parse(line.slice(11));

@@ -35,28 +35,26 @@
 export { createRuntime, type RuntimeConfig, type RuntimeOptions } from './facades/facades.js';
 export { defineRuntimeConfig, type RuntimeConfigInput } from './spi/config/index.js';
 export type {
-    AppInteraction,
     AppInteractionPolicy,
     AppInvocation,
     CancellationSignal,
     ConsoleInputs,
     ConsoleInputPath,
-    RequestSources,
-    RequestSourceSelection,
+    ObservationCandidate,
+    PrepareObservationResult,
+    InspectRefMode, InspectRefResult,
+    TurnSelection,
     ReceiptQuery,
     InvocationReceipt,
-    ReceiptAccess,
-    InvokeResult,
-    ObserveResult,
     AppPreviewResult,
     InvocationContext,
     ReceiptMetadata,
     InteractionIssue,
 } from '@aotui/core';
-export type { Observation, ObservationSelection, ObservationWindowSelection, ViewIdentity, ObservationGrant, ObservedTool, ObservedRef, ObservedRefPath,
-    ProgramToolInput, ProgramRefPath, RefConsumer, RefGrant, RefPathGrant } from '@aotui/core';
+export type { Observation, ObservationWindowSelection, ViewIdentity, ObservationGrant, ObservedTool, ObservedRef,
+    RefConsumer, RefGrant } from '@aotui/core';
 export type { RefPath } from '@aotui/core';
-export type { AppWindows, ViewWindow, ViewWindowTarget, ViewCloseResult } from './spi/runtime/windows.js';
+export type { AppWindows, AppWindowTarget, ViewWindow, ViewWindowTarget, ViewCloseResult } from './spi/runtime/windows.js';
 
 export { AOTUIError } from '@aotui/core';
 export { createDesktopId, createAppId } from './spi/core/id-factory.js';
@@ -73,19 +71,20 @@ export type {
     ToolResult,
 } from '@aotui/core';
 export type { UpdateSignal } from './spi/core/signals.js';
-export type { AppDiscoveryInfo, IDesktop, IKernel, RegisterPendingAppOptions, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from './spi/runtime/kernel.interface.js';
-export type { AppInteractionOptions, AppInteractionResult } from './spi/runtime/app-interaction.interface.js';
+export type { ActiveTurn, AdoptTurnResult, AppDiscoveryInfo, AppPolicyTarget, CreateDesktopOptions, IDesktop,
+    IKernel, InvokeResult, OpenAppOptions, ReceiptAccess, ReceiptLocator, RunningApp, RunningAppResult,
+    RegisterPendingAppOptions } from './spi/runtime/kernel.interface.js';
+export type { AppInteractionOptions } from './spi/runtime/app-interaction.interface.js';
 export type {
+    AppCloseHandle,
+    AppCloseReport,
     CloseHandle,
     CloseReport,
     DesktopCloseHandle,
-    DesktopCloseOptions,
     DesktopCloseReport,
     InteractionCloseReport,
     RuntimeCloseHandle,
     RuntimeCloseReport,
-    ShutdownOptions,
 } from './spi/runtime/close.interface.js';
 
-export type { StateStorageBackend } from '@aotui/core/internal';
 export { readAppManifest, type AppManifest } from './engine/app/manifest.js';

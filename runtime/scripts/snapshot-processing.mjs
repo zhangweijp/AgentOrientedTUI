@@ -71,7 +71,10 @@ function countDigestWork(run, verify) {
 }
 
 async function digestPaths(measure) {
-    const { createSnapshotCore, SemanticProjectionCoordinator, hostedObservationCapacityIssue } = await import(emitted(corePackage, 'internal.js'));
+    const [{ hostedObservationCapacityIssue, createSnapshotCore }, { SemanticProjectionCoordinator }] = await Promise.all([
+        import(emitted(corePackage, 'host.js')),
+        import(emitted(corePackage, 'producer.js')),
+    ]);
     return [64, 512, 2048].map(kib => {
         const bodyBytes = kib * 1024;
         const identity = { appId: 'bench', instanceId: 'one' };
@@ -159,7 +162,7 @@ async function micro() {
                 toolBindings: [{ toolId, activationId: 'activation_' + index }] };
         });
         const draft = { schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId, instanceId: 'bench-instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
-            views, refs, tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: toolName, viewType: type, nameSharedAcrossViewTypes: false,
+            views, refs, tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: toolName, viewType: type,
                 description: 'Change the fixture', inputSchema: contract.schema } } };
         const containers = value => value && typeof value === 'object'
             ? 1 + Object.values(value).reduce((sum, child) => sum + containers(child), 0) : 0;
@@ -180,13 +183,14 @@ async function micro() {
 
 async function workers() {
     const { AppWorkerHost } = await import(emitted(runtime, 'engine/app/worker-host.js'));
+    const { createTurnCoordinator } = await import(emitted(corePackage, 'host.js'));
     const directory = await mkdtemp(join(tmpdir(), 'aotui-snapshot-processing-'));
     const modulePath = join(directory, 'app.mjs');
     const source = `
 import { createApp, createView, defineViewType, ref, arrayRef } from ${JSON.stringify(emitted(sdk, 'app.js'))};
 const data = ${data.toString()};
 const body = ${body.toString()};
-const File = defineViewType()({ name: 'File', region: 'dynamic', multiplicity: 'multiple', createId: ({ prefix }) => prefix, tools: { advance: {
+const File = defineViewType()({ name: 'File', region: 'dynamic', multiplicity: 'multiple', tools: { advance: {
     description: 'Change the fixture', execute({ context }) { return context.advance(); },
 } } });
 export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initialize(context) {
@@ -194,8 +198,8 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
     let revision = 0;
     const views = fixture.views.map(({ id, refs }) => createView(File, { idPrefix: id, render: () => ({
         body: body(id, revision),
-        refs: fixture.rows.length ? [arrayRef('rows', fixture.rows, { itemType: 'Data', scope: 'protected' })] :
-            refs.map(item => ref(item.id, item.value, { refType: 'Data', scope: 'protected' })),
+        refs: fixture.rows.length ? [arrayRef('rows', fixture.rows, { itemType: 'Data', scope: 'protected', schema: { type: 'array', items: { type: 'object' } } })] :
+            refs.map(item => ref(item.id, item.value, { refType: 'Data', scope: 'protected', schema: { type: 'object' } })),
         context: { advance() {
             revision++;
             const mutable = fixture.rows[0] ?? fixture.views[0].refs[0].value;
@@ -228,31 +232,33 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
                 const ready = host.getAppInteraction();
                 assert.equal(ready.status, 'ready');
                 const client = ready.interaction;
+                const turns = createTurnCoordinator();
                 const observe = async () => {
                     const start = performance.now();
-                    const result = await client.observe({ all: true });
+                    const result = await turns.prepareObservation(client, () => host.getAppInteraction().status === 'ready');
                     const elapsed = performance.now() - start;
-                    assert.equal(result.status, 'observed', JSON.stringify(result.issue));
-                    const observation = result.observation;
-                    assert.equal(client.adoptObservation(observation.observationId).status, 'adopted');
-                    return { observation, elapsed };
+                    assert.equal(result.status, 'prepared', JSON.stringify(result.issue));
+                    const adopted = turns.adoptTurn({ apps: [{ candidate: result.candidate }] });
+                    assert.equal(adopted.status, 'adopted', JSON.stringify(adopted.issue));
+                    return { observation: result.candidate.observation, turn: adopted.turn, elapsed };
                 };
-                let { observation } = await observe();
+                let { observation, turn } = await observe();
+                const viewId = observation.views[0].id;
                 let priorFrames;
                 for (let i = 0; i < warmup + samples; i++) {
                     if (i === warmup) priorFrames = frames;
                     const start = performance.now();
-                    const receipt = await client.invoke({ observationId: observation.observationId, toolId: observation.tools[0].id,
-                        invocationId: 'update_' + i, input: { view_id: 'file_0' } });
+                    const receipt = await turn.invoke(appId, { observationId: observation.observationId, toolId: observation.tools[0].id,
+                        invocationId: 'update_' + i, viewId, input: {} });
                     const invokeMs = performance.now() - start;
                     assert.equal(receipt.receipt?.outcome.status, 'succeeded', JSON.stringify(receipt));
                     const next = await observe();
                     const updateToObservationMs = performance.now() - start;
                     assert.notEqual(next.observation.source.snapshotId, observation.source.snapshotId);
-                    observation = next.observation;
+                    ({ observation, turn } = next);
                     assert.match(observation.views[0].content.value, new RegExp('rev:' + (i + 1) + '\\b'));
                     const payload = Object.values(lastMessage.draft.refs)
-                        .find(ref => ref.ownerViewId === 'file_0' && ref.id === (profile.rows ? 'rows' : 'ref_0')).target.payload;
+                        .find(ref => ref.ownerViewId === viewId && ref.id === (profile.rows ? 'rows' : 'ref_0')).target.payload;
                     assert.equal((profile.rows ? payload[0] : payload).n, i + 1);
                     if (i >= warmup) {
                         timings.prepareMs.push(receipt.receipt.outcome.value.data.prepareMs);
@@ -266,7 +272,7 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
                     if (i === warmup) priorFrames = frames;
                     const next = await observe();
                     assert.equal(next.observation.source.snapshotId, observation.source.snapshotId);
-                    observation = next.observation;
+                    ({ observation, turn } = next);
                     if (i >= warmup) timings.unchangedObserveMs.push(next.elapsed);
                 }
                 unchangedFrames = frames - priorFrames;
@@ -274,14 +280,14 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
                 current = { snapshot: host.snapshotReceiver.core.store.inspect(), report: host.getSemanticSnapshotReport() };
                 assert.equal(current.snapshot.heldSnapshots, 0);
                 assert.equal(current.snapshot.heldSnapshotBytes, 0);
-                client.releaseObservation(observation.observationId);
+                turn.release();
             } finally {
                 await host.close().catch(() => {});
                 closed = await host.waitForResourceRelease();
             }
             assert.equal(closed.resourcesReleased, true);
             assert.equal(closed.appCleanup?.report?.state, 'completed', JSON.stringify(closed));
-            assert.equal(closed.interactions.retainedBytes, 0);
+            assert.equal(closed.interactions.retainedOperations, 0);
             const released = host.snapshotReceiver.core.store.inspect();
             assert.equal(released.currentBytes, 0);
             assert.equal(released.activeHolds, 0);

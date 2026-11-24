@@ -1,6 +1,5 @@
-import { APP_LIFECYCLE_PROTOCOL } from '@aotui/core';
+import type { APP_LIFECYCLE_PROTOCOL } from '@aotui/core';
 
-export const APP_LIFECYCLE_VERSION = 2 as const;
 export interface AppCleanupReport {
     readonly protocol: typeof APP_LIFECYCLE_PROTOCOL;
     readonly instanceId: string;

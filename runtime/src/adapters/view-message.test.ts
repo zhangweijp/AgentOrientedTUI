@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Observation, RefConsumer } from '@aotui/core';
 import { buildViewMessageMarkup } from './view-message.js';
 
 describe('buildViewMessageMarkup', () => {
@@ -24,41 +23,21 @@ describe('buildViewMessageMarkup', () => {
             `${body}\n</view>`);
     });
 
-    it('renders each path only for its presented recipient and retains unscoped hints', () => {
-        const primary = { appId: 'mail', instanceId: 'mail-instance', viewId: 'draft', viewInstanceId: 'first-mount' };
-        const secondary = { appId: 'mail_1', instanceId: 'mail_1-instance', viewId: 'draft', viewInstanceId: 'second-mount' };
-        const target = (consumer: RefConsumer): Pick<Observation, 'source' | 'views'> => ({
-            source: { appId: consumer.appId, instanceId: consumer.instanceId, snapshotId: 'snapshot', revision: 1 },
-            views: [{ id: consumer.viewId, viewInstanceId: consumer.viewInstanceId, type: 'draft', name: 'Draft',
-                region: 'dynamic', content: { format: 'markdown-v1', value: '# Draft' } }],
-        });
-        const publisher = { viewId: 'list', viewInstanceId: 'list-mount', kind: 'snapshot-value', scope: 'public' } as const;
+    it('shows complete root addresses and escaping without including Ref values or Schema data', () => {
         const page: Parameters<typeof buildViewMessageMarkup>[0] = {
             appId: 'contacts', appName: 'Contacts', viewId: 'list', viewType: 'list', markup: '# Contacts',
-            refs: [{ ...publisher, refId: 'teams', refType: 'Team', array: true }, {
-                ...publisher, refId: 'people', paths: [
-                    { path: [0, 'email'], consumer: primary, valueType: 'string' },
-                    { path: [0, 'phone'], consumer: secondary, valueType: 'string' },
-                    { path: [0, 'name'], valueType: 'string' },
-                ],
-            }],
+            refs: [
+                { viewId: 'list', viewInstanceId: 'first', refId: 'teams', refType: 'Team', array: true, scope: 'public',
+                    valueSchema: { type: 'array', items: { type: 'object' } } },
+                { viewId: 'list', viewInstanceId: 'first', refId: 'a.b', refType: 'Value', scope: 'private',
+                    valueSchema: { type: 'string', default: 'Do not render payload' } },
+            ],
         };
-        const hints = (markup: string) => markup.split('\n').filter(line => line.startsWith('- '));
-        const whole = '- public teams: Team[]';
-        const unscoped = '- public $contacts.list.people[0].name (string)';
-        const email = '- public $contacts.list.people[0].email (string) for app_id mail, view_id draft';
-        const phone = '- public $contacts.list.people[0].phone (string) for app_id mail_1, view_id draft';
-
-        expect(hints(buildViewMessageMarkup(page))).toEqual([whole, unscoped]);
-        const presented = new Map([[primary.appId, target(primary)]]);
-        expect(hints(buildViewMessageMarkup(page, presented))).toEqual([whole, email, unscoped]);
-        presented.set(secondary.appId, target(secondary));
-        expect(hints(buildViewMessageMarkup(page, presented))).toEqual([whole, email, phone, unscoped]);
-        for (const mismatch of [{ appId: 'different-app' }, { instanceId: 'different-run' },
-            { viewId: 'different-page' }, { viewInstanceId: 'new-mount' }]) {
-            presented.set(secondary.appId, target({ ...secondary, ...mismatch }));
-            expect(hints(buildViewMessageMarkup(page, presented))).toEqual([whole, email, unscoped]);
-        }
+        const markup = buildViewMessageMarkup(page);
+        expect(markup.split('\n').filter(line => line.startsWith('- '))).toEqual([
+            '- public $ref.contacts.list.teams (Team[])', '- private $ref.contacts.list["a.b"] (Value)',
+        ]);
+        expect(markup).not.toContain('Do not render payload');
     });
 });
 

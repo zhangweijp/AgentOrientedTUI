@@ -30,7 +30,7 @@ async function fixture(extra: object = {}) {
     await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, defineViewType, useAppLifecycle, useAppRuntimeContext, useEffect, StaticView } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let draft;
 
 
-const RootType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root', tools: {
+const RootType = defineViewType()({ multiplicity: 'multiple', name: 'Root', tools: {
   set: { description:'Set persisted value', inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}) , execute: ({ input, context }) => context.set(input) },
 } });
 function Root(){
@@ -45,7 +45,7 @@ export default createTUIApp({persistence:true,app_name:'c1',component:Root,viewT
     return { dir, host, read: () => readSqliteState(join(dir, 'data/app-state'), 'd', 'c1', 'value') };
 }
 async function setPersistedValue(host: AppWorkerHost, value: number) {
-    const result = await invokeObservedTool(host, 'set', { value }, 'root');
+    const result = await invokeObservedTool(host, 'set', { value }, 'root_1');
     if (result?.kind !== 'receipt' || result.receipt.outcome.status !== 'succeeded') throw new Error('Set Tool invocation failed');
     return result.receipt.outcome.value;
 }

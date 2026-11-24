@@ -1,8 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { invokeViewTool } from './tool-invocation.js';
 import { compileToolParameters } from '@aotui/core';
-import { createViewOwnedTools } from '@aotui/core';
-import { viewToolReceiver } from '@aotui/core/internal';
+import { createViewOwnedTools, viewToolReceiver } from '@aotui/core/producer';
 
 function setup() {
   const compiled = compileToolParameters({ type: 'object', properties: { e: { type: 'string', enum: ['1'] } }, required: ['e'], additionalProperties: false });
@@ -11,21 +10,22 @@ function setup() {
   const handler = vi.fn(async (args: Readonly<Record<string, unknown>>) => ({ success: true, data: { value: args.e } }));
   registry.defineViewTypes([{ name: "File", multiplicity: 'multiple', tools: [{ name: 'find', description: 'Find', inputSchema: compiled.contract.schema }] }]);
   const mount = () => {
-    const plan = registry.prepareFrame([{ createId: () => 'aa', type: 'File', owner: {},
+    const plan = registry.prepareFrame([{ idPrefix: 'aa', type: 'File', owner: {},
       bindings: [{ name: 'find', execute: handler, enabled: true }] }]);
     plan.accept();
     return plan;
   };
   const plan = mount();
-  const { nameSharedAcrossViewTypes: _sharedName, ...tool } = plan.tools[0]!;
-  const receiver = viewToolReceiver({ id: 'aa', toolBindings: plan.instances[0]!.toolBindings,
+  const { id, viewType, name } = plan.tools[0]!;
+  const tool = { id, viewType, name };
+  const receiver = viewToolReceiver({ id: plan.instances[0]!.viewId, toolBindings: plan.instances[0]!.toolBindings,
     viewInstanceId: plan.instances[0]!.viewInstanceId } as any, tool.id)!;
-  const message = { type: 'VIEW_TOOL_INVOKE', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 's', observationId: 'obs',
-    tool, receiver, rawArgs: { e: '1' }, refSources: [] };
+  const message = { type: 'VIEW_TOOL_INVOKE', requestId: 'r', appId: 'app', instanceId: 'run',
+    tool, receiver, effectiveArgs: { e: '1' }, localRefs: [] };
   const context = { appId: 'app', instanceId: 'run', toolsEnabled: true,
     validateBinding: (t: any, execution: any) => registry.validateTypeToolBinding(t, execution),
-    getParameterContract: (t: any, execution: any) => registry.getTypeToolContract(t, execution),
-            isRefViewLive: () => true,
+    isRefViewLive: (_id: string, mount: string) => mount === receiver.viewInstanceId,
+    refScope: (_id: string, _mount: string, _refId: string): import('@aotui/core').RefScope | undefined => 'private',
     invokeBinding: (t: any, execution: any, args: any) => registry.invokeTypeTool(t, execution, args) };
   return { registry, handler, message, context, rebind: mount };
 }
@@ -34,24 +34,39 @@ describe('Worker invocation with business parameters', () => {
   it('enters only through the committed instance binding after final checks', async () => {
     const x = setup(), pending = invokeViewTool(x.message, x.context);
     expect(x.handler).toHaveBeenCalledOnce();
+    expect(x.handler.mock.calls[0]![0]).toBe(x.message.effectiveArgs);
+    expect(Object.isFrozen(x.message.effectiveArgs)).toBe(true);
     expect(await pending).toMatchObject({ type: 'VIEW_TOOL_INVOKE_RESPONSE',
       terminal: { phase: 'entered-returned', result: { data: { value: '1' } } } });
   });
   it.each(['enum', 'extra', 'null', 'instance', 'read-only', 'stale', 'marker', 'snapshot-metadata', 'wrong-activation', 'wrong-receiver'])('blocks %s before entry', async kind => {
     const x = setup(), m: any = JSON.parse(JSON.stringify(x.message)), c = { ...x.context };
-    if (kind === 'enum') m.rawArgs.e = 1;
-    if (kind === 'extra') m.rawArgs.extra = true;
-    if (kind === 'null') m.rawArgs.e = null;
+    if (kind === 'enum') m.effectiveArgs.e = 1;
+    if (kind === 'extra') m.effectiveArgs.extra = true;
+    if (kind === 'null') m.effectiveArgs.e = null;
     if (kind === 'instance') m.instanceId = 'other';
     if (kind === 'read-only') c.toolsEnabled = false;
     if (kind === 'stale') x.rebind();
-    if (kind === 'marker') m.tool.inputSchema['x-aotui-parameter-contract'] = 'future';
-    if (kind === 'snapshot-metadata') m.tool.nameSharedAcrossViewTypes = false;
+    if (kind === 'marker') m.tool.inputSchema = {};
+    if (kind === 'snapshot-metadata') m.snapshotId = 'forged';
     if (kind === 'wrong-activation') m.receiver.activationId = 'stale';
     if (kind === 'wrong-receiver') m.receiver.viewInstanceId = 'other';
     expect(await invokeViewTool(m, c)).toMatchObject({ terminal: { phase: 'not-entered' } });
     expect(x.handler).not.toHaveBeenCalled();
   });
+  it.each(['private-owner', 'stale-source', 'withdrawn-ref', 'missing-slot', 'duplicate-record'] as const)(
+    'checks the local publication immediately before executing an already resolved value: %s', async mode => {
+      const x = setup(), record = { param: 'e', refId: 'selected', viewId: x.message.receiver.viewId,
+        viewInstanceId: x.message.receiver.viewInstanceId };
+      const m = { ...x.message, localRefs: [record] };
+      if (mode === 'stale-source') record.viewInstanceId = 'closed';
+      if (mode === 'withdrawn-ref') x.context.refScope = () => undefined;
+      if (mode === 'missing-slot') record.param = 'missing';
+      if (mode === 'duplicate-record') m.localRefs.push({ ...record });
+      const result = await invokeViewTool(m, x.context);
+      expect(result?.terminal.phase).toBe(mode === 'private-owner' ? 'entered-returned' : 'not-entered');
+      expect(x.handler).toHaveBeenCalledTimes(mode === 'private-owner' ? 1 : 0);
+    });
   it('rechecks live Registry identity immediately at trusted helper entry', async () => {
     const x = setup(), original = x.context.invokeBinding;
     x.context.invokeBinding = (t, execution, args) => { x.rebind(); return original(t, execution, args); };

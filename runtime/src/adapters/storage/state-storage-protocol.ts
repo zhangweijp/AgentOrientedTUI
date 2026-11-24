@@ -1,10 +1,9 @@
-import { utf8Size } from '@aotui/core/internal';
+import { utf8Size } from '@aotui/core';
 import { captureStateAddress, captureStateMutationResult, captureStateReadResult, captureStateReleaseResult,
-    requireStateLimits, stateFields, validStateOwner } from '@aotui/core/internal';
+    stateFields, validStateOwner } from '@aotui/core/persistence';
 import type { StateAddress, StateMutationResult, StateReadResult, StateReleaseResult } from '@aotui/core';
 import type { StateSessionLimits } from '@aotui/core';
 import type { StateFlushEntry, StateFlushReport, StateDisposeReport } from '@aotui/core';
-import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
 
 import { STATE_SESSION_PROTOCOL } from '@aotui/core';
 export { STATE_SESSION_PROTOCOL };
@@ -19,7 +18,11 @@ export interface StateTransportLimits {
 export const DEFAULT_STATE_TRANSPORT_LIMITS: StateTransportLimits = Object.freeze({ maxPendingRequests: 16,
     maxSequence: Number.MAX_SAFE_INTEGER, maxEnvelopeBytes: 265344, maxRecordBytes: 262272, maxAddressBytes: 1024, timeoutMs: 30000 });
 export interface StatePersistenceAck { readonly protocol: typeof STATE_SESSION_PROTOCOL; readonly version: typeof STATE_SESSION_VERSION; readonly instanceId: string }
-export interface StatePersistenceOffer extends StatePersistenceAck { readonly limits: StateSessionLimits; readonly transport: StateTransportLimits }
+export interface ManagedPersistenceReport {
+    readonly protocol: typeof STATE_SESSION_PROTOCOL; readonly instanceId: string;
+    readonly ok: boolean; readonly unmount: 'completed' | 'failed';
+    readonly flush: StateFlushReport; readonly dispose: StateDisposeReport;
+}
 export type StateStorageAction = 'read' | 'replace' | 'remove' | 'release';
 export interface StateStorageRequest {
     readonly type: 'STATE_STORAGE_REQUEST'; readonly version: typeof STATE_SESSION_VERSION; readonly instanceId: string;
@@ -35,21 +38,6 @@ export function capturePersistenceAck(input: unknown, instanceId: string): State
     const f = stateFields(input);
     return exact(f, ['protocol', 'version', 'instanceId']) && f!.protocol!.value === STATE_SESSION_PROTOCOL && f!.version!.value === STATE_SESSION_VERSION &&
         f!.instanceId!.value === instanceId ? Object.freeze({ protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId }) : null;
-}
-export function capturePersistenceOffer(input: unknown, instanceId: string): StatePersistenceOffer | null {
-    const f = stateFields(input);
-    if (!exact(f, ['protocol', 'version', 'instanceId', 'limits', 'transport']) ||
-        !capturePersistenceAck({ protocol: f!.protocol!.value, version: f!.version!.value, instanceId: f!.instanceId!.value }, instanceId)) return null;
-    try {
-        const limits = requireStateLimits(f!.limits!.value as StateSessionLimits, Object.keys(DEFAULT_STATE_SESSION_LIMITS));
-        const transport = requireStateLimits(f!.transport!.value as StateTransportLimits, Object.keys(DEFAULT_STATE_TRANSPORT_LIMITS));
-        if (Object.keys(DEFAULT_STATE_SESSION_LIMITS).some(k => limits[k as keyof StateSessionLimits] > DEFAULT_STATE_SESSION_LIMITS[k as keyof StateSessionLimits]) ||
-            Object.keys(DEFAULT_STATE_TRANSPORT_LIMITS).some(k => k !== 'timeoutMs' && transport[k as keyof StateTransportLimits] > DEFAULT_STATE_TRANSPORT_LIMITS[k as keyof StateTransportLimits]) ||
-            transport.timeoutMs > 300000 || transport.maxRecordBytes > 262272 || transport.maxAddressBytes > 1024 ||
-            transport.maxEnvelopeBytes > 265344 || !validStateOwner(instanceId, transport.maxAddressBytes) ||
-            limits.maxRecordBytes > transport.maxRecordBytes || limits.maxAddressBytes > transport.maxAddressBytes) return null;
-        return Object.freeze({ protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId, limits, transport });
-    } catch { return null; }
 }
 export function captureStorageRequest(input: unknown, limits: StateTransportLimits): StateStorageRequest | null {
     const f = stateFields(input), action = f?.action?.value;

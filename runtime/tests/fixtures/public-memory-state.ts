@@ -1,4 +1,5 @@
-import { createStateSession, type StateSessionLimits } from '@aotui/core';
+import { createStateSession } from '@aotui/core/persistence';
+import type { StateSessionLimits } from '@aotui/core';
 import { createMemoryStateStorage } from '@aotui/runtime/adapters/memory-state-storage';
 
 function check(value: unknown, message: string): asserts value {

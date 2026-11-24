@@ -1,13 +1,9 @@
 import type { ToolResultData } from '@aotui/core';
-import type { AppContext, AppKernelConfig, AppLaunchConfig, AppInstance, RuntimeContext, TUIAppFactory } from '@aotui/core';
+import type { AppContext, AppLaunchConfig, AppInstance, RuntimeContext, TUIAppFactory } from '@aotui/core';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
-import { commitAppFrame, SemanticProjectionCoordinator } from '@aotui/core/internal';
-import { hostedObservationCapacityIssue } from '@aotui/core/internal';
-import type { ProjectionLimits } from '@aotui/core';
-import { createViewOwnedTools } from '@aotui/core';
-import type { ToolParameterContract } from '@aotui/core';
-import type { ToolInvocationDescriptor, ViewToolReceiver } from '@aotui/core/internal';
+import { commitAppFrame, createViewOwnedTools, SemanticProjectionCoordinator, hostedObservationCapacityIssue } from '@aotui/core/producer';
+import type { ProjectionLimits, ToolRoute, ViewToolReceiver } from '@aotui/core';
 import { createAppLifecycle } from '../app-lifecycle.js';
 import type { AppStatePersistence } from '@aotui/core';
 import { SnapshotDataError } from '@aotui/core';
@@ -27,7 +23,6 @@ export class AppKernel {
 
     getAppCleanupReport() { return this.appLifecycle.getReport(); }
     private readonly projectionOwner = new AbortController();
-    beginShutdown(): void { this.closing = true; this.projectionOwner.abort(); this.appLifecycle.stop(); }
     stopApplication(): void { this.projectionOwner.abort(); this.appLifecycle.stop(); }
 
     async whenProjectionCommitted(): Promise<void> {
@@ -40,7 +35,6 @@ export class AppKernel {
     private closing = false;
     private openPromise?: Promise<void>;
     private closePromise?: Promise<void>;
-    private deletePromise?: Promise<void>;
     private assertActive(): void { if (this.closing) throw closeError('APP_KERNEL_CLOSED'); }
     private closedToolResult(): ToolResultData { return { success: false, error: { code: 'TOOL_UNAVAILABLE', message: 'App lifecycle is closing' } }; }
     private failedProjectionResult(): ToolResultData {
@@ -52,17 +46,13 @@ export class AppKernel {
     }
 
     /** Check the current execution binding without invoking its handler. */
-    validateBoundTypeTool(source: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolResultData {
+    validateBoundTypeTool(source: ToolRoute, receiver: ViewToolReceiver): ToolResultData {
         if (this.closing) return this.closedToolResult();
         if (this.projection.failed) return this.failedProjectionResult();
         return this.viewOwnedTools.validateTypeToolBinding(source, receiver);
     }
 
-    getBoundTypeToolContract(source: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolParameterContract | undefined {
-        return this.closing ? undefined : this.viewOwnedTools.getTypeToolContract(source, receiver);
-    }
-
-    invokeBoundTypeTool(source: ToolInvocationDescriptor, receiver: ViewToolReceiver,
+    invokeBoundTypeTool(source: ToolRoute, receiver: ViewToolReceiver,
         args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
         if (this.closing) return { phase: 'not-entered', result: this.closedToolResult() };
         if (this.projection.failed) return { phase: 'not-entered', result: this.failedProjectionResult() };
@@ -83,12 +73,13 @@ export class AppKernel {
         return this.projection.refScope(viewId, viewInstanceId, refId);
     }
 
-    constructor(private readonly config: AppKernelConfig & AppContext & {
+    constructor(private readonly config: AppContext & {
         instanceId: string;
         factory: Pick<TUIAppFactory, 'initialize'>;
         launchConfig?: AppLaunchConfig | undefined;
         projectionLimits: ProjectionLimits;
         persistence?: AppStatePersistence;
+        requestAttention?: () => void;
     }) {
         const { appId, desktopId, instanceId, projectionLimits, persistence } = config;
         if (!desktopId?.trim() || persistence && persistence.instanceId !== instanceId)
@@ -117,11 +108,12 @@ export class AppKernel {
 
     onClose(): Promise<void> {
         if (this.closePromise) return this.closePromise;
-        this.beginShutdown();
+        this.closing = true;
+        this.stopApplication();
         let failed = false;
         this.viewOwnedTools.dispose();
         this.closePromise = Promise.resolve().then(async () => {
-            await Promise.allSettled([this.openPromise, this.deletePromise]);
+            await this.openPromise?.catch(() => {});
             try { await this.instance?.close(); } catch { failed = true; }
             this.instance = undefined;
             try { await this.appLifecycle.close(); } catch { failed = true; }
@@ -129,22 +121,6 @@ export class AppKernel {
             if (failed) throw closeError('APP_UNMOUNT_FAILED');
         });
         void this.closePromise.catch(() => {});return this.closePromise;
-    }
-
-    async onReinitialize(reason?: string): Promise<void> {
-        this.assertActive();
-        await this.config.onReinitialize?.({ ...this.context, reason });
-    }
-
-    onDelete(): Promise<void> {
-        if (this.deletePromise) return this.deletePromise;
-        if (this.closing) return Promise.reject(closeError('LIFECYCLE_CONFLICT'));
-        this.beginShutdown();
-        this.deletePromise = Promise.resolve().then(async () => {
-            if (this.openPromise) await this.openPromise.catch(() => {});
-            try { await this.config.onDelete?.(this.context); } catch { throw closeError('APP_DELETE_FAILED'); }
-        });
-        void this.deletePromise.catch(() => {});return this.deletePromise;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -158,6 +134,7 @@ export class AppKernel {
             launchConfig,
             projectionLimits,
             signal: this.projectionOwner.signal,
+            requestAttention: () => { if (!this.projectionOwner.signal.aborted) this.config.requestAttention?.(); },
             defineViewTypes: definitions => {
                 this.assertActive();
                 this.projection.assertWritable();
@@ -175,6 +152,8 @@ export class AppKernel {
                 if (this.projectionOwner.signal.aborted) throw closeError('PROJECTION_CLOSED');
                 return this.projection.readPreparedProjection();
             },
+            readPreparedViewId: (type, name) => this.projectionOwner.signal.aborted ? undefined
+                : this.projection.readPreparedViewId(type, name),
             ...(persistence === undefined ? {} : { persistence }),
             appLifecycle: this.appLifecycle.port,
         };

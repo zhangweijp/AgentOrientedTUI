@@ -1,142 +1,81 @@
-import type { StateStorageBackend } from '../app/state-storage-host.js';
+import type { StateStorageBackend } from '@aotui/core/persistence';
+import type { ManagedApp } from '../app/managed-app.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
-import type { AppLaunchConfig, DesktopID, AppID } from '@aotui/core';
+import type { ActiveTurn as CoreTurn, DesktopID, AppID } from '@aotui/core';
 import type { UpdateSignal } from '../../spi/core/signals.js';
-import type { IDesktop, AppDiscoveryInfo, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/runtime/kernel.interface.js';
-import { createDesktopId } from '../../spi/core/id-factory.js';
+import type { ActiveTurn, AdoptTurnResult, CreateDesktopOptions, IDesktop, AppDiscoveryInfo, OpenAppOptions, ReceiptAccess, ReceiptLocator,
+    RunningApp, RunningAppResult } from '../../spi/runtime/kernel.interface.js';
 import { AOTUIError } from '@aotui/core';
 import { SignalBus, type SignalListener } from './signal-bus.js';
-import type { AppManagerCloseHandle, AppManagerCloseReport, DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
+import type { AppCloseHandle, DesktopCloseHandle, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
+import { addCloseFailure, closeError, createCloseHandle, displayCloseId, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
 import { DesktopLogger, type LogEntry } from './desktop-logger.js';
 import { AppManager } from '../app/manager.js';
-import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
-import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { AppInteractionPolicy, RequestSourceSelection } from '@aotui/core';
-import type { ViewWindowTarget } from '../../spi/runtime/windows.js';
-import { bindRequestSources, type IssuedAppClients } from '@aotui/core/internal';
-import { appInstallFields, appInteractionFields, captureOptions } from '../app/interaction-config.js';
+import { RUNTIME_DEFAULTS, type RuntimeConfig } from '../../spi/config/index.js';
+import { appInteractionUnavailable, type WorkerInteraction } from '../../spi/runtime/app-interaction.interface.js';
+import type { ReceiptQuery, TurnSelection } from '@aotui/core';
+import type { AppWindowTarget, ViewWindowTarget } from '../../spi/runtime/windows.js';
+import { createTurnCoordinator } from '@aotui/core/host';
+import { appInteractionFields, captureOptions } from '../app/interaction-config.js';
 import { readAppManifest } from '../app/manifest.js';
 
 
-/**
- * Desktop 构造参数
- * 
- * [Option B] 支持新的 Service 接口注入
- */
 export interface DesktopOptions {
     workerCapacity?: WorkerCapacity;
     storageBackend?: StateStorageBackend;
+    policyForApp?: CreateDesktopOptions['policyForApp'];
     onResourcesReleased?: (desktop: Desktop) => void;
-    /** 使用外部 SignalBus (默认创建内部实例) */
-    signalBus?: SignalBus;
-    /** 使用外部 DesktopLogger (默认创建内部实例) */
-    logger?: DesktopLogger;
     /** 使用外部 AppManager (默认创建内部实例) */
     appManager?: AppManager;
-    // [RFC-005] Runtime Config
     runtimeConfig?: RuntimeConfig;
-
-    // [RFC-026] Runtime Context Injection
 }
 
 export class Desktop implements IDesktop {
-    public readonly id: DesktopID;
-
-    // [RFC-026] Runtime Context
-
-    private _disposed = false;
-    private _isDraining = false;  // [RFC-014] Draining 状态标志
     private closeHandle?: DesktopCloseHandle;
     private onResourcesReleased?: (desktop: Desktop) => void;
-    private closePromise?: Promise<void>;
-    private drainPromise?: Promise<void>;
-    private appClose?: AppManagerCloseHandle;
-    private appReport?: AppManagerCloseReport;
-    private closeState = newCloseState('desktop');
-    private closeIntent: 'close' | 'delete' = 'close';
-    private selectedBeforeClose?: WeakRef<() => Promise<void>>;
-    private readonly subscriptions = new Map<SignalListener, () => void>();
-    private outputFacade?: IDesktop['output'];
-
-    // Use injected SignalBus or create internal instance
-    private signalBus: SignalBus;
-
-    // Use injected DesktopLogger or create internal instance
-    private logger: DesktopLogger;
+    private readonly closeState = newCloseState('desktop');
+    private readonly closingApps = new Map<ManagedApp, AppCloseHandle>();
+    private readonly signalBus = new SignalBus();
+    private readonly logger: DesktopLogger;
 
     // Use injected AppManager or create internal instance
-    private appManager: AppManager;
-    private readonly issuedAppClients: IssuedAppClients = new WeakMap();
+    private readonly appManager: AppManager;
+    private readonly turns = createTurnCoordinator();
+    private readonly managedTurns = new WeakMap<ActiveTurn, CoreTurn>();
+    private readonly runningApps = new WeakMap<WorkerInteraction, RunningApp>();
 
-    private config: RuntimeConfig;
-
-    constructor(id?: DesktopID, options?: DesktopOptions) {
-        this.id = id ?? createDesktopId();
-        this.config = options?.runtimeConfig ?? RUNTIME_DEFAULTS;
+    constructor(readonly id: DesktopID, options?: DesktopOptions) {
+        const runtimeConfig = options?.runtimeConfig ?? RUNTIME_DEFAULTS;
         this.onResourcesReleased = options?.onResourcesReleased;
+        this.logger = new DesktopLogger(runtimeConfig.logger.maxSystemLogs);
 
-        // Desktop is Headless (No Mirror DOM)
-
-        this.signalBus = options?.signalBus ?? new SignalBus();
-
-        this.logger = options?.logger || new DesktopLogger({
-            maxSystemLogs: this.config.logger.maxSystemLogs
-        });
-
-        this.appManager = options?.appManager || new AppManager(this, { workerCapacity: options?.workerCapacity, runtimeConfig: this.config, storageBackend: options?.storageBackend });
+        this.appManager = options?.appManager || new AppManager(this, { workerCapacity: options?.workerCapacity,
+            runtimeConfig, storageBackend: options?.storageBackend, policyForApp: options?.policyForApp,
+            onAppClosing: () => this.turns.eligibilityChanged() });
 
         this.logSystem('Desktop initialized.');
     }
 
-    get isClosing(): boolean { return this._isDraining || this._disposed; }
+    get isClosing(): boolean { return !!this.closeHandle; }
 
 
 
-    // Delegate to SignalBus
-    public get output(): IDesktop['output'] {
-        return this.outputFacade ??= Object.freeze({
-            subscribe: (listener: SignalListener) => {
-                this.assertActive();if (this.subscriptions.has(listener)) return;
-                // Reserve before calling the provider: it may synchronously replay and close us.
-                this.subscriptions.set(listener, () => {});
-                let cancel: () => void;
-                try { cancel = this.signalBus.subscribe(this.id, signal => { if (!this._isDraining) listener(signal); }); }
-                catch (error) { this.subscriptions.delete(listener);throw error; }
-                if (this._isDraining || !this.subscriptions.has(listener)) cancel();else this.subscriptions.set(listener, cancel);
-            },
-            unsubscribe: (listener: SignalListener) => { const cancel = this.subscriptions.get(listener);this.subscriptions.delete(listener);cancel?.(); }
-        });
-    }
+    readonly output: IDesktop['output'] = Object.freeze({
+        subscribe: (listener: SignalListener) => {
+            this.assertActive();
+            this.signalBus.subscribe(listener);
+        },
+        unsubscribe: (listener: SignalListener) => this.signalBus.unsubscribe(listener),
+    });
 
-    private assertActive(): void { if (this._isDraining || this._disposed) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: this.id }); }
+    private assertActive(): void { if (this.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: this.id }); }
 
     // --- System Commands (App) ---
 
-    async openApp(installationId: string): Promise<AppID> {
+    async openApp(installationId: string, options?: OpenAppOptions): Promise<RunningApp> {
         this.assertActive();
-        return this.appManager.openApp(installationId);
-    }
-
-    async closeApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
-        this.assertActive();
-        return this.appManager.closeApp(appId, expectedInstanceId);
-    }
-
-    async reinitializeApps(
-        options?: ReinitializeDesktopAppsOptions
-    ): Promise<ReinitializeDesktopAppsResult> {
-        this.assertActive();
-        const result = await this.appManager.reinitializeAll(options);
-        const desktopResult: ReinitializeDesktopAppsResult = {
-            desktopId: this.id,
-            ...result,
-        };
-
-        this.logSystem(`Reinitialized desktop apps: ${desktopResult.reinitializedAppIds.length} restarted, ${desktopResult.skippedInstallationIds.length} skipped, ${desktopResult.failedAppIds.length} failed.`);
-        this.emitSignal('manual_refresh');
-
-        return desktopResult;
+        const input = captureOptions(options, { policy: 'object' });
+        return this.openedApp(await this.appManager.openApp(installationId, input?.policy));
     }
 
     getAppWindows(appId: AppID, expectedInstanceId: string) {
@@ -144,29 +83,33 @@ export class Desktop implements IDesktop {
         return this.appManager.getAppWindows(appId, expectedInstanceId);
     }
 
-    async collapseApp(appId: AppID, expectedInstanceId?: string, note?: string): Promise<void> {
-        this.assertActive();
-        return this.appManager.collapseApp(appId, expectedInstanceId, note);
+    private requireTurn(turn: ActiveTurn) {
+        const owned = this.managedTurns.get(turn);
+        if (!owned?.isCurrent) throw closeError('TURN_NOT_ACTIVE');
+        return owned;
     }
 
-    async expandApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
+    revokeWindowAccess(turn: ActiveTurn, target: AppWindowTarget | ViewWindowTarget): void {
         this.assertActive();
-        return this.appManager.expandApp(appId, expectedInstanceId);
+        const owned = this.requireTurn(turn);
+        const { appId, instanceId } = target;
+        const windows = this.appManager.getAppWindows(appId, instanceId);
+        if (!windows) throw closeError('APP_INSTANCE_CHANGED');
+        const view = 'viewId' in target
+            ? windows.views.find(view => view.viewId === target.viewId && view.viewInstanceId === target.viewInstanceId)
+            : undefined;
+        if ('viewId' in target && !view) throw closeError('VIEW_INSTANCE_REVOKED');
+        const current = this.appManager.getAppInteraction(appId, instanceId);
+        if (current.status === 'rejected') throw closeError('APP_INSTANCE_CHANGED');
+        const problem = this.turns.revokeWindowAccess(owned, current.interaction, view);
+        if (problem) throw closeError(problem.code);
     }
 
-    async collapseView(target: ViewWindowTarget, note = ''): Promise<void> {
+    async closeView(target: ViewWindowTarget, turn?: ActiveTurn) {
         this.assertActive();
-        return this.appManager.setViewWindow(target, note);
-    }
-
-    async expandView(target: ViewWindowTarget): Promise<void> {
-        this.assertActive();
-        return this.appManager.setViewWindow(target, undefined);
-    }
-
-    async closeView(target: ViewWindowTarget) {
-        this.assertActive();
-        return this.appManager.closeView(target);
+        if (turn !== undefined) this.requireTurn(turn);
+        this.turns.eligibilityChanged();
+        return this.appManager.closeView(target, turn && (() => this.requireTurn(turn)));
     }
 
     // --- Core Methods ---
@@ -178,35 +121,10 @@ export class Desktop implements IDesktop {
      */
     async installDynamicWorkerApp(
         appModulePath: string,
-        options?: AppInteractionOptions & {
-            installationId?: string;
-            name?: string;
-            /** [RFC-013] App description for Agent */
-            description?: string;
-            /** App 是什么 */
-            whatItIs?: string;
-            /** 什么时候用 */
-            whenToUse?: string;
-            config?: AppLaunchConfig;
-
-        }
-    ): Promise<string> {
-        options = captureOptions(options, appInstallFields);
+        options?: Parameters<IDesktop['installDynamicWorkerApp']>[1],
+    ): Promise<RunningApp> {
         this.assertActive();
-        return this.appManager.install(
-            appModulePath,
-            {
-                installationId: options?.installationId,
-                name: options?.name,
-                description: options?.description,  // [RFC-013]
-                whatItIs: options?.whatItIs,
-                whenToUse: options?.whenToUse,
-                config: { ...options?.config },
-                runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
-                toolsEnabled: options?.toolsEnabled,
-                projectionLimits: options?.projectionLimits,
-            }
-        );
+        return this.openedApp(await this.appManager.install(appModulePath, options));
     }
 
     /** Discover and register a local package without starting a Worker. */
@@ -216,8 +134,8 @@ export class Desktop implements IDesktop {
             throw new AOTUIError('CONFIG_INVALID', { path: 'options.installationId', reason: 'Provide a stable installation key' });
         if (!captured.localPath?.trim()) throw new AOTUIError('CONFIG_INVALID', { path: 'options.localPath', reason: 'Provide the local App path' });
         this.assertActive();
-        const config = { ...captured.config };
-        const { metadata, modulePath } = await readAppManifest(captured.localPath);
+        const config = captured.config ?? {};
+        const { metadata, modulePath, persistenceSupport } = await readAppManifest(captured.localPath);
         return this.appManager.registerPendingApp({
             installationId: captured.installationId,
             name: metadata.app_name,
@@ -225,8 +143,8 @@ export class Desktop implements IDesktop {
             whatItIs: metadata.whatItIs,
             whenToUse: metadata.whenToUse,
             modulePath,
+            manifestPersistence: persistenceSupport,
             config,
-            runtimeConfig: this.config,
             toolsEnabled: captured.toolsEnabled,
             projectionLimits: captured.projectionLimits,
         });
@@ -236,82 +154,142 @@ export class Desktop implements IDesktop {
     /**
      * 获取已安装应用列表
      */
-    getInstalledApps(): readonly AppDiscoveryInfo[] {
-        return this.appManager.getInstalledApps();
+    listApps(): readonly AppDiscoveryInfo[] {
+        return this.appManager.listApps();
     }
 
-    getAppInteraction(appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult {
+    private openedApp(started: Pick<RunningApp, 'appId' | 'instanceId'>): RunningApp {
+        const result = this.getRunningApp(started.appId, started.instanceId);
+        if (result.status === 'rejected') throw closeError(result.issue.code);
+        return result.app;
+    }
+
+    getRunningApp(appId: string, expectedInstanceId: string): RunningAppResult {
         const manager = this.appManager;
-        const current = () => !this._isDraining && !this._disposed && this.appManager === manager;
-        if (!current()) return appInteractionUnavailable();
-        const create = manager.getAppInteraction;
-        if (!current()) return appInteractionUnavailable();
-        const result = create.call(manager, appId, expectedInstanceId, policy);
-        if (!current()) return appInteractionUnavailable();
-        if (result.status === 'ready') this.issuedAppClients.set(result.interaction,
-            () => current() && manager.isRunningApp(appId, expectedInstanceId));
-        return result;
+        if (this.isClosing) return appInteractionUnavailable();
+        const result = manager.getAppInteraction(appId, expectedInstanceId);
+        if (result.status === 'rejected') return result;
+        const current = () => !this.isClosing && manager.isRunningApp(appId, expectedInstanceId);
+        const { interaction } = result;
+        const existing = this.runningApps.get(interaction);
+        if (existing) return Object.freeze({ status: 'ready', app: existing });
+        const owner = manager.getManagedApp(appId as AppID);
+        if (!owner) return appInteractionUnavailable();
+        const desktopId = this.id;
+        const app: RunningApp = Object.freeze({
+            appId: appId as AppID, instanceId: expectedInstanceId,
+            observe: () => this.turns.prepareObservation(interaction, current),
+            preview: () => current() ? interaction.preview() : Promise.resolve(appInteractionUnavailable()),
+            async readReceipt(query: ReceiptQuery, timeoutMs?: number) {
+                const unavailable = () => Object.freeze({ kind: 'unavailable' as const, ...appInteractionUnavailable().issue });
+                if (!current()) return unavailable();
+                const result = await interaction.readReceipt(query, timeoutMs);
+                if (!current()) return unavailable();
+                if (result.kind !== 'receipt') return result;
+                const { observationId, invocationId } = result.receipt;
+                return Object.freeze({ ...result, locator: Object.freeze({
+                    desktopId, appId: appId as AppID, instanceId: expectedInstanceId, observationId, invocationId,
+                }) });
+            },
+            beginClose: () => owner.beginClose(),
+        });
+        this.runningApps.set(interaction, app);
+        return Object.freeze({ status: 'ready', app });
     }
 
-    bindRequestSources(input: RequestSourceSelection) {
-        this.assertActive();
-        return bindRequestSources(input, this.issuedAppClients);
+    adoptTurn(input: TurnSelection): AdoptTurnResult {
+        const result = this.turns.adoptTurn(input);
+        if (result.status === 'rejected') return result;
+        const { turn } = result;
+        const invoke: ActiveTurn['invoke'] = async (appId, request, timeoutMs, signal) => {
+            const original = this.turns.locate(turn, appId);
+            let requestedId: unknown;
+            try { requestedId = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value; }
+            catch { /* Core reports a malformed invocation. */ }
+            const invoked = await turn.invoke(appId, request, timeoutMs, signal);
+            if (!original || invoked.kind === 'refused') return invoked;
+            const invocationId = invoked.kind === 'receipt' ? invoked.receipt.invocationId : requestedId;
+            if (typeof invocationId !== 'string') return invoked;
+            const locator = Object.freeze({ desktopId: this.id, appId: appId as AppID, ...original, invocationId });
+            return Object.freeze({ ...invoked, locator });
+        };
+        const active: ActiveTurn = Object.freeze({ invoke, get isCurrent() { return turn.isCurrent; },
+            readConsoleInputs: turn.readConsoleInputs, inspectRef: turn.inspectRef, release: turn.release });
+        this.managedTurns.set(active, turn);
+        return Object.freeze({ ...result, turn: active });
+    }
+
+    async readReceipt(locator: ReceiptLocator, timeoutMs?: number): Promise<ReceiptAccess> {
+        if (locator?.desktopId !== this.id) return Object.freeze({
+            kind: 'unavailable', code: 'RECEIPT_LOCATOR_UNAVAILABLE', message: 'The receipt does not belong to this Desktop.',
+        });
+        const result = this.getRunningApp(locator.appId, locator.instanceId);
+        if (result.status === 'rejected') return Object.freeze({ kind: 'unavailable', ...result.issue });
+        return result.app.readReceipt({ observationId: locator.observationId, invocationId: locator.invocationId }, timeoutMs);
     }
     /**
      * Get System Logs (for <desktop> area)
      */
     getSystemLogs(): LogEntry[] {
-        return this.logger.getSystemLogs(this.id);
+        return this.logger.getSystemLogs();
     }
 
     /**
      * Log System Message
      */
-    logSystem(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
-        if (!this._isDraining) this.logger.logSystem(this.id, message, level);
+    logSystem(message: string, level: LogEntry['level'] = 'info'): void {
+        if (!this.isClosing) this.logger.logSystem(message, level);
     }
-
-    /**
-     * [RFC-014] 等待所有 App 关闭完成
-     * 
-     * 关闭所有 App 并等待 Worker 清理。
-     * 调用后 Desktop 进入 draining 状态。
-     */
-    private beginDrain(intent: 'close' | 'delete'): Promise<void> {
-        if (this.drainPromise) {
-            if (this.closeIntent === 'close' && intent === 'delete') return Promise.reject(closeError('LIFECYCLE_CONFLICT'));
-            return this.drainPromise;
-        }
-        this._isDraining = true;this.closeIntent = intent;this.closeState.intent = intent;
-        let finish!: () => void;
-        const completed = new Promise<void>(resolve => { finish = resolve; });
-        // Install the shared promise before invoking any injected code.
-        this.drainPromise = completed.then(() => { if (this.closeState.hasFailures || this.drainReport()?.hasFailures) throw closeError('DESKTOP_CLOSE_FAILED', this.report()); });
-        void this.drainPromise.catch(() => {});
-        const tasks: Promise<unknown>[] = [];
-        try {
-            this.appClose = this.appManager.beginClose(intent);
-            tasks.push(this.appClose.completion.then(report => { this.appReport = report;this.appClose = undefined; }));
-        } catch { addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id });this.closeState.resourcesReleased = false; }
-        void Promise.allSettled(tasks).then(results => {
-            if (results.some(result => result.status === 'rejected')) { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id }); }
-            finish();
-        });
-        return this.drainPromise;
-    }
-
-    private drainReport(): AppManagerCloseReport | undefined { return this.appClose?.inspect() ?? this.appReport; }
 
     private report(): DesktopCloseReport {
         const state = structuredClone(this.closeState);
-        const child = this.drainReport();if (child) { mergeCloseReport(state, child);state.workers = { ...child.workers }; }
-        const released = state.resourcesReleased && this._disposed && !Object.values(state.cleanup).some(value => value === 'pending' || value === 'failed' || value === 'unverified');
+        for (const handle of this.closingApps.values()) mergeCloseReport(state, handle.inspect());
+        state.pendingTasks = this.appManager.pendingStarts;
+        const released = state.resourcesReleased && !state.pendingTasks &&
+            state.cleanup.signalBus === 'done' && state.cleanup.logger === 'done';
         state.resourcesReleased = released;
-        state.desktops = { accepted: 1, settled: state.state === 'settled' ? 1 : 0, pending: state.state === 'settled' ? 0 : 1, notVerifiedReleased: released ? 0 : 1 };
-        return freezeClose({ ...snapshotClose(state), scope: 'desktop' as const, intent: this.closeIntent, desktopId: displayCloseId(this.id), found: true });
+        const settled = Number(state.state === 'settled');
+        state.desktops = { accepted: 1, settled, pending: 1 - settled, notVerifiedReleased: released ? 0 : 1 };
+        return snapshotClose({ ...state, scope: 'desktop', desktopId: displayCloseId(this.id) });
     }
 
-    private completeClose(): DesktopCloseReport {
+    beginClose(): DesktopCloseHandle {
+        const previous = this.closeHandle;
+        if (previous && (this.closeState.state !== 'settled' || previous.inspect().resourcesReleased)) return previous;
+        this.closeState.state = 'closing';
+        let complete!: (report: DesktopCloseReport) => void;
+        const completion = new Promise<DesktopCloseReport>(resolve => { complete = resolve; });
+        this.closeHandle = createCloseHandle(() => this.report(), completion);
+
+        const { apps, accepted } = previous ? { apps: [...this.closingApps.keys()], accepted: [] } : this.appManager.stopAdmission();
+        if (!previous && this.turns.close().length) {
+            addCloseFailure(this.closeState, 'apps', ['RESOURCE_RELEASE_FAILED'], { desktopId: this.id });
+            this.closeState.resourcesReleased = false;
+        }
+        for (const app of apps) this.closingApps.set(app, app.beginClose());
+        void this.finishClose(accepted).then(complete);
+        return this.closeHandle;
+    }
+
+    private async finishClose(accepted: readonly Promise<unknown>[]): Promise<DesktopCloseReport> {
+        const apps = [...this.closingApps];
+        await Promise.allSettled(accepted);
+        await Promise.all(apps.map(async ([app, handle]) => {
+            try {
+                const report = await handle.completion;
+                if (report.resourcesReleased) {
+                    mergeCloseReport(this.closeState, report);
+                    this.closingApps.delete(app);
+                }
+            } catch {
+                addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id, appId: app.appId });
+            }
+        }));
+        await Promise.all([
+            this.clean('signalBus', 'signals', () => this.signalBus.cleanup()),
+            this.clean('logger', 'logger', () => this.logger.cleanup()),
+        ]);
+        this.appManager.clearInactiveInstallations();
         this.closeState.state = 'settled';
         const report = this.report();
         if (report.resourcesReleased) {
@@ -322,89 +300,23 @@ export class Desktop implements IDesktop {
         return report;
     }
 
-    beginClose(options?: DesktopCloseOptions): DesktopCloseHandle {
-        const timeout = closeTimeout(options), intent = options?.intent ?? 'close', callback = options?.beforeClose;
-        if (intent !== 'close' && intent !== 'delete' || callback !== undefined && typeof callback !== 'function') throw closeError('CLOSE_OPTIONS_INVALID');
-        if (this.closeHandle) {
-            if (this.closeIntent === 'close' && intent === 'delete' || callback && callback !== this.selectedBeforeClose?.deref()) throw closeError('LIFECYCLE_CONFLICT');
-            if (this.closeState.state === 'settled' && this.appReport?.resources.retainedStorageOwners) {
-                this.closeState.state = 'closing';
-                this.closePromise = undefined;
-                const retry = Promise.resolve().then(async () => {
-                    try { this.appReport = await this.appManager.retryResourceRelease(); }
-                    catch { addCloseFailure(this.closeState, 'persistence', ['RESOURCE_RELEASE_FAILED'], { desktopId: this.id }); }
-                    return this.completeClose();
-                });
-                this.closeHandle = createCloseHandle(() => this.report(), retry);
-            }
-            return this.closeHandle;
+    private async clean(key: 'signalBus' | 'logger', stage: 'signals' | 'logger', action: () => unknown): Promise<void> {
+        const cleanup = this.closeState.cleanup;
+        if (cleanup[key] === 'done') return;
+        cleanup[key] = 'pending';
+        try { await action(); cleanup[key] = 'done'; }
+        catch {
+            cleanup[key] = 'failed';
+            addCloseFailure(this.closeState, stage, ['DESKTOP_CLEANUP_FAILED'], { desktopId: this.id });
         }
-        if (this._isDraining && this.closeIntent === 'close' && intent === 'delete') throw closeError('LIFECYCLE_CONFLICT');
-        this.selectedBeforeClose = callback ? new WeakRef(callback) : undefined;this.closeState.beforeClose = callback ? 'pending' : 'not-provided';
-        let complete!: (report: DesktopCloseReport) => void;
-        const completion = new Promise<DesktopCloseReport>(resolve => { complete = resolve; });
-        this.closeHandle = createCloseHandle(() => this.report(), completion);
-        // The eligibility deadline belongs to this full close, independently of observers.
-        const deadline = performance.now() + timeout;
-        let expired = false;
-        let timer: ReturnType<typeof setTimeout> | undefined = callback ? setTimeout(() => { expired = true;timer = undefined; }, timeout) : undefined;
-        const clearEligibility = () => { if (timer !== undefined) clearTimeout(timer);timer = undefined; };
-        const drain = this.beginDrain(intent);
-        void (async () => {
-            try { await drain; } catch { /* The drain report preserves known failures; cleanup still runs. */ }
-            if (callback) {
-                if (this.closeState.hasFailures || this.drainReport()?.hasFailures) this.closeState.beforeClose = 'skipped-drain-failed';
-                else if (expired || performance.now() >= deadline) this.closeState.beforeClose = 'skipped-deadline';
-                else {
-                    this.closeState.beforeClose = 'running';clearEligibility();
-                    try { await callback();this.closeState.beforeClose = 'done'; }
-                    catch { this.closeState.beforeClose = 'failed'; }
-                }
-                clearEligibility();
-                if (this.closeState.beforeClose === 'failed') addCloseFailure(this.closeState, 'before-close', ['BEFORE_CLOSE_FAILED'], { desktopId: this.id });
-                else if (this.closeState.beforeClose !== 'done') addCloseFailure(this.closeState, 'before-close', ['BEFORE_CLOSE_SKIPPED'], { desktopId: this.id });
-            }
-            const cleanup = async (key: 'signalBus' | 'logger', action: () => unknown, stage: 'signals' | 'logger') => {
-                this.closeState.cleanup[key] = 'pending';
-                try { await action();this.closeState.cleanup[key] = 'done'; }
-                catch { this.closeState.cleanup[key] = 'failed';this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, stage, ['DESKTOP_CLEANUP_FAILED'], { desktopId: this.id }); }
-            };
-            // Invoke every independent branch before awaiting any one branch.
-            const cleanups = [
-                cleanup('signalBus', async () => {
-                    const cancellations = [...this.subscriptions.values()];this.subscriptions.clear();
-                    const results = await Promise.allSettled(cancellations.map(async cancel => { cancel(); }));
-                    try { await this.signalBus.cleanup(this.id); } catch { throw closeError('DESKTOP_CLEANUP_FAILED'); }
-                    if (results.some(result => result.status === 'rejected')) throw closeError('DESKTOP_CLEANUP_FAILED');
-                }, 'signals'),
-                cleanup('logger', () => this.logger.cleanup(this.id), 'logger'),
-                (async () => {
-                    try { await this.appManager.cleanupAsync(); }
-                    catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id }); }
-                })()
-            ];
-            await Promise.allSettled(cleanups);
-            this._disposed = true;
-            clearEligibility();
-            complete(this.completeClose());
-        })();
-        return this.closeHandle;
-    }
-
-    delete(): Promise<void> {
-        try { const handle = this.beginClose({ intent: 'delete' });return this.closePromise ??= closeVoid(handle.completion, 'DESKTOP_CLOSE_FAILED'); }
-        catch (error) { return Promise.reject(error); }
-    }
-    dispose(): Promise<void> {
-        try { const handle = this.beginClose();return this.closePromise ??= closeVoid(handle.completion, 'DESKTOP_CLOSE_FAILED'); }
-        catch (error) { return Promise.reject(error); }
     }
 
     // --- Internals ---
 
-    // Delegate to SignalBus
-    public emitSignal(reason: UpdateSignal['reason']) {
-        if (!this._isDraining) this.signalBus.emitSignal(this.id, reason);
+    public emitSignal(update: Pick<UpdateSignal, 'appId' | 'instanceId' | 'reason'>) {
+        if (this.isClosing) return;
+        const signal = Object.freeze({ ...update, desktopId: this.id, timestamp: Date.now() });
+        this.signalBus.emit(signal, () => !this.isClosing);
     }
 
     // [RFC-001 Phase 2] DOM Observers Removed

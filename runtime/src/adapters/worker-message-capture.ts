@@ -1,5 +1,4 @@
-import { isToolResultData } from '@aotui/core/internal';
-import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '@aotui/core/internal';
+import { checkWireJson, isToolResultData } from '@aotui/core';
 import type { JsonValue } from '@aotui/core';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
 
@@ -25,28 +24,9 @@ export function text(value: unknown): value is string {
     return typeof value === 'string' && value.length > 0;
 }
 
-/** Capture only bounded JSON data; getters, cycles, unsupported values and oversized data reject. */
-export function captureInvocationJson(
-    input: unknown,
-    limits: JsonCopyLimits & { readonly maxCanonicalBytes: number } = WORKER_MESSAGE_LIMITS
-): JsonValue {
-    const value = copyJson(input, limits);
-    if (utf8Size(canonicalJson(value)) > limits.maxCanonicalBytes) {
-        throw new RangeError('Worker message exceeds budget');
-    }
-    return value;
-}
-
 export function invocationReceiver(value: JsonValue | undefined): boolean {
     return invocationObject(value) && exact(value, ['viewId', 'viewInstanceId', 'activationId']) &&
         text(value.viewId) && !value.viewId.includes('.') && text(value.viewInstanceId) && text(value.activationId);
-}
-
-export function invocationToolDescriptor(value: JsonValue | undefined): boolean {
-    return invocationObject(value) && exact(value, ['id', 'name', 'viewType', 'multiplicity', 'description', 'inputSchema']) &&
-        ['id', 'name', 'viewType', 'description'].every(key => text(value[key])) &&
-        (value.multiplicity === 'single' || value.multiplicity === 'multiple') &&
-        invocationObject(value.inputSchema) && value.inputSchema.type === 'object';
 }
 
 /** Capture and correlate a bounded invocation terminal without trusting Worker payloads. */
@@ -55,7 +35,8 @@ export function captureToolInvocationTerminal(
     expected: Readonly<{ requestId: string; appId: string; instanceId: string }>
 ): ViewToolInvocationTerminal | Readonly<{ phase: 'finished-unknown' }> | null {
     try {
-        const value = captureInvocationJson(input);
+        checkWireJson(input, WORKER_MESSAGE_LIMITS, true);
+        const value = input;
         if (!invocationObject(value) || !exact(value, [
             'type', 'requestId', 'appId', 'instanceId', 'success', 'terminal',
         ]) || value.type !== 'VIEW_TOOL_INVOKE_RESPONSE' || value.requestId !== expected.requestId ||

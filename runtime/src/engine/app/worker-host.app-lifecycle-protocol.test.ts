@@ -19,12 +19,12 @@ function fixture(fault?: (request: any, response: any) => any) {
             const response = { requestId: request.requestId, success: true,
                 type: request.type === 'INIT' ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
                 ...(request.type === 'INIT' ? {
-                    appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: host.appInstanceId },
+                    appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
                     persistence: { protocol: 'state-session-v2', version: 2, instanceId: host.appInstanceId },
                     protocol: request.protocol, toolsEnabled: request.toolsEnabled,
                     projectionLimits: request.projectionLimits,
                     appInstanceId: host.appInstanceId,
-                } : ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(request.type) ? {
+                } : ['APP_STOP', 'APP_CLOSE'].includes(request.type) ? {
                     appCleanup: report,
                     ...(request.type === 'APP_CLOSE' ? { persistence: {
                         protocol: 'state-session-v2', instanceId: host.appInstanceId, ok: true, unmount: 'completed',
@@ -53,12 +53,12 @@ it('accepts the callback result without owner counts or resource-proof fields', 
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });
 
-it.each(['wrong-response-type', 'wrong-instance', 'wrong-protocol', 'wrong-version', 'missing-lifecycle-ack'])('rejects %s INIT and retires the Worker', async fault => {
+it.each(['wrong-response-type', 'wrong-instance', 'wrong-protocol', 'retired-numeric-version', 'missing-lifecycle-ack'])('rejects %s INIT and retires the Worker', async fault => {
     const x = fixture((request, response) => request.type !== 'INIT' ? response : fault === 'wrong-response-type'
         ? { requestId: response.requestId, type: 'LIFECYCLE_RESPONSE', success: true }
         : fault === 'missing-lifecycle-ack' ? (({ appLifecycle, ...missing }) => missing)(response)
         : { ...response, appLifecycle: { ...response.appLifecycle, ...(fault === 'wrong-instance' ? { instanceId: 'other' }
-            : fault === 'wrong-protocol' ? { protocol: 'app-lifecycle-v3' } : { version: 1 }) } });
+            : fault === 'wrong-protocol' ? { protocol: 'app-lifecycle-v3' } : { version: 2 }) } });
     const error = fault === 'wrong-response-type' ? 'APP_INIT_ACK_INVALID' : 'APP_LIFECYCLE_NEGOTIATION_FAILED';
     await expect(x.host.start()).rejects.toThrow(error);
     expect(x.host.getResourceReport().appCleanup?.support).toBe('rejected');

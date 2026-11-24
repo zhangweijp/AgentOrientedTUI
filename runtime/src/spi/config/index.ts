@@ -3,7 +3,6 @@
  * 
  * Unified source of truth for all runtime configurations.
  * 
- * @module @aotui/runtime/spi/config
  */
 
 // 类型导出

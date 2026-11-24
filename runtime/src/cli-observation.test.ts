@@ -1,10 +1,11 @@
-import { projectCompleteViews } from '@aotui/core/internal';
+import { createAppInteraction, createSnapshotCore, projectCompleteViews } from '@aotui/core/host';
+import { createViewOwnedTools } from '@aotui/core/producer';
 import { buildViewMessageMarkup } from './adapters/view-message.js';
 import { readFileSync } from 'node:fs';
 import { transformSync } from 'esbuild';
 import { Linter, type Rule, type SourceCode } from 'eslint';
 import { describe, expect, it, vi } from 'vitest';
-import { createAppInteraction, createSnapshotCore, createViewOwnedTools, refKey } from '@aotui/core';
+import { refKey } from '@aotui/core';
 import type { AppInteraction, AppInteractionPolicy } from '@aotui/core';
 
 const cli = transformSync(readFileSync(new URL('../../host/src/app-distribution/cli.ts', import.meta.url), 'utf8'), { loader: 'ts', target: 'es2022' }).code;
@@ -31,17 +32,17 @@ function fixture(project?: AppInteractionPolicy['project']) {
     const core = createSnapshotCore({ appId: 'app', instanceId: 'run', now: () => 0 });
     const tools = createViewOwnedTools('app', 'run');
     tools.defineViewTypes([{ name: "Detail", multiplicity: 'multiple', tools: [{ name: 'edit', description: 'Edit', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, { name: 'inspect', description: 'Inspect', inputSchema: { type: 'object', properties: {
-            record: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
+            record: { 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
         }, required: ['record'], additionalProperties: false } }] }]);
     const frame = tools.prepareFrame(['first', 'second'].map(id => ({
-        createId: () => id, type: 'Detail', owner: {}, bindings: ['edit', 'inspect'].map(name => ({ name, enabled: true, execute: () => ({ success: true }) })),
+        idPrefix: id, type: 'Detail', owner: {}, bindings: ['edit', 'inspect'].map(name => ({ name, enabled: true, execute: () => ({ success: true }) })),
     })));
     frame.accept();
     const views = frame.instances;
-    const published = core.committer.accept({ schemaVersion: 7, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    const published = core.committer.accept({ schemaVersion: 8, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: views.map(view => ({ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: view.viewId,
             region: 'dynamic', content: { format: 'markdown-v1', value: 'Current content' } })),
-        refs: Object.fromEntries(views.map(view => [refKey(view.viewId, view.viewInstanceId, 'data'), { scope: 'protected',
+        refs: Object.fromEntries(views.map(view => [refKey(view.viewId, view.viewInstanceId, 'data'), { valueSchema: { type: 'object' }, scope: 'protected',
             id: 'data', ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId, refType: 'unknown', target: { kind: 'snapshot-value', payload: { value: 1 } },
         }])), tools: Object.fromEntries(frame.tools.map(tool => [tool.id, tool])) });
     expect(published.status).toBe('published');
@@ -50,21 +51,21 @@ function fixture(project?: AppInteractionPolicy['project']) {
         execution: { resolve: () => null } });
     const authority = client;
     function released() {
-        expect(authority.inspect().observations).toMatchObject({ observations: 0, reservations: 0, sources: 0, totalBytes: 0 });
+        expect(authority.inspect().observations).toMatchObject({ observations: 0, reservations: 0, });
         expect(core.store.inspect().activeHolds).toBe(0);
     }
     async function close() {
         authority.close(); await authority.whenClosed(); released();
-        expect(authority.inspect().combinedBytes).toBe(0); tools.dispose(); core.lifecycle.dispose();
+        expect(core.store.inspect().activeHolds).toBe(0); tools.dispose(); core.lifecycle.dispose();
     }
     return { authority, client, released, close };
 }
 
 function printer(client: AppInteraction, output: Pick<Console, 'log' | 'error'>) {
-    const desktop = { getInstalledApps: () => [{ appId: 'app', appInstanceId: 'run', status: 'running' }] };
-    const runtime = { getAppInteraction: () => ({ status: 'ready', interaction: client }) };
-    return new Function('runtime', 'desktopId', 'desktop', 'buildViewMessageMarkup', 'console', `${printCode}; return printCurrentViews;`)(
-        runtime, 'desktop', desktop, buildViewMessageMarkup, output);
+    const desktop = { listApps: () => [{ appId: 'app', appInstanceId: 'run', status: 'running' }],
+        getRunningApp: () => ({ status: 'ready', app: client }) };
+    return new Function('desktop', 'buildViewMessageMarkup', 'console', `${printCode}; return printCurrentViews;`)(
+        desktop, buildViewMessageMarkup, output);
 }
 
 describe('read-only CLI preview', () => {
@@ -90,7 +91,7 @@ describe('local IDE example observations', () => {
     it('projects shared Tools once and all Ref owners using the current grant contract', async () => {
         const f = fixture();
         try {
-            const result = await f.client.observe({ all: true });
+            const result = await f.client.observe();
             expect(result.status).toBe('observed');
             if (result.status !== 'observed') return;
             expect(result.observation).toMatchObject({ views: [{ content: { value: 'Current content' } }, { content: { value: 'Current content' } }] });
@@ -102,11 +103,11 @@ describe('local IDE example observations', () => {
     it('releases twenty views commands while retaining an explicit invocation observation', async () => {
         const f = fixture(), emit = vi.fn(), views = exampleViews(f.client, emit);
         try {
-            const retained = await f.client.observe({ all: true });
+            const retained = await f.client.observe();
             expect(retained.status).toBe('observed');
             if (retained.status !== 'observed') return;
             for (let index = 0; index < 20; index++) {
-                expect(await views()).toEqual([{ viewId: 'first', viewType: 'Detail', viewName: 'first' }, { viewId: 'second', viewType: 'Detail', viewName: 'second' }]);
+                expect(await views()).toEqual([{ viewId: 'first_1', viewType: 'Detail', viewName: 'first_1' }, { viewId: 'second_1', viewType: 'Detail', viewName: 'second_1' }]);
                 expect(f.authority.inspect().observations.observations).toBe(1);
             }
             expect(emit).toHaveBeenCalledTimes(20);

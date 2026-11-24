@@ -19,7 +19,7 @@ const declaration = (name, fields) => ({
     enabled: context => context.toolEnabled,
     execute: ({ input, context }) => context.execute(context.receiver, name, input),
 });
-const FileType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name:'File', tools: {
+const FileType = defineViewType()({ multiplicity: 'multiple', name:'File', tools: {
     read: declaration('read', { file: ref('Data'), value: Type.Optional(Type.String()),
         choice: Type.Optional(Type.String({ enum: ['allowed'] })), text: Type.Optional(Type.String({ minLength: 1 })), mode: Type.Optional(Type.String()) }),
     typed: declaration('typed', { file: ref('File') }),
@@ -29,13 +29,13 @@ const FileType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefi
 const labelFor = owner => owner === 'aa' ? 'alpha' : 'beta';
 function Marker({ owner, text }) {
     const label = labelFor(owner);
-    const reference = useDataRef(label, { owner, text, secret: SENTINEL, nested: { items: [1, false, null] } }, { scope: 'protected', refType: 'Data' });
-    const [array] = useArrayRef('array_' + label, [], { scope: 'protected', itemType: 'Data' });
+    const reference = useDataRef(label, { owner, text, secret: SENTINEL, nested: { items: [1, false, null] } }, { schema: Type.Object({}), scope: 'protected', refType: 'Data' });
+    const [array] = useArrayRef('array_' + label, [], { schema: Type.Array(Type.Object({})), scope: 'protected', itemType: 'Data' });
     // Payload.type deliberately says File while actual metadata remains Data.
-    const metadata = useDataRef('metadata_' + label, { type: 'File', owner, revision: 1 }, { scope: 'protected', refType: 'Data' });
+    const metadata = useDataRef('metadata_' + label, { type: 'File', owner, revision: 1 }, { schema: Type.Object({}), scope: 'protected', refType: 'Data' });
     return h('p', {}, [reference('Stable file'), array('Array'), metadata('Metadata')]);
 }
-function ForeignMarker() { return h('p', {}, useDataRef('private_beta', { owner: 'bb' }, { scope: 'protected', refType: 'Data' })('Foreign')); }
+function ForeignMarker() { return h('p', {}, useDataRef('private_beta', { owner: 'bb' }, { schema: Type.Object({}), scope: 'protected', refType: 'Data' })('Foreign')); }
 function Content({ owner, state }) {
     return h('section', {}, [state.showRef ? h(Marker, { owner, text: state.text, key: 'ref' }) : null,
         owner === 'bb' ? h(ForeignMarker, { key: 'foreign' }) : null, h('p', { key: 'revision' }, 'Revision ' + state.revision)]);

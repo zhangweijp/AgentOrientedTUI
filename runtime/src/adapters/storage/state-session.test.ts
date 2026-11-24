@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { createMemoryStateStorage } from './memory-state-storage.js';
-import { createStateSession, type StateAddress, type StateSessionLimits, type StateStorage, type StateValue } from '@aotui/core';
-import { failedMutation, failedRead, stateIssue, unknownMutation } from '@aotui/core/internal';
+import { createStateSession, failedMutation, failedRead, stateIssue, unknownMutation } from '@aotui/core/persistence';
+import type { StateAddress, StateSessionLimits, StateStorage, StateValue } from '@aotui/core';
 
 const limits: StateSessionLimits = { maxKeys: 8, maxDepth: 10, maxNodes: 200, maxValueBytes: 512, maxRecordBytes: 1024,
     maxAddressBytes: 128, maxRetainedBytes: 8192, maxPendingRequests: 8, maxConcurrentRequests: 4, maxRevision: 1000 };

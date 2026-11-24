@@ -1,3 +1,4 @@
+import FixtureType from 'typebox';
 import * as SDK from '@aotui/sdk';
 import { Type } from 'typebox';
 import { h } from 'preact';
@@ -54,16 +55,16 @@ function makeTools() {
     };
     for (const [index, param] of specialNames.entries())
         definitions['special_' + index] = declare('special_' + index, Object.fromEntries([[param, ref('Data')]]));
-    return SDK.defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:"File",tools:definitions});
+    return SDK.defineViewType()({ multiplicity: 'multiple', name:"File",tools:definitions});
 }
 const File = makeTools();
-const Guide = SDK.defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:"Root"});
+const Guide = SDK.defineViewType({ multiplicity: 'multiple', name:"Root"});
 function NewTools({ view, state }) {
     const label = labelFor(view);
-    const file = SDK.useDataRef(label, { label: state.text, view, literal }, { scope: 'protected', refType: 'Data' });
+    const file = SDK.useDataRef(label, { label: state.text, view, literal }, { schema: FixtureType.Object({}), scope: 'protected', refType: 'Data' });
     // Complete effectiveArgs has root + payload + view scalar + list array + N entries: N + 4 nodes.
-    const big = SDK.useDataRef('capacity_' + label, { view, list: Array(Math.max(0, state.capacityNodes - 4)).fill(null) }, { scope: 'protected', refType: 'Data' });
-    const foreign = SDK.useDataRef('private_' + label, { view }, { scope: 'protected', refType: 'Data' });
+    const big = SDK.useDataRef('capacity_' + label, { view, list: Array(Math.max(0, state.capacityNodes - 4)).fill(null) }, { schema: FixtureType.Object({}), scope: 'protected', refType: 'Data' });
+    const foreign = SDK.useDataRef('private_' + label, { view }, { schema: FixtureType.Object({}), scope: 'protected', refType: 'Data' });
     return h('section', {}, [h('p', {}, `Private fixture object: ${view}`),
         h('p', {}, [file('Original file value'), big('List value'), foreign('View-specific value')]),
         h('p', {}, 'Private protocol tools: inspect and plain; availability is supplied by the committed Tool catalog.')]);

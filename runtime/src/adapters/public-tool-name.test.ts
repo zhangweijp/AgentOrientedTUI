@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildPublicToolName } from './public-tool-name.js';
+import type { Observation } from '@aotui/core';
+import { buildPublicToolName, projectNativeToolNames } from './public-tool-name.js';
+
+function observation(appId: string, ...pairs: [viewType: string, name: string][]): Pick<Observation, 'source' | 'tools'> {
+    return { source: { appId, revision: 1, instanceId: 'run', snapshotId: 'snapshot' }, tools: pairs.map(([viewType, name]) => ({
+        id: JSON.stringify([appId, viewType, name]), viewType, name, description: name, multiplicity: 'single', inputSchema: { type: 'object' },
+    })) };
+}
 
 describe('native public Tool names', () => {
     it('joins valid component names with an unambiguous separator', () => {
@@ -38,5 +45,26 @@ describe('native public Tool names', () => {
         expect(buildPublicToolName('a', 'x'.repeat(62))).toHaveLength(64);
         expect(() => buildPublicToolName('a', 'x'.repeat(63)))
             .toThrow('AOTUI_TOOL_NAME_INVALID: the combined native Tool name has 65 characters');
+    });
+
+    it('qualifies repeated and reserved names without changing the source tool IDs', () => {
+        const source = observation('system', ['Archive', 'read'], ['Inbox', 'read'], ['Inbox', 'open_app'], ['Inbox', 'search']);
+        const [names] = projectNativeToolNames([source]);
+        if (names?.status !== 'ready') throw Error('Expected named tools');
+        expect([...names.tools.keys()]).toEqual(['system-Archive-read', 'system-Inbox-read', 'system-Inbox-open_app', 'system-search']);
+        expect([...names.tools.values()]).toEqual(source.tools);
+    });
+
+    it('reports invalid aliases and collisions per observation while retaining its valid peers', () => {
+        const healthy = observation('notes', ['Inbox', 'read']);
+        const tooLong = observation('archive', ['List', 'x'.repeat(65)]);
+        const conflict = observation('notes', ['Archive', 'read']);
+        const duplicate = observation('duplicates', ['Inbox', 'read'], ['Inbox', 'read']);
+        expect(projectNativeToolNames([healthy, tooLong, conflict, duplicate])).toMatchObject([
+            { status: 'ready', tools: new Map([['notes-read', healthy.tools[0]]]) },
+            { status: 'rejected', issue: { code: 'AOTUI_TOOL_NAME_INVALID', path: 'publicToolName' } },
+            { status: 'rejected', issue: { code: 'AOTUI_TOOL_NAME_COLLISION', message: expect.stringContaining('another App') } },
+            { status: 'rejected', issue: { code: 'AOTUI_TOOL_NAME_COLLISION', message: expect.stringContaining('this App') } },
+        ]);
     });
 });
