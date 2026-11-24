@@ -170,9 +170,11 @@ cat file.txt
 <view view_id="contacts" view_type="ContactList" app_id="wechat" app_name="wechat">
   ## 联系人
 
-  - [Wills Guo](Contact:contacts[0]) — 在线
-  - [Emma Chen](Contact:contacts[1]) — 离开
-  - [JY Chen](Contact:contacts[2]) — 在线
+  [联系人列表](protected contacts: Contact[])
+
+  - [Wills Guo](contacts[0]) — 在线
+  - [Emma Chen](contacts[1]) — 离开
+  - [JY Chen](contacts[2]) — 在线
 </view>
 ```
 
@@ -183,12 +185,12 @@ cat file.txt
 关键不只是名字，而是这种类型化引用：
 
 ```md
-[JY Chen](Contact:contacts[2])
+[JY Chen](contacts[2])
 ```
 
 `JY Chen` 是可读标签。
 
-`Contact:contacts[2]` 是展示标记，包含业务类型和 View 内的局部 Ref 名。结合外层 `id="contacts"`，调用地址为 `contacts.contacts[2]`。
+`contacts[2]` 是页面内的局部标记。根据外层 XML 中实际的 `app_id` 和 `view_id`，调用地址为 `$ref.wechat.contacts.contacts[2]`。普通字符串 `"$HOME"` 原样传入，整个参数或直接数组元素的字面值以 `$ref.` 开头时才用 `$$ref.` 转义。
 
 这一步把“看见一个名字”变成了“绑定到一个真实对象”。
 
@@ -196,14 +198,13 @@ cat file.txt
 
 ### 3. Tool
 
-Agent 根据本轮 `Tools` 里 `wechat-open_chat` 的参数说明，选择联系人并打开对话。
+Agent 根据本轮 `Tools` 里 `wechat-open_chat` 的参数说明，选择联系人并打开对话。联系人列表是单实例 ViewType，传入业务参数即可。
 
 ```json
 {
   "tool": "wechat-open_chat",
   "arguments": {
-    "view_id": "contacts",
-    "contact": "contacts.contacts[2]"
+    "contact": "$ref.wechat.contacts.contacts[2]"
   }
 }
 ```
@@ -257,7 +258,7 @@ Runtime 从调用绑定的观察中解析联系人 Ref，App 打开对应会话�
 
 这套交互由 Runtime 和 App 共同保证。
 
-- Runtime 从调用绑定的观察解析 Ref，并检查来源 View 实例是否仍然有效。
+- Runtime 从已采用轮次的原观察解析 Ref，并检查来源页和接收页资格。采用下一轮后，旧轮次的后续调用和 Ref 解析资格撤销。
 - Tool 声明参数接受的业务类型，Runtime 校验解析后的值。
 - Runtime 根据 App 已提交的状态更新或撤销当前投影。
 - App 对外部修改和并发修改作业务校验，并报告冲突及恢复方式。
@@ -296,11 +297,11 @@ Runtime 从调用绑定的观察中解析联系人 Ref，App 打开对应会话�
 
 ### 并发与外部修改
 
-一个被维护的视图，只有在它仍然可信时才有价值。一旦文件、任务或应用对象可能在 Agent 的直接动作回路之外发生变化，runtime 就必须明确处理刷新、冲突检测和恢复策略。
+文件、任务和应用对象都可能在 Agent 行动之外发生变化。App 负责刷新业务状态、检测冲突并提供恢复方式。Runtime 保证观察与调用的来源绑定。
 
 ### 视图预算与上下文压力
 
-状态化界面并不会消除上下文上限，它只是改变了上限是怎么被花掉的。如果多个视图同时保持打开，runtime 就必须决定哪些视图常驻、哪些被摘要、哪些被驱逐，同时又不能打断 Agent 的工作连续性。
+打开多个页面会增加模型输入。App 负责页面展示范围和分页，Host 对包含页面、Tools、历史和预留输出的完整模型请求做预算，并决定是否采用该轮候选。
 
 如果 Agent-Oriented Interface 最终要从一种设计想法走向基础设施，它就必须正面面对这些约束。
 

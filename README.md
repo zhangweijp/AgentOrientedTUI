@@ -198,7 +198,7 @@ The crucial step is not the label by itself, but the typed reference:
 
 `JY Chen` is the readable label.
 
-The declaration on the page identifies the collection as `Contact[]`. With the App and View IDs from the surrounding XML, the call address is `$messaging.contacts.contacts[2]`.
+The declaration on the page identifies the collection as `Contact[]`. The link uses the local marker `contacts[2]`. Combine the actual `app_id` and `view_id` from the surrounding XML to pass `$ref.messaging.contacts.contacts[2]` in a Tool argument. Ordinary text such as `"$HOME"` passes through as written. Use `$$ref.` only when a whole argument or direct array element is literal text starting with `$ref.`.
 
 That turns "seeing a name" into "binding to a concrete object."
 
@@ -212,7 +212,7 @@ The agent uses `messaging-open_chat` from the current `Tools` list and passes th
 {
   "tool": "messaging-open_chat",
   "arguments": {
-    "contact": "$messaging.contacts.contacts[2]"
+    "contact": "$ref.messaging.contacts.contacts[2]"
   }
 }
 ```
@@ -262,10 +262,11 @@ This is not just a thin wrapper over tool calls. It is a different way of organi
 
 The runtime and the app each own part of the interaction contract.
 
-- The runtime resolves Refs from the observation bound to the call and checks that the source View instance is still valid.
+- The runtime resolves Refs from the original observation in the adopted turn and checks that the source and receiver still qualify. Adopting the next turn revokes the old turn's ability to make new calls or resolve Refs.
 - Tools declare the business types they accept, and the runtime validates the resolved values.
 - The runtime updates or revokes the projection based on the app's committed state.
 - The app checks for conflicting external or concurrent changes and reports how to recover.
+- The Host budgets the complete model request, including Views, Tools, conversation history, and reserved output. Apps choose what to show on each page and can offer pagination.
 
 ## What This Model Changes
 
@@ -301,7 +302,7 @@ That tension does not invalidate the interface model, but it does impose a real 
 
 ### Concurrent and External Mutation
 
-A maintained view is only useful if it stays trustworthy. Once files, tasks, or application objects can change outside the agent's immediate action loop, the runtime needs a clear strategy for refresh, conflict detection, and recovery.
+A maintained view is only useful if it stays trustworthy. When files, tasks, or application objects change outside the agent's immediate action loop, the application owns refresh and business conflict recovery. The runtime keeps observations and calls bound to their source.
 
 If agent-oriented interfaces are going to mature into infrastructure rather than remain a design idea, they will have to confront these constraints directly.
 

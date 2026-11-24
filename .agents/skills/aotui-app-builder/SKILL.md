@@ -23,17 +23,17 @@ Keep author metadata in `createApp` or `createTUIApp` once. Build with the SDK a
 
 ToolResult is discriminated by success. A successful short receipt has success:true and optional JSON object data, without error/effects. A failure requires a plain JSON error record containing code and message, with optional JSON context and short recovery data. Record known recovery details in the receipt. Do not return Error instances, stack/cause, functions or undefined. An unknown outcome is not permission to replay a business command. The current View remains the source of business data, separate from the receipt.
 
-For the standard native Tool adapter choose ASCII letters, digits and underscores for Tool/ViewType names. The adapter normally publishes `app_id-toolName` and qualifies it with the ViewType when an App declares the same tool name in multiple types or the short alias is reserved by Desktop. Keep the resulting alias within 64 characters. The current Tools array supplies callable names.
+For the standard native Tool adapter choose ASCII letters, digits and underscores for Tool/ViewType names. The adapter normally publishes `app_id-toolName` and qualifies it with the ViewType when the same tool name appears on multiple observed ViewTypes or the short alias is reserved by Desktop. Keep the resulting alias within 64 characters. The current Tools array supplies callable names.
 
 ## Select published objects through Ref
 
-For a business object already published as a Ref, show a meaningful description and its typed local Ref marker. The model passes `$app_id.view_id.local_ref`. Copy the first two parts from the publishing page XML. App handlers can use business IDs carried inside the published data. Runtime resolves against the invocation's adopted Observation; the handler receives recursively readonly business values. IDs can remain inside App state and Ref payloads.
+For a business object already published as a Ref, show a meaningful description and its typed local Ref marker. The model passes `$ref.app_id.view_id.local_ref`. Copy the first two parts from the publishing page XML. App handlers can use business IDs carried inside the published data. Runtime resolves against the invocation's adopted Observation; the handler receives recursively readonly business values. IDs can remain inside App state and Ref payloads.
 
-Publish a Ref together with its scope. Use `private` for the owning page, `protected` for pages in the same App instance, or `public` to also allow Tools in other Apps presented in the same model request to select the value. In plain TypeScript use `ref('current', value, { scope: 'protected', refType: 'Note', schema: Note })` or `arrayRef('notes', values, { scope: 'protected', itemType: 'Note', schema: Type.Array(Note) })`. In Preact use the same options with `useDataRef` and `useArrayRef`. Declare an array once and use its element markers to label individual selections.
+Publish every Ref with its scope and value schema. Use `private` for the owning page, `protected` for pages in the same App instance, or `public` to also allow Tools in other Apps presented in the same model request to select the value. In plain TypeScript use `ref('current', value, { scope: 'protected', refType: 'Note', schema: Note })` or `arrayRef('notes', values, { scope: 'protected', itemType: 'Note', schema: Type.Array(Note) })`. In Preact use the same options with `useDataRef` and `useArrayRef`. Declare an array once and use its element markers to label individual selections.
 
-The whole-collection marker can read `[Notes](protected notes: Note[])` and an element marker can read `[Draft](notes[0])`. In App `journal`, View `notes_view`, the element address is `$journal.notes_view.notes[0]`. Use a JSON-quoted member such as `$journal.notes_view["file.name"]` for a literal local name containing a dot. Ordinary named business fields accept a literal or a full Ref address. Use `$$` to supply a literal leading dollar. Use `refParam` only where the app requires a published source.
+The whole-collection marker can read `[Notes](protected notes: Note[])` and an element marker can read `[Draft](notes[0])`. In App `journal`, View `notes_view`, the element address is `$ref.journal.notes_view.notes[0]`. Use a JSON-quoted member such as `$ref.journal.notes_view["file.name"]` for a literal local name containing a dot. Ordinary named business fields accept a literal or a full Ref address. Use `$$ref.` for a literal `$ref.` prefix. Other leading dollar signs, nested JSON, and text containing `$ref.` in the middle are ordinary data. Use `refParam` only where the app requires a published source.
 
-For an ordinary string parameter, the Agent can select a granted field such as `$journal.notes_view.notes[0].title`. Object keys use dot notation or JSON-quoted brackets, and array indices use numbers. A `refParam` parameter requires a whole published Ref or a declared ArrayRef element with its nominal label. Host policy can limit paths to specific receiving mounts.
+For an ordinary string parameter, the Agent can select a granted field such as `$ref.journal.notes_view.notes[0].title`. Object keys use dot notation or JSON-quoted brackets, and array indices use numbers. A `refParam` parameter requires a whole published Ref or a declared ArrayRef element with its nominal label. Host policy can restrict each visible Ref to particular receiving mounts. The Agent can inspect the declared schema of any visible Ref and directly read a visible public value through `system-inspect_ref`.
 
 ```ts
 import Type from 'typebox';
@@ -57,7 +57,7 @@ export const Notes = defineViewType<NotesContext>()({ name: 'Notes', multiplicit
   },
 } });
 // App journal and View notes_view. Model input:
-// { selected: ['$journal.notes_view.notes[1]', '$journal.notes_view.notes[0]'], whole: '$journal.notes_view.notes' }
+// { selected: ['$ref.journal.notes_view.notes[1]', '$ref.journal.notes_view.notes[0]'], whole: '$ref.journal.notes_view.notes' }
 // selected is an ordered readonly array of Note objects.
 // whole is the original readonly list when supplied.
 ```
@@ -69,11 +69,15 @@ export const Notes = defineViewType<NotesContext>()({ name: 'Notes', multiplicit
 
 Multiple, optional and selection fields compose at the Tool parameter root. A Ref may select any supported JSON value, including a scalar, null, a nested object, or an array. The target schema validates the selected value after dereferencing. The complete invocation shares one parameter budget. [Schema compiler](../../../core/src/tool/tool-parameters.ts)
 
+Use an object for the Tool's `inputSchema`. A member declared as `Type.Unknown()` or `{}` accepts bounded JSON, including when placed in array items or nested fields. A declared Ref value and the value schema passed to `refParam` need a root shape such as `{ type: 'object' }`. Provider tool policies separately check whether the selected encoder and mode can transmit the schema.
+
 The App still checks that resolved objects exist, belong to the intended current business context, and are permitted. Ref does not replace those checks or freeze the App's live data. Meaningful paths, titles, edit contents and amounts can remain ordinary fields. Readonly argument values do not constrain App business effects; authorization and current-state checks remain independent.
 
 ## Views and instructions
 
-A View is an independent Agent work page. Choose `static` for stable guidance and `dynamic` for changing work. A single ViewType can override its ID with `id`. A multiple ViewType can set `idPrefix` or supply `createId` in its declaration. Keep mounts and plain TypeScript View handles stable as data changes. In plain TypeScript provide a Markdown `body`. In Preact use sibling pages with semantic text content.
+A View is an independent Agent work page. Choose `static` for stable guidance and `dynamic` for changing work. Use ASCII letters, digits and underscores in `view_type`, with at least one letter. A single ViewType can override its ID with `id`. For a multiple ViewType, the framework assigns `<prefix>_<n>` using the type name or the supplied `idPrefix`. Keep mounts and plain TypeScript View handles stable as data changes. In plain TypeScript provide a Markdown `body`. In Preact use sibling pages with semantic text content.
+
+Choose a unique `name` within the ViewType when an open receipt needs its `view_id`. After `prepareOpeningProjection` succeeds, call the author context's `readPreparedViewId(viewType, name)`. A missing or ambiguous match returns `undefined`.
 
 Submit the raw Markdown body. The Runtime message boundary encodes XML text once, including CR/CRLF, and Host preview decodes it once. Use pre/code for exact file, patch and log text. [View props](../../../sdk/src/components/View.tsx)
 
@@ -94,7 +98,7 @@ Use `prepareOpeningProjection({ views })` in plain TypeScript or `prepareOpening
 
 Read the fixed `projectionLimits` from the plain TypeScript author context or `useAppRuntimeContext()` when choosing initial content or an App page size. The frozen values describe the full installed App projection. Use preparation results for actual capacity decisions. The Host budgets the assembled model input and output separately.
 
-Trusted Host consumers prepare an Observation, explicitly adopt it, then invoke with its Observation ID, Tool ID and input matching the observed native Schema. Adoption of a new Observation revokes the previous calling eligibility; publication and diagnostic preview alone do not adopt. The Runtime owns observing, invoking, and resolving Refs for each App instance.
+Trusted Hosts prepare candidates and adopt the complete request with `desktop.adoptTurn`. Call the resulting turn with the observation and tool IDs, the business `input`, and a separate `viewId` only for a multi-instance tool. Adopting a new turn revokes old calling eligibility. Publication and diagnostic preview leave adoption to the Host. The Runtime owns observation, invocation and Ref resolution for each actual App instance.
 
 Verify first/last matching View activation, disabled/re-enabled Tools, correct and invalid Ref selections, optional absence, ordering and duplicates, business membership checks, updated View state and final resource release. Test through the matching actual SDK/Runtime packages; visibility or matching version strings alone do not prove compatibility.
 
