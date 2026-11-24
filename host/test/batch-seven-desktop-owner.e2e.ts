@@ -54,6 +54,12 @@ function gate() { return Promise.withResolvers<void>(); }
 const releases: Array<() => void> = [];
 const pendingOpenings: Promise<unknown>[] = [];
 const folders = new Map<IDesktop, string>();
+function interceptLogCleanup(desktop: IDesktop, action: () => void | Promise<void>) {
+    const logger = (desktop as unknown as { logger: { cleanup(id: string): void } }).logger;
+    const cleanup = logger.cleanup.bind(logger);
+    mock.method(logger, 'cleanup', async id => { await action(); cleanup(id); }, { times: 1 });
+}
+
 type HeldInstall = { entered: ReturnType<typeof Promise.withResolvers<IDesktop>>; resume: ReturnType<typeof gate>; failure?: Error };
 const heldInstalls = new Map<string, HeldInstall>();
 const installAll = registry.installAll.bind(registry);
@@ -75,7 +81,7 @@ mock.method(registry, 'installAll', async (desktop: IDesktop, options?: Paramete
 const facts: any = { requests: provider.requests, assembly: [], passed: false };
 
 async function invoke(desktop: IDesktop, name: string, input: object, invocationId: string) {
-    const { client } = appClient(runtime, desktop, APP);
+    const { client } = appClient(desktop, APP);
     const observation = await observe(client, true);
     try {
         const tool = observation.tools.find(tool => tool.name === name);
@@ -84,7 +90,7 @@ async function invoke(desktop: IDesktop, name: string, input: object, invocation
         assert.equal(result.kind, 'receipt');
         assert.equal(result.receipt.outcome.status, 'succeeded');
         return result.receipt;
-    } finally { client.releaseObservation(observation.observationId); }
+    } finally { client.release(observation.observationId); }
 }
 async function verifyWrite(desktop: IDesktop) {
     const folder = folders.get(desktop)!;
@@ -149,10 +155,9 @@ async function verifyTopicStartupRollback(fault: 'model' | 'agent_state' | 'snap
     const opening = host.ensureSessionForTopic(key).then(() => null, error => error);
     pendingOpenings.push(opening);
     const original = await hold.entered.promise;
-    const client = appClient(runtime, original, APP).client;
+    const client = appClient(original, APP).client;
     if (fault === 'snapshot') {
-        const beginClose = original.beginClose.bind(original);
-        mock.method(original, 'beginClose', () => beginClose({ beforeClose: async () => { throw Error('startup cleanup failed'); } }));
+        interceptLogCleanup(original, () => { throw Error('startup logger cleanup failed'); });
     }
     hold.resume.resolve();
     const error = await opening;
@@ -170,7 +175,8 @@ async function verifyTopicStartupRollback(fault: 'model' | 'agent_state' | 'snap
         assert.equal(error.errors[0], failure);
         assert.equal(error.errors[1].code, 'DESKTOP_CLOSE_FAILED');
         closeReport = error.errors[1].report;
-        assert.equal(closeReport.resourcesReleased, true);
+        assert.equal(closeReport.resourcesReleased, false);
+        assert.equal((await original.beginClose().completion).resourcesReleased, true);
     }
     assert.ok(notifications.every(event => event.visible));
     assert.deepEqual(notifications.map(event => event.type),
@@ -218,7 +224,7 @@ async function verifyIMSaveRollback(phase: 'first' | 'reuse') {
     assert.equal(oldRow?.createdAt, original.createdAt);
     const joining = phase === 'first' ? ensure().then(() => null, error => error) : undefined;
     if (joining) pendingOpenings.push(joining);
-    const oldClient = appClient(runtime, original.desktop, APP).client;
+    const oldClient = appClient(original.desktop, APP).client;
     const released = await original.desktop.beginClose().completion;
     assert.equal(released.resourcesReleased, true);
     assert.equal(im().getSession(key), undefined);
@@ -258,7 +264,7 @@ try {
     const moduleURL = pathToFileURL(resolve(consumer, 'dist/batch-four-files.js')).href;
     await writeFile(join(directory, 'entry.mjs'), 'export { default } from ' + JSON.stringify(moduleURL) + ';\n');
     await writeFile(join(directory, 'aoapp.json'), JSON.stringify({
-        app_name: APP, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7', persistenceSupport: 'state-session-v2',
+        app_name: APP, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
         appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     await desktops.initialize({ appEntries: [{ name: 'files_install', source: 'local:' + directory, enabled: true, autoStart: true }] });
@@ -269,13 +275,14 @@ try {
         heldInstalls.set(key, hold);releases.push(hold.resume.resolve);
         const opening = desktops.createDesktop(key).then(info => ({ info }), error => ({ error }));
         const original = await hold.entered.promise;
-        const initial = original.beginClose(mode === 'double-failure'
-            ? { beforeClose: async () => { throw Error('fixture cleanup failure'); } } : undefined);
-        const closed = await initial.completion;
+        if (mode === 'double-failure') interceptLogCleanup(original, () => { throw Error('fixture logger cleanup failure'); });
+        const initial = await original.beginClose().completion;
+        if (mode === 'double-failure') assert.equal(initial.resourcesReleased, false);
+        const closed = await original.beginClose().completion;
         assert.equal(closed.resourcesReleased, true);
         const successor = (await desktops.createDesktop(key)).desktop;
         const opened = await invoke(successor, 'open_file', { names: ['B'] }, 'open-successor');
-        const current = appClient(runtime, successor, APP).client;
+        const current = appClient(successor, APP).client;
         assert.match(JSON.stringify((await current.preview()).views), /B-INITIAL/);
         hold.resume.resolve();
         const rejected = await opening;
@@ -290,7 +297,7 @@ try {
             assert.equal(rejected.error.errors[1].report, closed);
         }
         assert.equal(runtime.getDesktop(key), successor);
-        const edited = await invoke(successor, 'edit', { view_id: 'file_B', mode: 'short' }, 'write-successor-once');
+        const edited = await invoke(successor, 'edit', { view_id: 'file_B_1', mode: 'short' }, 'write-successor-once');
         facts.assembly.push({ mode, closed, opened, edited, originalWorker: await journal(folders.get(original), 'lifecycle'),
             error: { message: rejected.error.message, code: rejected.error.code }, writes: await verifyWrite(successor) });
         assert.equal((await successor.beginClose().completion).ok, true);
@@ -308,7 +315,7 @@ try {
     for (const phase of ['first', 'reuse'] as const) {
         facts.startupRollback.im.push(await verifyIMSaveRollback(phase));
     }
-    const unrelatedReceipt = await invoke(unrelated, 'edit', { view_id: 'file_B', mode: 'short' }, 'edit-unrelated');
+    const unrelatedReceipt = await invoke(unrelated, 'edit', { view_id: 'file_B_1', mode: 'short' }, 'edit-unrelated');
     facts.startupRollback.unrelated = { receipt: unrelatedReceipt, writes: await verifyWrite(unrelated) };
     assert.equal((await unrelated.beginClose().completion).ok, true);
     facts.startupClose = [];
@@ -345,7 +352,8 @@ try {
     const sourceDisposed = mock.method(old.sources.aotui, 'dispose');
     const entered = gate(), release = gate();releases.push(release.resolve);
     let callbacks = 0;
-    const originalHandle = old.desktop.beginClose({ beforeClose: async () => { callbacks++;entered.resolve();await release.promise; } });
+    interceptLogCleanup(old.desktop, async () => { callbacks++; entered.resolve(); await release.promise; });
+    const originalHandle = old.desktop.beginClose();
     await entered.promise;
     const ending = sessions.destroySession(key);
     assert.equal(sessions.destroySession(key), ending);
@@ -418,13 +426,15 @@ try {
     const explicitFailure = 'explicit-close-failure';topic(explicitFailure);
     await host.ensureSessionForTopic(explicitFailure);
     const explicit = sessions.getSession(explicitFailure)!.desktop;
-    const explicitHandle = explicit.beginClose({ beforeClose: async () => { throw Error('explicit close failure'); } });
+    interceptLogCleanup(explicit, () => { throw Error('explicit logger cleanup failure'); });
+    assert.equal((await explicit.beginClose().completion).resourcesReleased, false);
     const failed = await shutdownThroughRpc(explicitFailure);
     assert.equal(failed.error?.code, 'DESKTOP_CLOSE_FAILED');
     assert.equal(failed.error.report.resourcesReleased, true);
-    assert.deepEqual(failed.error.report, await explicitHandle.completion);
+    assert.deepEqual(failed.error.report, await explicit.beginClose().completion);
 
-    unaffected.beginClose({ beforeClose: async () => { throw Error('batch close failure'); } });
+    interceptLogCleanup(unaffected, () => { throw Error('batch logger cleanup failure'); });
+    assert.equal((await unaffected.beginClose().completion).resourcesReleased, false);
     const batch = await host.dispose().then(() => null, error => error);
     assert.equal(batch?.code, 'DESKTOP_CLOSE_FAILED');
     assert.equal(batch.report.resourcesReleased, true);
@@ -443,7 +453,7 @@ try {
     await Promise.allSettled(pendingOpenings);
     unsubscribe();
     await host.dispose().catch(() => {});
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();
     config.mock.restore();
     db.closeDatabase();

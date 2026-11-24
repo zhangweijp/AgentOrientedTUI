@@ -13,11 +13,11 @@ const state = await mkdtemp(join(tmpdir(), 'aotui-b15-public-'));
 process.env.AOTUI_DATA_DIR = join(state, 'runtime');
 delete process.env.AOTUI_SYSTEM_INSTRUCTION_PATH;
 const { createRuntime } = await import('@aotui/runtime');
-const runtime = createRuntime(), desktop = runtime.getDesktop(await runtime.createDesktop('refresh-desktop'));
+const runtime = createRuntime(), desktop = await runtime.createDesktop('refresh-desktop');
 const provider = await fixtureProvider();
 const history = [], delivered = [], errors = [];
 const budget = { contextWindow: 160_000, maxOutputTokens: 1_000 };
-const source = new SemanticAOTUIDrivenSource(desktop, runtime);
+const source = new SemanticAOTUIDrivenSource(desktop);
 const driver = new AgentDriverV2({ sources: [source, { name: 'History', onUpdate: () => () => {},
     async getContext() { return { messages: history.slice(), tools: {} }; } }],
     llm: { ...llmConfig(provider.url), inputBudget: () => budget },
@@ -51,7 +51,7 @@ try {
     await driver.closeToolTurn();
     driver.dispose();
     await source.dispose();
-    const shutdown = await runtime.beginShutdown().completion;
+    const shutdown = await runtime.beginClose().completion;
     tracked.restore();
     await provider.close();
     await writeFile(resolve(evidence), JSON.stringify({ ...facts, shutdown }, null, 2));

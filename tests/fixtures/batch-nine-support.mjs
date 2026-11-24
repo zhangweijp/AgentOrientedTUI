@@ -69,7 +69,7 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
     const stringTypes = await checkFieldType(consumer, current.body, 'string');
     async function publish(revision, narrowed, field) {
         await catalogState(folder, revision, changed, narrowed, undefined, field);
-        await watchUntil(async () => (await appClient(runtime, desktop, CATALOG).client.preview()).views?.[0]?.content.value.includes(revision));
+        await watchUntil(async () => (await appClient(desktop, CATALOG).client.preview()).views?.[0]?.content.value.includes(revision));
     }
     await publish('numeric scope field', false, 41);
     const updated = await step('new number and prior string closure',
@@ -84,25 +84,26 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
     const refused = await step('revocation during request retains the old locals', 'x = 99; await write("must not execute");', {
         imports: [peopleAddress + '[0].email'], beforeReply: () => publish('scope field withdrawn', true, 41),
     });
-    assert.equal(refused.value.code, 'CONSOLE_REF_UNAVAILABLE');
+    assert.equal(refused.value.code, 'REF_NOT_VISIBLE');
     assert.equal(refused.value.result, undefined);
     assert.deepEqual(await journal(folder, 'writes'), []);
     const closure = system(namespace + '-close-catalog', 'close_app', { app_id: CATALOG });
     const closed = await turn('close source App with retained JSON copy', closure);
     assert.equal(savedResult(closed.message, closure.id).success, true);
-    assert.equal(desktop.getInstalledApps().find(app => app.installationId === CATALOG).status, 'closed');
+    assert.equal(desktop.listApps().find(app => app.installationId === CATALOG).status, 'closed');
     const worker = await journal(folder, 'catalog-life');
     assert.deepEqual(worker.map(entry => entry.event), ['start', 'stop']);
 
-    const task = appClient(runtime, desktop, TASKS).app;
-    await desktop.collapseApp(TASKS, task.appInstanceId);
+    const fold = system(namespace + '-fold-tasks', 'collapse_app', { app_id: TASKS });
+    assert.ok(savedResult((await turn('fold the tasks App', fold)).message, fold.id).success);
     const revoked = await step('withdraw the receiver while keeping local values',
         'try { await oldTool({items:[],literal:"revoked receiver"}); } catch (error) {inspect(error.code);} inspect(savedEmail);');
     assert.ok(!revoked.body.tools.some(entry => entry.function.name === tool('accept')));
     assert.deepEqual(revoked.value.output, ['CONSOLE_TOOL_SCOPE_ENDED', email]);
     assert.deepEqual(revoked.value.subcalls, []);
     assert.deepEqual(await journal(folder, 'writes'), []);
-    await desktop.expandApp(TASKS, task.appInstanceId);
+    const expand = system(namespace + '-expand-tasks', 'expand_app', { app_id: TASKS });
+    assert.ok(savedResult((await turn('expand the tasks App', expand)).message, expand.id).success);
 
     const stale = await step('old run callbacks and tool handles stay invalid',
         'wake(); await background; await Promise.resolve(); ' +
@@ -133,7 +134,7 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
     assert.equal(savedResult((await turn('reopen source under the same App name', opened)).message, opened.id).app_id, CATALOG);
     const reopened = await step('keep the old copy as the source returns', 'inspect(savedEmail); inspect(typeof refs.console_catalog.list.people);');
     assert.deepEqual(reopened.value.output, [email, 'undefined']);
-    await step('store an address-like string in a local variable', 'varStr = "$console_catalog.list.people[0].email";');
+    await step('store an address-like string in a local variable', 'varStr = "$ref.console_catalog.list.people[0].email";');
     const literal = await step('send the string unchanged through a program call', 'await write(varStr);');
     assert.equal(literal.value.subcalls[0].phase, 'entered-returned');
     const writes = await journal(folder, 'writes');

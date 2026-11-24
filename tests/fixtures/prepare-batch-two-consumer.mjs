@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const folder = resolve(process.argv[2]);
-const fields = process.argv[3] === 'batch-three';
+const refContract = process.argv[3] === 'batch-three';
 const windows = process.argv[3] === 'batch-four';
 const markdown = process.argv[3] === 'batch-five';
 const usage = process.argv[3] === 'batch-six';
@@ -14,7 +14,7 @@ const scopedConsole = process.argv[3] === 'batch-nine';
 const consoleBatch = process.argv[3] === 'batch-eight' || scopedConsole;
 const storage = process.argv[3] === 'batch-eleven';
 const projection = process.argv[3] === 'batch-twelve';
-const product = usage || owners || consoleBatch || storage || projection || (markdown && process.argv.includes('--product'));
+const product = refContract || usage || owners || consoleBatch || storage || projection || (markdown && process.argv.includes('--product'));
 await mkdir(folder, { recursive: true });
 await writeFile(join(folder, 'package.json'), JSON.stringify({ name: 'aotui-batch-two-check', private: true, type: 'module' }));
 const packs = ['core', 'runtime', 'sdk', ...(product ? ['agent-driver-v2', 'agent-driver-adapter'] : [])].map(name => {
@@ -32,14 +32,33 @@ const apps = ['batch-two-contacts.ts', 'batch-two-mail.ts'];
 for (const name of apps) await cp(join(root, 'sdk', 'tests', 'fixtures', name), join(folder, name));
 for (const name of ['batch-two-support.mjs', 'batch-two-public-host.mjs']) await cp(new URL(name, import.meta.url), join(folder, name));
 await writeFile(join(folder, 'request-contract.ts'), `
-import type { AppInteraction, IDesktop, RequestSources } from '@aotui/runtime';
-export async function call(desktop: IDesktop, source: AppInteraction, target: AppInteraction) {
-  const sources: RequestSources = desktop.bindRequestSources({ apps: [
-    { client: source, observationId: 'source-observation' },
-    { client: target, observationId: 'target-observation' },
-  ] });
-  return target.invoke({ observationId: 'target-observation', toolId: 'tool', invocationId: 'call',
-    input: { to: '$contacts.list.emails' } }, undefined, sources);
+import type { ActiveTurn, AppInteractionPolicy, IDesktop, IKernel, RunningApp } from '@aotui/runtime';
+export const desktopFor = (runtime: IKernel, policy: AppInteractionPolicy) =>
+  runtime.createDesktop({ policyForApp: ({ installationId }) => {
+    if (!installationId) throw Error('Expected an installation identity');
+    return policy;
+  } });
+export async function call(desktop: IDesktop, source: RunningApp, target: RunningApp) {
+  const contact = await source.observe();
+  if (contact.status === 'rejected') throw Error(contact.issue.message);
+  const mail = await target.observe();
+  if (mail.status === 'rejected') {
+    contact.candidate.discard();
+    throw Error(mail.issue.message);
+  }
+  const adopted = desktop.adoptTurn({ apps: [{ candidate: contact.candidate }, { candidate: mail.candidate }] });
+  if (adopted.status === 'rejected') {
+    contact.candidate.discard();
+    mail.candidate.discard();
+    throw Error(adopted.issue.message);
+  }
+  const turn: ActiveTurn = adopted.turn;
+  try {
+    const result = await turn.invoke(target.appId, { observationId: mail.candidate.observation.observationId,
+      toolId: 'tool', invocationId: 'call', input: { to: '$ref.contacts.list.emails' } });
+    if (result.locator) return desktop.readReceipt(result.locator);
+    return result;
+  } finally { turn.release(); }
 }
 `);
 run(join(folder, 'node_modules', '.bin', 'tsc'), ['--strict', '--exactOptionalPropertyTypes', '--target', 'ES2022',
@@ -50,14 +69,14 @@ async function readmeExample(heading, file) {
     if (!example) throw new Error('No runnable example for ' + heading + ' in the installed Runtime README');
     await writeFile(join(folder, file), example + '\n');
 }
-if (fields) {
-    const fieldApps = ['batch-three-contacts.ts', 'batch-three-mail.ts'];
-    for (const name of fieldApps) await cp(join(root, 'sdk', 'tests', 'fixtures', name), join(folder, name));
-    for (const name of ['batch-three-public-host.mjs', 'batch-three-support.mjs'])
+if (refContract) {
+    const refApps = ['batch-three-contacts.ts', 'batch-three-mail.ts'];
+    for (const name of refApps) await cp(join(root, 'sdk', 'tests', 'fixtures', name), join(folder, name));
+    for (const name of ['batch-three-public-host.mjs', 'batch-three-strict.mjs', 'trace-batch-three-worker.mjs'])
         await cp(new URL(name, import.meta.url), join(folder, name));
-    await readmeExample('Grant fields to a particular View', 'batch-three-readme.ts');
-    run(join(folder, 'node_modules', '.bin', 'tsc'), ['--strict', '--exactOptionalPropertyTypes', '--target', 'ES2022',
-        '--module', 'NodeNext', '--types', 'node', '--outDir', 'dist', ...fieldApps, 'batch-three-readme.ts']);
+    await readmeExample('Bind Console input to the current request', 'batch-three-readme.ts');
+    run(join(folder, 'node_modules', '.bin', 'tsc'), ['--strict', '--exactOptionalPropertyTypes', '--skipLibCheck', 'false',
+        '--target', 'ES2022', '--module', 'NodeNext', '--types', 'node', '--outDir', 'dist', ...refApps, 'batch-three-readme.ts']);
 }
 if (windows) {
     await cp(join(root, 'sdk', 'tests', 'fixtures', 'batch-four-files.ts'), join(folder, 'batch-four-files.ts'));
@@ -129,6 +148,7 @@ if (storage) {
         for (const name of files) await cp(join(root, 'sdk/tests/fixtures', name), join(app, name));
         await writeFile(join(app, 'package.json'), JSON.stringify({
             name: 'aotui-storage-draft-' + kind, version: '0.1.0', type: 'module', main: `./dist/${entry}.js`,
+            aotui: { app_name: 'storage_draft', persistence: true },
             types: `./dist/${entry}.d.ts`, files: ['aoapp.json', 'dist'],
             dependencies: { '@aotui/sdk': sdk.version, typebox: sdk.peerDependencies.typebox,
                 ...(jsx ? { preact: sdk.peerDependencies.preact } : {}) },
@@ -155,6 +175,7 @@ if (projection) {
     await cp(join(root, 'sdk/tests/fixtures', source), join(app, source));
     await writeFile(join(app, 'package.json'), JSON.stringify({
         name: 'aotui-todo-prepare', version: '0.1.0', type: 'module', main: './dist/batch-twelve-todo.js',
+        aotui: { app_name: 'tasks' },
         types: './dist/batch-twelve-todo.d.ts', files: ['aoapp.json', 'dist'],
         dependencies: { '@aotui/sdk': sdk.version, typebox: sdk.peerDependencies.typebox, preact: sdk.peerDependencies.preact },
     }));

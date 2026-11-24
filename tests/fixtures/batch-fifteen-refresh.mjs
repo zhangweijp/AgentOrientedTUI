@@ -24,6 +24,8 @@ export function watchProjectionWorkers() {
                 } else if (reply.type === 'SNAPSHOT_PREPARE_FAILED' || reply.type === 'PROJECTION_CURRENT') {
                     events.push({ ...identify, event: reply.type, requestId: reply.requestId,
                         sourceEpoch: reply.sourceEpoch, producerSeq: reply.producerSeq, error: reply.error });
+                } else if (reply.type === 'APP_EVENT' && reply.reason === 'projection_recovered') {
+                    events.push({ ...identify, event: reply.reason });
                 } else if (reply.type === 'VIEW_TOOL_INVOKE_RESPONSE')
                     events.push({ ...identify, event: 'terminal', requestId: reply.requestId, terminal: reply.terminal });
             });
@@ -36,13 +38,13 @@ export function watchProjectionWorkers() {
 }
 
 export async function exerciseRefresh(turn, runtime, desktop, folder, events, budget, facts) {
-    const current = (index = 0) => desktop.getInstalledApps().find(item => item.installationId === installations[index]);
+    const current = (index = 0) => desktop.listApps().find(item => item.installationId === installations[index]);
     const mount = () => desktop.getAppWindows(current().appId, current().appInstanceId).views
         .find(view => view.viewId === 'editor')?.viewInstanceId;
     const native = (id, tool, input = {}, owner = app) => modelCall(id, owner + '-' + tool, input);
     const open = (id, index = 0) => modelCall(id, 'system-open_app', { installation_id: installations[index] });
     const close = (id, owner = app) => modelCall(id, 'system-close_app', { app_id: owner });
-    const checkText = (id, owner) => native(id, 'read_file', { text: '$' + owner + '.editor.content' }, owner);
+    const checkText = (id, owner) => native(id, 'read_file', { text: '$ref.' + owner + '.editor.content' }, owner);
     const pages = (body, owner) => body.messages.filter(message => message.role === 'user' &&
         message.content.startsWith('<view ') && message.content.includes('app_id="' + owner + '"'));
     const tools = body => body.tools.map(tool => tool.function.name);
@@ -81,27 +83,31 @@ export async function exerciseRefresh(turn, runtime, desktop, folder, events, bu
     async function repair() {
         const offset = events.length;
         await writeFile(join(folder, app + '.repair'), String(offset));
-        return watchUntil(() => events.slice(offset).find(event => event.instance === initial.appInstanceId &&
-            event.event === 'SNAPSHOT_PREPARED' && !event.requestId));
+        const forApp = event => event.instance === initial.appInstanceId;
+        await watchUntil(() => events.slice(offset).some(event => forApp(event) && event.event === 'projection_recovered'));
+        const observed = await appClient(desktop, initial.appId).running.observe();
+        assert.equal(observed.status, 'prepared', JSON.stringify(observed.issue));
+        observed.candidate.discard();
+        const frame = events.slice(offset).find(event => forApp(event) && event.event === 'SNAPSHOT_PREPARED');
+        assert.ok(frame?.requestId, 'A recovered projection is pulled on the next observation.');
+        return frame;
     }
     const firstHealthy = await repair();
     const originalMount = mount();
     assert.ok(originalMount);
     const write = await run('write-before-failure', [native('write', 'append_and_fail_projection', { text: 'Saved exactly once' })]);
-    assert.match(pages(write.body, app).map(page => page.content).join('\n'), /Original[\s\S]+Available references\n- protected content:/);
+    assert.match(pages(write.body, app).map(page => page.content).join('\n'),
+        /Original[\s\S]+Available references\n- protected \$ref\.refresh_files\.editor\.content \(string\)/);
     const saved = { saved: true, projection: 'SNAPSHOT_SERIALIZATION_ERROR' };
     assert.deepEqual(write.outputs, [{ type: 'json', value: saved }]);
     const writeDispatches = () => events.filter(event => event.event === 'dispatch' &&
         event.message.tool.name === 'append_and_fail_projection');
     assert.equal(writeDispatches().length, 1);
     const [{ message: dispatch }] = writeDispatches();
-    const { client } = appClient(runtime, desktop, app);
-    facts.receipt = await client.readReceipt({ observationId: dispatch.observationId, invocationId: 'write' });
-    assert.equal(facts.receipt.kind, 'receipt');
-    assert.equal(facts.receipt.receipt.executionPhase, 'entered-returned');
-    assert.equal(facts.receipt.receipt.outcome.status, 'succeeded');
-    assert.deepEqual(JSON.parse(JSON.stringify(facts.receipt.receipt.outcome.value.data)), saved);
-    assert.equal(events.find(event => event.event === 'terminal' && event.requestId === dispatch.requestId)?.terminal.phase, 'entered-returned');
+    const terminal = events.find(event => event.event === 'terminal' && event.requestId === dispatch.requestId)?.terminal;
+    assert.equal(terminal?.phase, 'entered-returned');
+    assert.equal(terminal.result.success, true);
+    assert.deepEqual(terminal.result.data, saved);
 
     const later = await run('after-write-failure', [checkText('healthy-after-write', neighbor)]);
     fault(later.body);
@@ -155,8 +161,8 @@ export async function exerciseRefresh(turn, runtime, desktop, folder, events, bu
     assert.notEqual(replacement.appInstanceId, initial.appInstanceId);
     assert.notEqual(mount(), originalMount);
     const outdated = await run('stale-close', [close('outdated-close')], { beforeReply: async () => {
-        await desktop.closeApp(replacement.appId, replacement.appInstanceId);
-        assert.equal(await desktop.openApp(installations[0]), app);
+        assert.equal((await appClient(desktop, replacement.appId).running.beginClose().completion).ok, true);
+        assert.equal((await desktop.openApp(installations[0])).appId, app);
     } });
     assert.equal(outdated.outputs[0].value.code, 'APP_INSTANCE_CHANGED');
     const successor = current();

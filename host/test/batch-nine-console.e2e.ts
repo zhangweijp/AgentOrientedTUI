@@ -9,7 +9,7 @@ import type { AgentDriverV2, LLMConfig } from '@aotui/agent-driver-v2';
 import type { DesktopManager } from '../src/core/desktop-manager.js';
 import type { GuiUpdateEvent } from '../src/types/session.js';
 import { fixtureProvider, journal, watchUntil } from '../../tests/fixtures/batch-two-support.mjs';
-import { attachConsolePolicy, CATALOG, installConsoleFixtures, savedResult, TASKS } from '../../tests/fixtures/batch-eight-support.mjs';
+import { consolePolicy, CATALOG, installConsoleFixtures, savedResult, TASKS } from '../../tests/fixtures/batch-eight-support.mjs';
 import { exerciseScope, scopedCall } from '../../tests/fixtures/batch-nine-support.mjs';
 
 const [consumer, evidence] = process.argv.slice(2);
@@ -26,13 +26,13 @@ const override = mock.method(Config, 'get', async () => ({
 }));
 const runtime = createRuntime({ worker: { timeoutMs: 25_000 } }), provider = await fixtureProvider();
 const hooks = { authorized: [], receipts: [] };
-attachConsolePolicy(runtime, hooks);
+const policy = consolePolicy(hooks);
 const folders = new Map<string, string>();
 const assembled = {
     async createDesktop(id: DesktopID) {
         const folder = join(project, 'desktop-' + Date.now() + '-' + Math.random().toString(36).slice(2));
         folders.set(id, folder);
-        const desktop = runtime.getDesktop(await runtime.createDesktop(id));
+        const desktop = await runtime.createDesktop({ id: id, policyForApp: () => policy });
         await installConsoleFixtures(desktop, consumer, folder);
         return { desktop, thirdPartyAppCount: 2 };
     },
@@ -168,7 +168,7 @@ try {
     await host.dispose();
     facts.remaining = processes();
     for (const pid of pids) gone(pid);
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();override.mock.restore();db.closeDatabase();
     if (evidence) await writeFile(resolve(evidence), JSON.stringify(facts, null, 2));
     await rm(project, { recursive: true, force: true });

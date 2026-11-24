@@ -39,10 +39,10 @@ const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter'
 const memory = createMemoryStateStorage({ maxStoredKeys: 8, maxStoredBytes: 8192, maxRecordBytes: 1024,
     maxAddressBytes: 1024, maxActiveOwners: 8, maxClaimedNamespaces: 8 });
 const runtime = createRuntime({}, { storageBackend: { open: ({ owner }) => memory.open(owner) } });
-const desktop = runtime.getDesktop(await runtime.createDesktop('catalog-public'));
+const desktop = await runtime.createDesktop('catalog-public');
 const provider = await fixtureProvider();
 const history = [], delivered = [], errors = [];
-const source = new SemanticAOTUIDrivenSource(desktop, runtime);
+const source = new SemanticAOTUIDrivenSource(desktop);
 const driver = new AgentDriverV2({ sources: [source, { name: 'History', onUpdate: () => () => {},
     async getContext() { return { messages: history.slice(), tools: {} }; } }], llm: llmConfig(provider.url),
     onAssistantMessage(message) {
@@ -72,7 +72,7 @@ async function turn(label, calls, beforeReply) {
 }
 
 try {
-    assert.deepEqual(desktop.getInstalledApps(), []);
+    assert.deepEqual(desktop.listApps(), []);
     const manifest = await readAppManifest(installed);
     const entryManifest = await readAppManifest(manifest.modulePath);
     assert.deepEqual(entryManifest, manifest);
@@ -83,7 +83,7 @@ try {
     const b = await desktop.registerPendingApp({ installationId: manualEntry, localPath: manifest.modulePath,
         config: { ...config, AOTUI_APP_KEY: explicitStorageKey } });
     await assert.rejects(desktop.registerPendingApp({ installationId: a, localPath: installed }), { code: 'APP_ALREADY_EXISTS' });
-    facts.pending = desktop.getInstalledApps();
+    facts.pending = desktop.listApps();
     assert.deepEqual(facts.pending.map(app => [app.installationId, app.name, app.status, app.appId]), [
         [a, appName, 'pending', undefined], [b, appName, 'pending', undefined],
     ]);
@@ -134,10 +134,11 @@ try {
 
     const bare = join(state, 'bare.mjs');
     await fsp.writeFile(bare, 'export { default } from ' + JSON.stringify(pathToFileURL(manifest.modulePath).href) + ';');
-    await assert.rejects(runtime.installDynamicWorkerApp(desktop.id, bare), { code: 'APP_MANIFEST_INVALID' });
-    const bareApp = await runtime.installDynamicWorkerApp(desktop.id, bare, { name: appName, installationId: 'trusted_bare', config });
+    await assert.rejects(desktop.installDynamicWorkerApp(bare), { code: 'APP_MANIFEST_INVALID' });
+    const bareRun = await desktop.installDynamicWorkerApp(bare, { name: appName, installationId: 'trusted_bare', config });
+    const bareApp = bareRun.appId;
     assert.notEqual(bareApp, appName);
-    await desktop.closeApp(bareApp);
+    assert.equal((await bareRun.beginClose().completion).ok, true);
     const stillRunning = await turn('healthy-after-failures', []);
     assert.ok(stillRunning.body.messages.some(item => item.role === 'user' && item.content.includes(draftText)));
     assert.equal((await appEffects(manifest)).filter(item => item.event === 'save').length, 1);
@@ -150,7 +151,7 @@ try {
     await driver.closeToolTurn();
     driver.dispose();
     await source.dispose();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     workers.restore();
     await provider.close();
     facts.memoryAfterClose = memory.getStats();

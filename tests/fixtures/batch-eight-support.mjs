@@ -13,8 +13,8 @@ export const original = [
 export const changed = [original[1], original[0]];
 const email = 'selected@example.test';
 export const codeCall = (id, code, imports) => modelCall(id, 'run_code', { code, ...(imports === undefined ? {} : { imports }) });
-export const itemAddress = '$console_catalog.list.todos';
-export const peopleAddress = '$console_catalog.list.people';
+export const itemAddress = '$ref.console_catalog.list.todos';
+export const peopleAddress = '$ref.console_catalog.list.people';
 
 export async function catalogState(folder, revision, todos = original, narrowed = false, padding, field = undefined) {
     const file = join(folder, 'catalog.json');
@@ -34,14 +34,12 @@ export async function installConsoleFixtures(desktop, consumer, folder) {
     }
 }
 
-export function consolePolicy(hooks, grantEmail) {
+export function consolePolicy(hooks) {
     return {
         project: ({ source }) => ({
-            refs: Object.values(source.refs).flatMap(ref => {
-                if (ref.id === 'people' && grantEmail) return grantEmail(source).refs;
-                return [{ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
-                    ...(ref.id === 'people' ? { paths: [{ path: [0, 'email'], consumer: 'console' }] } : {}) }];
-            }),
+            refs: Object.values(source.refs).map(ref => ({ viewId: ref.ownerViewId,
+                viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
+                ...(ref.id === 'people' ? { consumers: [] } : {}) })),
             toolIds: Object.keys(source.tools),
         }),
         authorize: context => {
@@ -50,12 +48,6 @@ export function consolePolicy(hooks, grantEmail) {
         },
         canReadReceipt: receipt => { hooks.receipts.push(receipt);return true; },
     };
-}
-
-export function attachConsolePolicy(runtime, hooks) {
-    const get = runtime.getAppInteraction.bind(runtime);
-    const policy = consolePolicy(hooks);
-    runtime.getAppInteraction = (desktop, app, instance, supplied) => get(desktop, app, instance, supplied ?? policy);
 }
 
 export const system = (id, name, args) => modelCall(id, 'system-' + name, args);
@@ -80,8 +72,8 @@ export async function strictGeneratedTypes(consumer, body, prefix, hasDetail = f
         'const priority: number = refs.console_tasks.workspace.values[0]!.priority;',
         'await tools["console_tasks-accept"]({items:refs.console_catalog.list.todos,literal:email,meta:[3,null]});',
         'await tools["console_tasks-accept"]({items:[{title:"manual",done:true}],literal:email});',
-        'await tools["console_tasks-select"]({item:"$console_catalog.list.todos[0]",items:["$console_catalog.list.todos[1]"]});',
-        'try { await tools["console_tasks-select"]({item:"$console_catalog.list.todos[0]"}); } catch (error) {',
+        'await tools["console_tasks-select"]({item:"$ref.console_catalog.list.todos[0]",items:["$ref.console_catalog.list.todos[1]"]});',
+        'try { await tools["console_tasks-select"]({item:"$ref.console_catalog.list.todos[0]"}); } catch (error) {',
         '  if (error instanceof ToolCallError) {',
         '    const toolName: keyof typeof tools = error.toolName;',
         '    const name: "ToolCallError" = error.name;',
@@ -92,16 +84,10 @@ export async function strictGeneratedTypes(consumer, body, prefix, hasDetail = f
         '}',
         '// @ts-expect-error phone was not granted',
         'refs.console_catalog.list.people[0].phone;',
-        '// @ts-expect-error the partial rows record has no length',
-        'refs.console_catalog.list.people.length;',
-        '// @ts-expect-error other index not granted',
-        'refs.console_catalog.list.people[1];',
-        '// @ts-expect-error partial index record is not a business array',
+        '// @ts-expect-error the published directory contains contacts',
         'await tools["console_tasks-accept"]({items:refs.console_catalog.list.people,literal:email});',
         '// @ts-expect-error another Todo label does not determine the structure',
         'refs.console_tasks.workspace.values[0]!.title;',
-        '// @ts-expect-error items without a source schema are unknown',
-        'const unknownTitle: string = refs.console_catalog.list.loose[0].title;',
         '// @ts-expect-error whole observed array is readonly',
         'refs.console_catalog.list.todos.push({title:"no",done:true});',
         '// @ts-expect-error an ordinary object cannot claim nominal Ref provenance',
@@ -147,12 +133,12 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     assert.equal(task.result.app_id, TASKS, JSON.stringify(task.result));
     const cross = await step('original value and two children', codeCall('cross',
         'const x = refs.console_catalog.list; ' +
-        'const stored = await tools["console_tasks-accept"]({items:x.todos,literal:"$console_catalog.list.todos",meta:[2,null]}); ' +
-        'await tools["console_tasks-select"]({item:"$console_catalog.list.todos[0]",items:["$console_catalog.list.todos[1]","$console_catalog.list.todos[0]","$console_catalog.list.todos[1]"]}); ' +
+        'const stored = await tools["console_tasks-accept"]({items:x.todos,literal:"$$ref.console_catalog.list.todos",meta:[2,null]}); ' +
+        'await tools["console_tasks-select"]({item:"$ref.console_catalog.list.todos[0]",items:["$ref.console_catalog.list.todos[1]","$ref.console_catalog.list.todos[0]","$ref.console_catalog.list.todos[1]"]}); ' +
         'inspect(x.people[0].email);'), async () => {
         await catalogState(folder, 'changed', changed);
         await watchUntil(async () => {
-            const view = await appClient(runtime, desktop, CATALOG).client.preview();
+            const view = await appClient(desktop, CATALOG).client.preview();
             return view.status === 'previewed' && view.views[0].content.value.includes('changed');
         });
     });
@@ -175,15 +161,15 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
 
     const selected = await step('empty and explicit imports', codeCall('empty-imports', 'inspect(Object.keys(refs).length);', []));
     assert.deepEqual(selected.result.output, ['0']);
-    const nativeField = await step('native tool cannot use a Console-only grant', modelCall('native-console-only', tool('accept'),
+    const nativeField = await step('native tool cannot pass a Ref with no receiving mounts', modelCall('native-console-only', tool('accept'),
         { items: [], literal: peopleAddress + '[0].email' }));
     assert.match(nativeField.result.code, /^REF_/);
     const attempt = 'inspect("must not run"); await tools["console_tasks-accept"]({items:[],literal:"must not dispatch"});';
     const rejected = [];
-    for (const [label, address] of [['parent', peopleAddress], ['sibling', peopleAddress + '[0].phone'],
-        ['private', '$console_catalog.list.private_rows'], ['protected', '$console_catalog.list.team_rows']]) {
+    for (const [label, address] of [['sibling', peopleAddress + '[0].phone'],
+        ['private', '$ref.console_catalog.list.private_rows'], ['protected', '$ref.console_catalog.list.team_rows']]) {
         const response = await step('forbidden ' + label, codeCall('forbidden-' + label, attempt, [address]));
-        assert.equal(response.result.code, 'CONSOLE_REF_UNAVAILABLE');
+        assert.match(response.result.code, /^REF_(VALUE_PRIVATE|NOT_VISIBLE)$/);
         assert.equal(response.result.result, undefined);
         rejected.push({ label, result: response.result });
     }
@@ -193,7 +179,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     async function moveScope(label, narrowed) {
         await catalogState(folder, label, changed, narrowed);
         await watchUntil(async () => {
-            const view = await appClient(runtime, desktop, CATALOG).client.preview();
+            const view = await appClient(desktop, CATALOG).client.preview();
             return view.status === 'previewed' && view.views[0].content.value.includes(label);
         });
     }
@@ -207,7 +193,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         if (label === 'empty') assert.deepEqual(narrowed.result.output, ['0']);
         else if (label === 'other field') assert.deepEqual(narrowed.result.output, [changed[0].title, 'undefined']);
         else {
-            assert.equal(narrowed.result.code, 'CONSOLE_REF_UNAVAILABLE');
+            assert.equal(narrowed.result.code, 'REF_VALUE_PRIVATE');
             assert.equal(narrowed.result.result, undefined);
         }
         assert.equal((await journal(folder, 'writes')).length, 2);
@@ -215,15 +201,15 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         await moveScope('restored ' + id, false);
     }
     const malformed = await step('no nominal origin', codeCall('bad-address', 'for (const item of ' + JSON.stringify([
-        '$console_tasks.workspace.values[0]', '$console_catalog.list.other_kind[0]', '$console_catalog.list.todos[99]',
+        '$ref.console_tasks.workspace.values[0]', '$ref.console_catalog.list.other_kind[0]', '$ref.console_catalog.list.todos[99]',
     ]) + ') { try { await tools["console_tasks-select"]({item}); } catch (error) { inspect(error.code); } }'));
     assert.equal(malformed.result.subcalls.length, 3);
     assert.ok(malformed.result.subcalls.every(call => call.phase === 'not-dispatched'));
-    summary.rejections = [...rejected, { label: 'Console-only Path', result: nativeField.result }, { label: 'capacity', result: excess.result },
+    summary.rejections = [...rejected, { label: 'Receivers denied', result: nativeField.result }, { label: 'capacity', result: excess.result },
         { label: 'nominal addresses', result: malformed.result }];
     const partial = await step('forbid synthesized containers', codeCall('partial', 'await tools["console_tasks-accept"]({items:refs.console_catalog.list.people,literal:"bad"})'));
     assert.equal(partial.result.code, 'CONSOLE_PROGRAM_FAILED');
-    assert.deepEqual(output(partial.result).subcalls, []);
+    assert.ok(output(partial.result).subcalls.every(call => call.phase === 'not-dispatched'));
     const nonJson = await step('forbid non-JSON objects', codeCall('non-json', 'await tools["console_tasks-accept"]({items:[],literal:"bad",meta:new Date()})'));
     assert.match(nonJson.result.message, /plain JSON/);
     assert.deepEqual(output(nonJson.result).subcalls, []);
@@ -258,27 +244,42 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         await allow.promise;
         return true;
     };
+    const adopt = desktop.adoptTurn;
+    let activeTurn;
+    desktop.adoptTurn = function (selection) {
+        const result = adopt.call(this, selection);
+        if (result.status === 'adopted') activeTurn = result.turn;
+        return result;
+    };
     const withdrawnWork = step('revoke before dispatch', codeCall('withdraw',
         'await tools["console_tasks-accept"]({items:[],literal:"withdraw"});'));
-    await Promise.race([authorization.promise, withdrawnWork.then(result => { throw new Error(JSON.stringify(result.result)); })]);
-    const tasks = appClient(runtime, desktop, TASKS).app;
-    try { await desktop.collapseApp(TASKS, tasks.appInstanceId, 'fixture withdrawn'); }
-    finally { allow.resolve(); }
+    try {
+        await Promise.race([authorization.promise, withdrawnWork.then(result => { throw new Error(JSON.stringify(result.result)); })]);
+        const tasks = appClient(desktop, TASKS).app;
+        assert.ok(activeTurn?.isCurrent);
+        desktop.revokeWindowAccess(activeTurn, { appId: TASKS, instanceId: tasks.appInstanceId });
+    } finally {
+        desktop.adoptTurn = adopt;
+        allow.resolve();
+    }
     const withdrawn = await withdrawnWork;
     hooks.authorize = undefined;
     assert.equal(output(withdrawn.result).subcalls[0].phase, 'not-dispatched');
     assert.equal((await journal(folder, 'writes')).length, 4);
+    const fold = await step('fold the tasks App', system('fold-tasks', 'collapse_app', { app_id: TASKS }));
+    assert.ok(fold.result.success);
     const collapsed = await step('collapsed keeps console', codeCall('still-console', 'inspect(typeof tools["console_tasks-edit"]);'));
     assert.deepEqual(collapsed.result.output, ['undefined']);
-    await desktop.expandApp(TASKS, tasks.appInstanceId);
+    const expand = await step('expand the tasks App', system('expand-tasks', 'expand_app', { app_id: TASKS }));
+    assert.ok(expand.result.success);
 
     const stale = await step('do not rebind same name', codeCall('stale', attempt), async () => {
-        const old = appClient(runtime, desktop, CATALOG).app;
-        await desktop.closeApp(CATALOG, old.appInstanceId);
-        assert.equal(await desktop.openApp(CATALOG), CATALOG);
-        assert.notEqual(appClient(runtime, desktop, CATALOG).app.appInstanceId, old.appInstanceId);
+        const { app: old, running } = appClient(desktop, CATALOG);
+        assert.equal((await running.beginClose().completion).ok, true);
+        assert.equal((await desktop.openApp(CATALOG)).appId, CATALOG);
+        assert.notEqual(appClient(desktop, CATALOG).app.appInstanceId, old.appInstanceId);
     });
-    assert.equal(stale.result.code, 'CONSOLE_REF_UNAVAILABLE');
+    assert.match(stale.result.code, /^(TURN_NOT_ACTIVE|REF_NOT_VISIBLE|SEMANTIC_CONTEXT_RELEASED)$/);
     assert.equal(stale.result.result, undefined);
     assert.equal((await journal(folder, 'writes')).length, 4);
     summary.reopened = stale.result;

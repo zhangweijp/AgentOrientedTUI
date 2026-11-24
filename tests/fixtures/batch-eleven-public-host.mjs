@@ -13,10 +13,10 @@ import { fixtureProvider, watchUntil } from './batch-two-support.mjs';
 const [installed, evidence] = process.argv.slice(2);
 const state = await mkdtemp(join(tmpdir(), 'aotui-b11-public-'));
 const id = 'storage-topic';
-const runtime = createRuntime(), desktop = runtime.getDesktop(await runtime.createDesktop(id));
+const runtime = createRuntime(), desktop = await runtime.createDesktop(id);
 const provider = await fixtureProvider();
 const history = [], delivered = [], errors = [];
-const source = new SemanticAOTUIDrivenSource(desktop, runtime);
+const source = new SemanticAOTUIDrivenSource(desktop);
 const driver = new AgentDriverV2({ sources: [source, { name: 'History', onUpdate: () => () => {},
     async getContext() { return { messages: history.slice(), tools: {} }; } }], llm: llmConfig(provider.url),
     onAssistantMessage(message) { history.push({ ...message, timestamp: history.length + 1, region: 'session' }); },
@@ -49,7 +49,7 @@ try {
     await driver.closeToolTurn();
     driver.dispose();
     await source.dispose();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     workers.restore();
     await provider.close();
     await writeFile(resolve(evidence), JSON.stringify(facts, null, 2));

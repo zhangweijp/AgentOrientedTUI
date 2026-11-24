@@ -29,7 +29,7 @@ const host = new HostManagerV2('cinema-cli', { getModels: async () => [] } as un
 let enabledApps: string[] = [];
 mock.method(Config, 'get', async () => ({ agents: { list: [{ id: 'cinema_agent', prompt: 'Choose a seat.',
     enabledApps }], activeAgentId: 'cinema_agent' } }));
-const captured = captureAdmission(runtime);
+const captured = captureAdmission();
 const cinemaManifest = await readAppManifest(cinema);
 const healthyManifest = await readAppManifest(healthy);
 const theatreManifest = await readAppManifest(theatre);
@@ -88,10 +88,10 @@ async function runTopic(id: string, strict: boolean, options: { blocked?: boolea
         }
         if (scenario === 'empty') return await exerciseEmptyConsole(turn);
         if (scenario === 'window' || scenario === 'twins')
-            return await exercisePolicyWindows(turn, session.desktop, captured, theatreManifest, scenario === 'twins');
+            return await exercisePolicyWindows(turn, session.sources.aotui, captured, theatreManifest, scenario === 'twins');
         if (scenario !== 'cinema') return await exerciseStationBudget(turn, scenario, theatreManifest, healthyManifest, captured, strict);
         if (strict) return await exerciseStrict(turn, 'strict-openai', healthyManifest, captured);
-        return await exerciseCinema(turn, cinemaManifest, appClient(runtime, session.desktop, 'cinema').client, captured);
+        return await exerciseCinema(turn, cinemaManifest, appClient(session.desktop, 'cinema').client, captured);
     } finally {
         unsubscribe();
         await host.shutdownSession(id);
@@ -119,7 +119,7 @@ try {
     facts.passed = true;
 } finally {
     await host.dispose();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     captured.restore();
     await provider.close();
     db.closeDatabase();

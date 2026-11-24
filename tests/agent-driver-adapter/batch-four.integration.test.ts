@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { createRuntime, type AppInteraction, type AppInteractionPolicy, type IDesktop, type Observation } from '@aotui/runtime';
+import { createRuntime, type AppInteractionPolicy, type IDesktop, type Observation } from '@aotui/runtime';
 import { AgentDriverV2, type DrivenSourceContext, type MessageWithTimestamp, type ToolResult } from '@aotui/agent-driver-v2';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { fixtureAppPath, appClient, fixtureProvider, journal, modelCall, observe, watchUntil } from '../fixtures/batch-two-support.mjs';
@@ -25,9 +25,9 @@ beforeAll(async () => {
 }, 90_000);
 afterAll(async () => { if (scratch) await rm(scratch, { recursive: true, force: true }); });
 
-async function start(desktop: IDesktop, folder: string, staticB: boolean) {
+async function start(desktop: IDesktop, folder: string, staticB: boolean, policy?: AppInteractionPolicy) {
     await desktop.registerPendingApp({ installationId: 'files_install', localPath: await fixtureAppPath(moduleURL, APP, folder), config: { folder, staticB } });
-    return desktop.openApp('files_install');
+    return (await desktop.openApp('files_install', { policy })).appId;
 }
 
 async function productSession(name: string, staticB = false, b?: string) {
@@ -35,10 +35,10 @@ async function productSession(name: string, staticB = false, b?: string) {
     await setupFiles(folder, b);
     const runtime = createRuntime();
     const provider = await fixtureProvider();
-    const desktop = runtime.getDesktop(await runtime.createDesktop());
+    const desktop = await runtime.createDesktop();
     const id = await start(desktop, folder, staticB);
-    const { app, client } = appClient(runtime, desktop, id);
-    const source = new SemanticAOTUIDrivenSource(desktop, runtime);
+    const { app, client } = appClient(desktop, id);
+    const source = new SemanticAOTUIDrivenSource(desktop);
     const history: MessageWithTimestamp[] = [], errors: Error[] = [];
     const results: { message: unknown; raw: readonly ToolResult[] }[] = [];
     const rawInput = { cap: INPUT, other: '' };
@@ -97,13 +97,13 @@ async function productSession(name: string, staticB = false, b?: string) {
     };
     const dispose = async () => {
         driver.stop(); driver.dispose(); await source.dispose();
-        facts.shutdown = await runtime.beginShutdown().completion;
+        facts.shutdown = await runtime.beginClose().completion;
         facts.writes = await journal(folder, 'writes');
         facts.closes = await journal(folder, 'closes');
         facts.lifecycle = await journal(folder, 'lifecycle');
         await provider.close();
         await writeFile(join(evidence, name + '.json'), JSON.stringify(facts, null, 2));
-        expect(facts.shutdown).toMatchObject({ ok: true, resourcesReleased: true, interactions: { retainedOperations: 0, retainedBytes: 0 } });
+        expect(facts.shutdown).toMatchObject({ ok: true, resourcesReleased: true, interactions: { retainedOperations: 0 } });
     };
     return { folder, app, client, desktop, history, provider, source, rawInput, results, errors, facts, turns, drive, notice, adoptions, dispose };
 }
@@ -123,15 +123,15 @@ it('reports the once-only write before sealing the result, recovers the newest p
         expect(report.short_by).toBeGreaterThan(0);
         expect(report.complete.estimated - report.short_by).toBe(p.rawInput.cap);
         expect(report.windows).toEqual(expect.arrayContaining([
-            expect.objectContaining({ view_id: 'file_A', presentation: 'body' }),
-            expect.objectContaining({ view_id: 'file_B', presentation: 'hint' }),
+            expect.objectContaining({ view_id: 'file_A_1', presentation: 'body' }),
+            expect.objectContaining({ view_id: 'file_B_1', presentation: 'hint' }),
         ]));
         expect(report.complete.shared + report.windows.reduce((total: number, row: any) => total + row.full, 0)).toBe(report.complete.estimated);
         expect(report.presented.shared + report.windows.reduce((total: number, row: any) => total + row.presented, 0)).toBe(report.presented.estimated);
-        const mounted = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B');
+        const mounted = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B_1');
         expect(mounted?.region).toBe('static');
         const hinted = await p.turns('open with budget hint', [
-            onFile('denied-hidden-ref', 'echo', 'B', { value: '$window_files.file_B.content' }),
+            onFile('denied-hidden-ref', 'echo', 'B', { value: '$ref.window_files.file_B_1.content' }),
             onFile('hinted-receiver', 'echo', 'B', { value: 'echo while hinted' }),
         ]);
         expect(pageFor(hinted.wire, 'B')).toContain('body does not fit');
@@ -147,23 +147,23 @@ it('reports the once-only write before sealing the result, recovers the newest p
         const collapseResults = p.results.at(-1)!.raw;
         expect(collapseResults.map(result => result.outcomeStatus)).toEqual(['succeeded', 'rejected', 'succeeded']);
         const restored = (await p.turns('normal restored request', [
-            onFile('restored-ref', 'echo', 'B', { value: '$window_files.file_B.content', countOnly: true }),
+            onFile('restored-ref', 'echo', 'B', { value: '$ref.window_files.file_B_1.content', countOnly: true }),
         ])).wire;
         expect(pageFor(restored, 'A')).toContain('Check A &lt;later&gt; &amp; keep the original note.');
         expect(pageFor(restored, 'A')).not.toContain('A-BODY');
         expect(pageFor(restored, 'B')).toContain('B-LATEST');
         expect(p.results.at(-1)!.raw[0]?.result).toEqual({ characters: 'B-LATEST '.length + 8_000 });
-        expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B')).toEqual(mounted);
+        expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B_1')).toEqual(mounted);
         expect((await journal(p.folder, 'writes')).map(row => row.name)).toEqual(['B']);
         expect(await readFile(join(p.folder, 'B.txt'), 'utf8')).toMatch(/^B-LATEST/);
 
         p.rawInput.cap = INPUT;
         const largeFailedExpansion = await p.turns('too large to expand A', [windowAction('a-too-large', 'expand_view', 'A')]);
         expect(largeFailedExpansion.toolMessage!.content[0].output.value.code).toBe('WINDOW_EXPANSION_BUDGET_EXCEEDED');
-        expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_A')?.note).toBe(A_NOTE);
-
         p.rawInput.cap = 60_000;
-        await p.turns('collapse with app note', [windowAction('app-note', 'collapse_app', undefined, { note: APP_NOTE })]);
+        const beforeAppCollapse = await p.turns('collapse with app note', [windowAction('app-note', 'collapse_app', undefined, { note: APP_NOTE })]);
+        expect(pageFor(beforeAppCollapse.wire, 'A')).toContain('Check A');
+        expect(pageFor(beforeAppCollapse.wire, 'A')).toContain('Check A &lt;later&gt; &amp;');
         const appExpanded = (await p.turns('expand the app', [windowAction('app-expand', 'expand_app')])).wire;
         expect(appExpanded.messages.some((message: { content: string | null }) =>
             message.content?.includes('Return to this workspace &lt;later&gt; &amp;'))).toBe(true);
@@ -177,19 +177,17 @@ it('reports the once-only write before sealing the result, recovers the newest p
             windowAction('refuses-close', 'close_view', 'D'), windowAction('accepts-close', 'close_view', 'E')]);
         expect(closings.toolMessage?.content.map(part => part.output.value.code)).toEqual(['VIEW_CLOSE_UNAVAILABLE', 'UNSAVED', 'VIEW_CLOSE_ACCEPTED']);
         expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.map(view => view.viewId)).toEqual(
-            expect.arrayContaining(['file_C', 'file_D', 'file_E']));
+            expect.arrayContaining(['file_C_1', 'file_D_1', 'file_E_1']));
 
         const hiddenFolder = join(scratch, 'disabled-app');
         await setupFiles(hiddenFolder, 'DISABLED APP BODY');
         await p.desktop.registerPendingApp({ installationId: 'disabled_install', localPath: await fixtureAppPath(moduleURL, APP, hiddenFolder), config: { folder: hiddenFolder } });
-        const hiddenId = await p.desktop.openApp('disabled_install');
-        const hiddenRun = p.desktop.getInstalledApps().find(app => app.appId === hiddenId)!;
-        const hidden = p.desktop.getAppInteraction(hiddenId, hiddenRun.appInstanceId!);
-        if (hidden.status !== 'ready') throw new Error('Disabled App fixture did not start');
-        const hiddenObservation: Observation = await observe(hidden.interaction, true);
-        await hidden.interaction.invoke({ observationId: hiddenObservation.observationId, invocationId: 'open-disabled-window',
+        const hiddenId = (await p.desktop.openApp('disabled_install')).appId;
+        const hidden = appClient(p.desktop, hiddenId).client;
+        const hiddenObservation: Observation = await observe(hidden, true);
+        await hidden.invoke({ observationId: hiddenObservation.observationId, invocationId: 'open-disabled-window',
             input: { names: ['B'] }, toolId: hiddenObservation.tools.find(tool => tool.name === 'open_file')!.id });
-        hidden.interaction.releaseObservation(hiddenObservation.observationId);
+        hidden.release(hiddenObservation.observationId);
         p.source.setAppEnabled('disabled_install', false);
         p.rawInput.cap = INPUT;
         p.rawInput.other = 'EXCLUDED SOURCE ' + 'x'.repeat(25_000);
@@ -200,14 +198,14 @@ it('reports the once-only write before sealing the result, recovers the newest p
         expect(pageFor(management, 'B')).toBeUndefined();
         expect(JSON.stringify(management)).not.toMatch(/EXCLUDED SOURCE|DISABLED APP BODY|disabled_install|A-BODY|Available references/);
         expect(p.results.at(-1)!.raw[0]).toMatchObject({ outcomeStatus: 'succeeded', result: { closed: true } });
-        expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_A')).toBeUndefined();
+        expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_A_1')).toBeUndefined();
         expect((await journal(p.folder, 'closes')).map(row => row.name)).toEqual(['D', 'E', 'A']);
         const paged = managed.toolMessage!.content[0].output.value.window_budget;
         expect(paged).toMatchObject({ next_page: 2, mode: 'management' });
         await p.turns('read the same report next page', [modelCall('next-budget-page', 'system-read_window_budget',
             { report_id: paged.report_id, page: paged.next_page })]);
         expect(p.results.at(-1)!.raw[0]?.result).toMatchObject({ report_id: paged.report_id, page: 2,
-            windows: [expect.objectContaining({ view_id: 'file_E' })] });
+            windows: [expect.objectContaining({ view_id: 'file_E_1' })] });
 
         const before = p.provider.requests.length;
         p.rawInput.cap = 300;
@@ -242,7 +240,7 @@ it('restores the selected View and App bodies without requiring unrelated hinted
     const p = await productSession('product-expansion', false, 'B-STAYS-HINTED ' + 'b'.repeat(45_000));
     const last = () => p.results.at(-1)!.raw;
     const windows = () => p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!;
-    const body = (name: string) => windows().views.find(view => view.viewId === 'file_' + name)!;
+    const body = (name: string) => windows().views.find(view => view.viewId === `file_${name}_1`)!;
     try {
         await p.turns('open B, C and A', [openFiles('open-for-expansion', 'B', 'C', 'A')]);
         const collapse = await p.turns('save a place at C and A', [
@@ -255,32 +253,31 @@ it('restores the selected View and App bodies without requiring unrelated hinted
         const before = p.provider.requests.length;
         const adopted = p.adoptions.length;
         const expanding = await p.turns('expand the small C', [windowAction('restore-c', 'expand_view', 'C'),
-            onFile('not-yet-a-source', 'echo', 'B', { value: '$window_files.file_C.content' })]);
+            onFile('not-yet-a-source', 'echo', 'B', { value: '$ref.window_files.file_C_1.content' })]);
         expect(pageFor(expanding.wire, 'C')).toContain('Return to C');
         expect(p.provider.requests.length - before).toBe(1);
         expect(p.adoptions.length - adopted).toBe(1);
-        expect(last()[0]).toMatchObject({ outcomeStatus: 'succeeded', result: { view_id: 'file_C' } });
+        expect(last()[0]).toMatchObject({ outcomeStatus: 'succeeded', result: { view_id: 'file_C_1' } });
         expect(last()[1]).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'REF_NOT_VISIBLE' } });
         expect(body('C')).toMatchObject({ viewInstanceId: mountC });
-        expect(body('C').note).toBeUndefined();
-        const restored = await p.turns('read C after new adoption', [onFile('now-a-source', 'echo', 'B', { value: '$window_files.file_C.content' }),
-            onFile('b-still-not-a-source', 'echo', 'C', { value: '$window_files.file_B.content' })], { addUser: false });
+        const restored = await p.turns('read C after new adoption', [onFile('now-a-source', 'echo', 'B', { value: '$ref.window_files.file_C_1.content' }),
+            onFile('b-still-not-a-source', 'echo', 'C', { value: '$ref.window_files.file_B_1.content' })], { addUser: false });
         expect(pageFor(restored.wire, 'B')).toContain('body does not fit');
         expect(pageFor(restored.wire, 'C')).toMatch(/C-LATEST-WHILE-COLLAPSED[\s\S]+Available references/);
         expect(last()[0]).toMatchObject({ result: { value: 'C-LATEST-WHILE-COLLAPSED' } });
         expect(last()[1]).toMatchObject({ error: { code: 'REF_NOT_VISIBLE' } });
 
         await updateFile(p.folder, p.client, 'A', 'A-TOO-LARGE ' + 'a'.repeat(45_000), false);
-        await p.turns('try to restore the too-large A', [windowAction('reject-large-a', 'expand_view', 'A')]);
+        const rejected = await p.turns('try to restore the too-large A', [windowAction('reject-large-a', 'expand_view', 'A')]);
         expect(last()[0]).toMatchObject({ error: { code: 'WINDOW_EXPANSION_BUDGET_EXCEEDED' }, result: { inputLimit: INPUT } });
         expect((last()[0]!.result as { estimated: number }).estimated).toBeGreaterThan(INPUT);
-        expect(body('A').note).toBe(A_NOTE);
+        expect(pageFor(rejected.wire, 'A')).toContain('Check A &lt;later&gt; &amp;');
 
         p.history.length = 0;
         const smallFolder = join(scratch, 'product-small-app');
         await setupFiles(smallFolder);
         await p.desktop.registerPendingApp({ installationId: 'small_install', localPath: await fixtureAppPath(moduleURL, APP, smallFolder), config: { folder: smallFolder } });
-        const smallId = await p.desktop.openApp('small_install');
+        const smallId = (await p.desktop.openApp('small_install')).appId;
         await p.turns('open small App children', [modelCall('open-small-app-children', smallId + '-open_file', { names: ['C', 'D'] })]);
         await p.turns('save a child note and fold the small App', [
             windowAction('collapse-small-child', 'collapse_view', 'D', { app_id: smallId, note: 'D child <note>' }),
@@ -290,8 +287,8 @@ it('restores the selected View and App bodies without requiring unrelated hinted
         expect(pageFor(appExpansion.wire, 'C', smallId)).toBeUndefined();
         expect(last()[0]).toMatchObject({ outcomeStatus: 'succeeded', result: { app_id: smallId } });
         const next = await p.turns('small App restores the open child and keeps the child note', [
-            modelCall('read-restored-child', smallId + '-echo', { view_id: 'file_C', value: `$${smallId}.file_C.content` }),
-            modelCall('child-note-has-no-ref', smallId + '-echo', { view_id: 'file_C', value: `$${smallId}.file_D.content` }),
+            modelCall('read-restored-child', smallId + '-echo', { view_id: 'file_C_1', value: `$ref.${smallId}.file_C_1.content` }),
+            modelCall('child-note-has-no-ref', smallId + '-echo', { view_id: 'file_C_1', value: `$ref.${smallId}.file_D_1.content` }),
         ], { addUser: false });
         expect(pageFor(next.wire, 'C', smallId)).toMatch(/C-BODY[\s\S]+Available references/);
         expect(pageFor(next.wire, 'D', smallId)).toContain('D child &lt;note&gt;');
@@ -303,7 +300,9 @@ it('restores the selected View and App bodies without requiring unrelated hinted
         await p.turns('fold C while operating in management mode', [windowAction('c-only-management', 'collapse_view', 'C', { note: 'Keep C folded' })]);
         await p.turns('management could fit but C cannot', [windowAction('reject-only-management', 'expand_view', 'C')]);
         expect(last()[0]?.error?.code).toBe('WINDOW_EXPANSION_BUDGET_EXCEEDED');
-        expect(body('C').note).toBe('Keep C folded');
+        const after = await p.source.getContext();
+        expect(after.messages.some(message => typeof message.content === 'string' && message.content.includes('Keep C folded'))).toBe(true);
+        await after.release!();
         expect(await journal(p.folder, 'writes')).toEqual([]);
         p.facts.passed = true;
     } finally { await p.dispose(); }
@@ -335,9 +334,9 @@ it.each(['window_hints', 'management'])('keeps report IDs stable on real idle So
         await p.turns('open enough pages for report paging', [openFiles('open-idle-fixture', 'B', 'C', 'D', 'E')]);
         const normal = await p.turns('remember C', [windowAction('idle-note-c', 'collapse_view', 'C', { note: 'Unchanged note' })]);
         expect(namesOf(normal.wire)).not.toContain(reportTool);
-        const c = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_C')!;
-        const signal = () => p.desktop.collapseView({ appId: p.app.appId, instanceId: p.app.appInstanceId,
-            viewId: c.viewId, viewInstanceId: c.viewInstanceId }, c.note);
+        const signal = () => (p.desktop as import('../../runtime/src/engine/core/desktop.js').Desktop).emitSignal({
+            reason: 'attention_requested', appId: p.app.appId, instanceId: p.app.appInstanceId,
+        });
         await updateFile(p.folder, p.client, 'B', 'B-PERSISTENT-HINT ' + 'b'.repeat(45_000), false);
         if (mode === 'management') p.rawInput.other = 'OMIT THIS SOURCE ' + 'x'.repeat(28_000);
         const seed = (await p.turns('freeze the conversation', [], { text: 'frozen fixture history' })).wire;
@@ -357,7 +356,7 @@ it.each(['window_hints', 'management'])('keeps report IDs stable on real idle So
 
         await p.turns('read the original report second page', [modelCall('read-old-page', reportTool, { report_id: id, page: 2 })]);
         expect(p.results.at(-1)!.raw[0]?.result).toMatchObject({ report_id: id, page: 2, mode,
-            windows: [expect.objectContaining({ view_id: 'file_E' })] });
+            windows: [expect.objectContaining({ view_id: 'file_E_1' })] });
         const failedBefore = count();
         p.history.push({ role: 'user', content: 'new provider input for a failed send', timestamp: Date.now() });
         p.provider.replyNext({ label: 'intentional HTTP failure', errorStatus: 400 });
@@ -378,9 +377,9 @@ it.each(['window_hints', 'management'])('keeps report IDs stable on real idle So
         expect(stale).not.toBe(id);
         p.facts.retry = { before: failedBefore, after: count(), identicalBody: true, reportId: stale };
 
-        const oldMount = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_E')!;
+        const oldMount = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_E_1')!;
         await updateFile(p.folder, p.client, 'E', 'E-REPLACED', true);
-        const newMount = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_E')!;
+        const newMount = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_E_2')!;
         expect(oldMount.viewInstanceId).not.toBe(newMount.viewInstanceId);
         const remount = await p.turns('replace a View while stale report is still in history', [
             modelCall('reject-old-mount-report', reportTool, { report_id: stale, page: 1 }),
@@ -411,9 +410,9 @@ it.each([false, true])('keeps the original region and identity after an initiall
         const opened = await p.turns('open the large file', [openFiles('open-b', 'B')]);
         expect(opened.toolMessage!.content[0].output.value).toMatchObject({ result: { opened: ['B'] },
             window_budget: { mode: 'window_hints', windows: expect.arrayContaining([expect.objectContaining({
-                view_id: 'file_B', presentation: 'hint',
+                view_id: 'file_B_1', presentation: 'hint',
             })]) } });
-        const mount = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B');
+        const mount = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B_1');
         expect(mount?.region).toBe(staticB ? 'static' : 'dynamic');
         const first = (await p.turns('first successful B projection')).wire;
         expect(pageFor(first, 'B')).toContain('Its body does not fit');
@@ -423,7 +422,7 @@ it.each([false, true])('keeps the original region and identity after an initiall
         const next = (await p.turns('restored B shows latest')).wire;
         expect(pageFor(next, 'B')).toContain('LATEST WHILE HINTED');
         expect(pageFor(next, 'B')).not.toMatch(/B-ON-OPEN|Its body does not fit/);
-        expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B')).toEqual(mount);
+        expect(p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B_1')).toEqual(mount);
         expect(await journal(p.folder, 'writes')).toEqual([]);
         p.facts.passed = true;
     } finally { await p.dispose(); }
@@ -463,56 +462,60 @@ it('revokes old mount permissions across collapse and remount while leaving acce
         canReadReceipt: () => true,
     };
     try {
-        const desktop = runtime.getDesktop(await runtime.createDesktop());
-        const id = await start(desktop, folder, false);
-        const { app, client } = appClient(runtime, desktop, id, policy) as { app: any; client: AppInteraction };
+        const desktop = await runtime.createDesktop();
+        const id = await start(desktop, folder, false, policy);
+        const { app, client } = appClient(desktop, id);
         const call = (observation: Observation, name: string, invocationId: string, input: object, timeout?: number) =>
             client.invoke({ observationId: observation.observationId, invocationId, input,
                 toolId: observation.tools.find(tool => tool.name === name)!.id }, timeout);
         const initial: Observation = await observe(client, true);
         expect(await call(initial, 'open_file', 'both', { names: ['A', 'B'] })).toMatchObject({ receipt: { outcome: { status: 'succeeded' } } });
-        client.releaseObservation(initial.observationId);
+        client.release(initial.observationId);
         const observation: Observation = await observe(client);
         const all = observation.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-        const layout = { receiverViews: all, refViews: all.filter(view => view.viewId !== 'file_B') };
-        expect(client.adoptObservation(observation.observationId, {
-            receiverViews: [{ viewId: 'file_B', viewInstanceId: 'fake' }], refViews: [],
+        const layout = { receiverViews: all, refViews: all.filter(view => view.viewId !== 'file_B_1') };
+        expect(client.adopt(observation.observationId, {
+            receiverViews: [{ viewId: 'file_B_1', viewInstanceId: 'fake' }], refViews: [],
         })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INVALID' } });
-        expect(client.adoptObservation(observation.observationId, layout)).toMatchObject({ status: 'adopted' });
-        expect(client.adoptObservation(observation.observationId, { ...layout, receiverViews: all.slice().reverse() })).toMatchObject({ status: 'adopted' });
-        expect(client.adoptObservation(observation.observationId, { ...layout, refViews: all })).toMatchObject({ status: 'rejected' });
-        expect(await call(observation, 'echo', 'hidden-source', { view_id: 'file_B', value: '$window_files.file_B.content' })).toMatchObject({
+        expect(client.adopt(observation.observationId, layout)).toMatchObject({ status: 'adopted' });
+        const normalized = client.adopt(observation.observationId, { ...layout, receiverViews: all.slice().reverse() });
+        expect(normalized).toMatchObject({ status: 'adopted' });
+        expect(client.adopt(observation.observationId, { ...layout, refViews: all })).toMatchObject({ status: 'rejected' });
+        expect(await call(observation, 'echo', 'hidden-source', { view_id: 'file_B_1', value: '$ref.window_files.file_B_1.content' })).toMatchObject({
             receipt: { executionPhase: 'not-dispatched', outcome: { code: 'REF_NOT_VISIBLE' } },
         });
         const views = () => desktop.getAppWindows(app.appId, app.appInstanceId)!.views;
-        const a = () => views().find(view => view.viewId === 'file_A')!;
+        const a = () => views().find(view => view.viewId.startsWith('file_A_'))!;
         const formerA = { appId: app.appId, instanceId: app.appInstanceId, viewId: a().viewId, viewInstanceId: a().viewInstanceId };
-        await desktop.collapseView(formerA, 'Original mount memo');
-        await desktop.expandView(formerA);
-        expect(await call(observation, 'echo', 'old-after-expand', { view_id: 'file_A', value: 'test' })).toMatchObject({
+        desktop.revokeWindowAccess(normalized.turn, formerA);
+        expect(await call(observation, 'echo', 'old-after-expand', { view_id: 'file_A_1', value: 'test' })).toMatchObject({
             receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' } },
         });
-        const beforeRemount: Observation = await observe(client, true);
-        const pending = call(beforeRemount, 'echo', 'await-former-mount', { view_id: 'file_B', value: '$window_files.file_A.content' });
+        const beforeRemount: Observation = await observe(client);
+        const remountTurn = client.adopt(beforeRemount.observationId);
+        expect(remountTurn.status).toBe('adopted');
+        const pending = call(beforeRemount, 'echo', 'await-former-mount', { view_id: 'file_B_1', value: '$ref.window_files.file_A_1.content' });
         await Promise.race([waiting.promise, pending.then(() => { throw new Error('Expected waiting authorization'); })]);
-        await desktop.collapseView(formerA, 'Do not move this memo');
+        desktop.revokeWindowAccess(remountTurn.turn, formerA);
         await updateFile(folder, client, 'A', 'A replaced', true);
         expect(a().viewInstanceId).not.toBe(formerA.viewInstanceId);
-        expect(a()).not.toHaveProperty('note');
+        expect(a().viewId).toBe('file_A_2');
         gate.resolve(true);
         facts.revoked = await pending;
         expect(facts.revoked).toMatchObject({ receipt: { executionPhase: 'not-dispatched', outcome: { code: 'REF_VIEW_UNAVAILABLE' } } });
-        facts.staleClose = await desktop.closeView(formerA);
+        facts.staleClose = await desktop.closeView(formerA, remountTurn.turn);
         expect(facts.staleClose).toMatchObject({ status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' } });
         expect(await journal(folder, 'closes')).toEqual([]);
 
-        const current: Observation = await observe(client, true);
-        const late = call(current, 'edit', 'late-write', { view_id: 'file_B', mode: 'late' }, 100);
+        const current: Observation = await observe(client);
+        const currentTurn = client.adopt(current.observationId);
+        expect(currentTurn.status).toBe('adopted');
+        const late = call(current, 'edit', 'late-write', { view_id: 'file_B_1', mode: 'late' }, 100);
         await watchUntil(async () => (await journal(folder, 'writes')).length === 1);
-        await desktop.collapseApp(app.appId, app.appInstanceId, 'Wait for B');
+        desktop.revokeWindowAccess(currentTurn.turn, { appId: app.appId, instanceId: app.appInstanceId });
         facts.wait = await late;
         expect(facts.wait).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
-        client.releaseObservation(current.observationId);
+        client.release(current.observationId);
         facts.receipt = await client.readReceipt({ observationId: current.observationId, invocationId: 'late-write' }, 1000);
         expect(facts.receipt).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'succeeded' } } });
         expect((await journal(folder, 'writes')).map(row => row.name)).toEqual(['B']);
@@ -520,9 +523,9 @@ it('revokes old mount permissions across collapse and remount while leaving acce
         facts.passed = true;
     } finally {
         gate.resolve(true);
-        facts.shutdown = await runtime.beginShutdown().completion;
+        facts.shutdown = await runtime.beginClose().completion;
         facts.writes = await journal(folder, 'writes');
         await writeFile(join(evidence, 'qualification.json'), JSON.stringify(facts, null, 2));
     }
-    expect(facts.shutdown).toMatchObject({ ok: true, resourcesReleased: true, interactions: { retainedOperations: 0, retainedBytes: 0 } });
+    expect(facts.shutdown).toMatchObject({ ok: true, resourcesReleased: true, interactions: { retainedOperations: 0 } });
 }, 20_000);

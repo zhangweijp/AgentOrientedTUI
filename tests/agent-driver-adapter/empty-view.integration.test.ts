@@ -6,8 +6,8 @@ import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import type { IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
-import type { AppInteractionPolicy } from '@aotui/core';
+import type { IDesktop } from '../../runtime/src/spi/runtime/kernel.interface.js';
+import { createTurnCoordinator } from '@aotui/core/host';
 import { AppWorkerHost } from '../../runtime/src/engine/app/worker-host.js';
 
 function appSource(): string {
@@ -16,7 +16,7 @@ function appSource(): string {
         import { useState } from 'preact/hooks';
         import Type from 'typebox';
         import { createTUIApp, defineViewType, DynamicView } from '@aotui/sdk';
-        const EmptyType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'EmptyType', tools: {
+        const EmptyType = defineViewType()({ multiplicity: 'multiple', name: 'EmptyType', tools: {
             ping: {
                 description: 'Ping the empty View type.', inputSchema: Type.Object({}, { additionalProperties: false }),
                 execute: async () => ({ success: true, data: { pong: true } }),
@@ -30,7 +30,7 @@ function appSource(): string {
                 },
             },
         } });
-        const HealthyType = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'HealthyType' });
+        const HealthyType = defineViewType({ multiplicity: 'multiple', name: 'HealthyType' });
 
         function Root() {
             const [bodies, setBodies] = useState({
@@ -123,19 +123,24 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
             await host.open();
             await vi.waitFor(() => expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', lastViewCount: 4 }), { timeout: 4_000 });
 
+            const turns = createTurnCoordinator();
             const desktop = {
                 id: host.desktopId,
-                bindRequestSources: () => undefined,
-                getInstalledApps: () => [{ installationId: 'empty_app', appId: host!.appId, appInstanceId: host!.appInstanceId, name: 'empty_app', status: 'running' as const }],
+                adoptTurn: turns.adoptTurn,
+                getRunningApp: () => {
+                    const result = host!.getAppInteraction();
+                    return result.status === 'ready' ? { status: 'ready', app: {
+                        observe: () =>
+                            turns.prepareObservation(result.interaction, () => host!.getAppInteraction().status === 'ready'),
+                    } } : result;
+                },
+                listApps: () => [{ installationId: 'empty_app', appId: host!.appId, appInstanceId: host!.appInstanceId, name: 'empty_app', status: 'running' as const }],
                 getAppWindows: () => undefined,
                 getSystemLogs: () => [],
-                openApp: async () => {}, closeApp: async () => {}, collapseApp: async () => {}, expandApp: async () => {},
+                openApp: async () => {}, collapseApp: async () => {}, expandApp: async () => {},
                 output: { subscribe: vi.fn(), unsubscribe: vi.fn() },
             } as unknown as IDesktop;
-            const kernel = {
-                getAppInteraction: (_desktopId: string, _appId: string, _instanceId: string, policy?: AppInteractionPolicy) => host!.getAppInteraction(policy),
-            } as unknown as IKernel;
-            source = new SemanticAOTUIDrivenSource(desktop, kernel, { includeInstruction: false });
+            source = new SemanticAOTUIDrivenSource(desktop, { includeInstruction: false });
             const observe = async () => {
                 context = await source!.getContext();
                 await context.adopt!();
@@ -155,31 +160,31 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
                 'empty_app-ping', 'empty_app-set_body',
             ]));
             expect(current.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(4);
-            expect(viewMessage(current, 'healthy_view')).toContain('HEALTHY_SIBLING_BODY');
+            expect(viewMessage(current, 'healthy_view_1')).toContain('HEALTHY_SIBLING_BODY');
             const initialViews = latestSnapshot(host).views;
-            expect(initialViews.find((view: any) => view.id === 'healthy_view')?.content.value).toContain('HEALTHY_SIBLING_BODY');
-            for (const [id, value] of Object.entries({ no_children: '', whitespace: '  \n  ', conditional: '' })) {
+            expect(initialViews.find((view: any) => view.id === 'healthy_view_1')?.content.value).toContain('HEALTHY_SIBLING_BODY');
+            for (const [id, value] of Object.entries({ no_children_1: '', whitespace_1: '  \n  ', conditional_1: '' })) {
                 expect(viewBodyFromMessage(viewMessage(current, id))).toBe(value);
                 expect(initialViews.find((view: any) => view.id === id)?.content.value).toBe(value);
             }
 
-            await result('empty_app-ping', { view_id: 'no_children' }, 'empty-ping');
+            await result('empty_app-ping', { view_id: 'no_children_1' }, 'empty-ping');
             const initialRevision = latestSnapshot(host).revision;
             for (const [index, body] of ['EMPTY_VIEW_BODY_ONE', '', 'EMPTY_VIEW_BODY_TWO'].entries()) {
                 current = await observe();
                 expect(current.tools['empty_app-ping']).toBeDefined();
                 expect(current.tools['empty_app-set_body']).toBeDefined();
-                await result('empty_app-set_body', { view_id: 'no_children', body }, `set-body-${index}`);
+                await result('empty_app-set_body', { view_id: 'no_children_1', body }, `set-body-${index}`);
+                current = await observe();
                 await vi.waitFor(() => {
                     const snapshot = latestSnapshot(host!);
                     expect(snapshot.revision).toBeGreaterThan(initialRevision + index);
-                    expect(snapshot.views.find((view: any) => view.id === 'no_children')?.content.value)
+                    expect(snapshot.views.find((view: any) => view.id === 'no_children_1')?.content.value)
                         .toBe(body ? `\n${body}\n` : '');
                 }, { timeout: 4_000 });
-                current = await observe();
                 expect(current.tools['empty_app-ping']).toBeDefined();
-                expect(viewBodyFromMessage(viewMessage(current, 'no_children'))).toBe(body ? `\n${body}\n` : '');
-                expect(viewMessage(current, 'healthy_view')).toContain('HEALTHY_SIBLING_BODY');
+                expect(viewBodyFromMessage(viewMessage(current, 'no_children_1'))).toBe(body ? `\n${body}\n` : '');
+                expect(viewMessage(current, 'healthy_view_1')).toContain('HEALTHY_SIBLING_BODY');
                 await current.release?.();
                 context = undefined;
             }
@@ -187,12 +192,12 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
             source = undefined;
             await host.close();
             expect(host.getResourceReport()).toMatchObject({ interactions: {
-                closed: true, retainedOperations: 0, retainedBytes: 0,
+                closed: true, retainedOperations: 0,
             }, appCleanup: { support: 'managed', report: { state: 'completed', issues: [] } } });
             expect(worker.threadId).toBe(-1);
             expect(await host.waitForResourceRelease()).toMatchObject({
                 state: 'settled', worker: 'exited', resourcesReleased: true,
-                interactions: { closed: true, retainedOperations: 0, retainedBytes: 0 },
+                interactions: { closed: true, retainedOperations: 0 },
             });
         } finally {
             await context?.release?.();

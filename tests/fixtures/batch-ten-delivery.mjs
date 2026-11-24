@@ -70,19 +70,19 @@ export async function exerciseDelivery(turn, folder) {
     const one = await run('open-b', [native('open-b', 'open_file', { name: 'B.txt' })]);
     assert.equal(editTool(one).length, 1);
     const two = await run('copy-original', [native('reload-a', 'reload_a'),
-        native('write-b', 'edit', { view_id: 'doc_B', text: `$${appName}.doc_A.content` })],
+        native('write-b', 'edit', { view_id: 'doc_2', text: `$ref.${appName}.doc_1.content` })],
     () => writeFile(join(folder, 'A.txt'), 'Ref changed after sending'));
-    assert.deepEqual(pages(two).map(page => /^<view view_id="([^"]+)/.exec(page)?.[1]).sort(), ['directory', 'doc_A', 'doc_B']);
-    assert.match(pages(two).find(page => page.startsWith('<view view_id="doc_A"')), /Original A/);
+    assert.deepEqual(pages(two).map(page => /^<view view_id="([^"]+)/.exec(page)?.[1]).sort(), ['directory', 'doc_1', 'doc_2']);
+    assert.match(pages(two).find(page => page.startsWith('<view view_id="doc_1"')), /Original A/);
     assert.equal(editTool(two).length, 1);
     assert.deepEqual([...editTool(two)[0].function.parameters.required].sort(), ['text', 'view_id']);
     assert.equal(await readFile(join(folder, 'B.txt'), 'utf8'), 'Original A');
     assert.ok(results['copy-original'].every(result => result.output.type === 'json'));
 
     const reloaded = await run('revoke', [native('disable-a', 'disable_a'),
-        native('reject-a', 'edit', { view_id: 'doc_A', text: 'Forbidden repeat' }),
-        native('reject-ref', 'edit', { view_id: 'doc_B', text: `$${appName}.doc_A.content` })]);
-    assert.match(pages(reloaded).find(page => page.startsWith('<view view_id="doc_A"')), /Ref changed after sending/);
+        native('reject-a', 'edit', { view_id: 'doc_1', text: 'Forbidden repeat' }),
+        native('reject-ref', 'edit', { view_id: 'doc_2', text: `$ref.${appName}.doc_1.content` })]);
+    assert.match(pages(reloaded).find(page => page.startsWith('<view view_id="doc_1"')), /Ref changed after sending/);
     const denied = results.revoke[1].output;
     assert.equal(denied.type, 'error-json');
     assert.equal(denied.value.code, 'TOOL_SOURCE_STALE');
@@ -91,7 +91,7 @@ export async function exerciseDelivery(turn, folder) {
     assert.equal(deniedRef.value.code, 'REF_NOT_VISIBLE');
 
     await run('console', [modelCall('console', 'run_code', {
-        code: `const found = await tools['${appName}-inspect_text']({ view_id: 'doc_B', text: refs.${appName}.doc_B.content }); inspect(found.text);`,
+        code: `const found = await tools['${appName}-inspect_text']({ view_id: 'doc_2', text: refs.${appName}.doc_2.content }); inspect(found.text);`,
     })]);
     const output = results.console[0].output;
     assert.equal(output.type, 'json', JSON.stringify(output));

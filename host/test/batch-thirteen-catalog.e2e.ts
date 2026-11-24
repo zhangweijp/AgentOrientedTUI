@@ -239,8 +239,8 @@ try {
     host.pauseAgent(id);
     const session = host.getSessionManager()!.getSession(id)!;
     const desktop = session.desktop;
-    facts.directory = desktop.getInstalledApps();
-    assert.deepEqual(desktop.getInstalledApps().map(item => [item.installationId, item.appId, item.status]), [
+    facts.directory = desktop.listApps();
+    assert.deepEqual(desktop.listApps().map(item => [item.installationId, item.appId, item.status]), [
         [autoEntry, appName, 'running'], [manualEntry, undefined, 'pending'],
     ]);
     assert.equal((await appEffects(manifest)).filter(item => item.event === 'import').length, 1);
@@ -275,7 +275,7 @@ try {
 } finally {
     unsubscribe();
     await host.dispose();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     workers.restore();
     await provider.close();
     db.closeDatabase();

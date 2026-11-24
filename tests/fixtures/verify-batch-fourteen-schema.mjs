@@ -35,10 +35,11 @@ async function install(name, dependencies, overrides = {}) {
 const author = await install('author', { ...packages(['core', 'sdk']), typebox: '1.4.3', typescript: '7.0.2', '@types/node': '24.19.2' });
 for (const dependency of ['preact', '@aotui/runtime'])
     await assert.rejects(readFile(join(author, 'node_modules', dependency, 'package.json')), { code: 'ENOENT' });
-async function appArtifact(name, fixture) {
+async function appArtifact(name, fixture, appName) {
     const folder = join(author, name);
     await mkdir(folder);
     await writeFile(join(folder, 'package.json'), JSON.stringify({ name, type: 'module', version: '0.1.0', main: './dist/app.js',
+        aotui: { app_name: appName },
         files: ['dist/app.js', 'aoapp.json'], dependencies: { '@aotui/sdk': manifest.packages.sdk.version, typebox: '1.4.3' } }));
     await copyFile(join(repo, 'sdk/tests/fixtures', fixture), join(folder, 'app.ts'));
     execFileSync(join(author, 'node_modules/.bin/tsc'), [...tsc, '--types', 'node', '--outDir', 'dist', 'app.ts'], { cwd: folder, env, stdio: 'inherit' });
@@ -46,9 +47,9 @@ async function appArtifact(name, fixture) {
     const [packed] = JSON.parse(execFileSync('npm', ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', output], { cwd: folder, env }));
     return { name, path: join(output, packed.filename), entryHash: await sha(join(folder, 'dist/app.js')) };
 }
-const cinema = await appArtifact('aotui-schema-cinema', 'cinema-schema.ts');
-const healthy = await appArtifact('aotui-schema-healthy', 'cinema-healthy.ts');
-const theatre = await appArtifact('aotui-schema-policy', 'schema-policy-app.ts');
+const cinema = await appArtifact('aotui-schema-cinema', 'cinema-schema.ts', 'cinema');
+const healthy = await appArtifact('aotui-schema-healthy', 'cinema-healthy.ts', 'healthy');
+const theatre = await appArtifact('aotui-schema-policy', 'schema-policy-app.ts', 'theatre');
 const testApps = [cinema, healthy, theatre];
 const appInputs = Object.fromEntries(testApps.map(app => [app.name, 'file:' + app.path]));
 const productApps = await install('product-apps', appInputs, packages(['core', 'sdk']));
@@ -87,12 +88,16 @@ assert.equal(declaration, product.native.codes.declaration);
 const typeProbe = join(output, 'model-console.ts');
 await writeFile(typeProbe, declaration + `
 tools['cinema-lookup']({ seat: ['A', 12] });
-tools['cinema-selection']({ seat: '$cinema.hall.seat' });
+tools['cinema-lookup']({ seat: ['A', '$ref.cinema.hall.seat[1]'] });
+tools['cinema-lookup']({ seat: '$ref.cinema.hall.seat' });
+tools['cinema-selection']({ seat: '$ref.cinema.hall.seat' });
 tools['cinema-lookup_at']({ seat: refs.cinema.hall.seat, view_id: 'west', label: '$literal', tags: [] });
 const seat0: string = refs.cinema.hall.seat[0];
 const seat1: number = refs.cinema.hall.seat[1];
 // @ts-expect-error Wrong type at the seat position.
 tools['cinema-lookup']({ seat: ['A', '12'] });
+// @ts-expect-error A whole-seat address must use the reserved prefix.
+tools['cinema-lookup']({ seat: '$HOME' });
 // @ts-expect-error Multiple View tool requires its receiving view_id.
 tools['cinema-lookup_at']({ seat: ['A', 12], label: 'wrong', tags: [] });
 // @ts-expect-error Nominal selection requires an address.

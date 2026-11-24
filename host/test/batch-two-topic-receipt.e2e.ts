@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path';
 import { mock } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createRuntime, type AppID, type DesktopID, type RuntimeCloseReport } from '@aotui/runtime';
-import type { InteractionStats } from '@aotui/core';
 import type { LLMConfig } from '@aotui/agent-driver-v2';
 import type { DesktopManager } from '../src/core/desktop-manager.js';
 import type { LLMConfigService } from '../src/core/llm-config-service.js';
@@ -33,17 +32,17 @@ const park = join(scratch, 'park-draft');
 const appModule = (app: string) => pathToFileURL(resolve(consumer, 'dist', 'batch-two-' + app + '.js')).href;
 const setup = {
     async createDesktop(id: DesktopID) {
-        const desktopId = await runtime.createDesktop(id);
+        const desktopId = (await runtime.createDesktop(id)).id;
         const desktop = runtime.getDesktop(desktopId);
-        await installFixture(runtime, desktop, 'contacts', 'contacts_install', appModule('contacts'), scratch);
-        await installFixture(runtime, desktop, 'mail', 'mail_install', appModule('mail'), scratch);
+        await installFixture(desktop, 'contacts', 'contacts_install', appModule('contacts'), scratch);
+        await installFixture(desktop, 'mail', 'mail_install', appModule('mail'), scratch);
         return { desktop, thirdPartyAppCount: 2 };
     },
 } as DesktopManager;
 const llm: LLMConfig = { model: 'batch-two-topic-fixture', apiKey: 'test-only',
     provider: { id: 'batch-two-topic-fixture', baseURL: provider.url }, modelCapabilities: { toolCall: true } };
 const models = { resolveLLMConfig: async () => llm, withModelInputBudget: (settings: LLMConfig) => settings } as LLMConfigService;
-const manager = new SessionManagerV3(runtime, setup, models, topics);
+const manager = new SessionManagerV3(setup, models, topics);
 type SavedToolMessage = NonNullable<GuiUpdateEvent['message']> & { role: 'tool'; id: string };
 const delivered: SavedToolMessage[] = [];
 const facts: Record<string, unknown> = { passed: false, topicId, delivered, requests: provider.requests };
@@ -61,17 +60,17 @@ try {
             mcp: { enabled: false, disabledItems: [], allowedServers: [] } } });
     await setContacts(scratch, ORIGINAL);
     const session = await manager.ensureSession(topicId);
-    const mail = session.desktop.getInstalledApps().find(app => app.installationId === 'mail_install');
-    const contacts = session.desktop.getInstalledApps().find(app => app.installationId === 'contacts_install');
+    const mail = session.desktop.listApps().find(app => app.installationId === 'mail_install');
+    const contacts = session.desktop.listApps().find(app => app.installationId === 'contacts_install');
     assert.ok(mail?.appId && mail.appInstanceId && contacts?.appId && contacts.appInstanceId);
-    const contactsAccess = runtime.getAppInteraction(session.desktop.id, contacts.appId, contacts.appInstanceId);
+    const contactsAccess = session.desktop.getRunningApp(contacts.appId, contacts.appInstanceId);
     assert.equal(contactsAccess.status, 'ready');
 
-    // Check observation release and pending reads without taking any invocation locators.
+    // Check the actual resources held while the fixture keeps the handler parked.
     const { appManager } = session.desktop as unknown as {
-        appManager: { getWorkerSandbox(id: AppID): { workerHost: { getInteractionReport(): { core: InteractionStats } } } };
+        appManager: { getManagedApp(id: AppID): { host: { getResourceReport(): { interactions: { retainedOperations: number } } } } };
     };
-    const stats = () => appManager.getWorkerSandbox(mail.appId!).workerHost.getInteractionReport().core;
+    const retainedOperations = () => appManager.getManagedApp(mail.appId!).host.getResourceReport().interactions.retainedOperations;
     const turn = async (label: string, calls: ReturnType<typeof modelCall>[], beforeReply?: () => Promise<void>) => {
         const received = delivered.length;
         provider.replyNext({ label, calls, beforeReply });
@@ -81,7 +80,6 @@ try {
         const stored = topics.getMessages(topicId).find(row => row.id === message.id);
         assert.deepEqual(stored?.content, message.content);
         assert.doesNotMatch(JSON.stringify(message.content), /"(observationId|appInstanceId|desktopId)"/);
-        await watchUntil(() => stats().observations.observations === 0 && stats().observations.reservations === 0);
         return message;
     };
     const fromMessage = (message: SavedToolMessage, index: number) => ({
@@ -94,15 +92,15 @@ try {
         async () => {
             await setContacts(scratch, CHANGED);
             await watchUntil(async () => {
-                const snapshot = await contactsAccess.interaction.preview();
+                const snapshot = await contactsAccess.app.preview();
                 return snapshot.status === 'previewed' && snapshot.views[0]?.content.value.split('\n')[1] === CHANGED.join(', ');
             });
         });
     const firstQuery = fromMessage(first, 0);
     assert.equal(first.content.length, 2);
     assert.match(JSON.stringify(first.content[0]?.output), /INVOCATION_WAIT_TIMEOUT/);
-    assert.equal(stats().activeInvocations, 1);
-    facts.observationsAfterTimeout = { observations: stats().observations.observations, reservations: stats().observations.reservations };
+    await watchUntil(() => retainedOperations() === 1);
+    facts.retainedOperationsAfterTimeout = retainedOperations();
     facts.queryFromDeliveredMessage = firstQuery;
     facts.otherPart = await manager.readAppReceipt(topicId, fromMessage(first, 1));
     assert.equal((facts.otherPart as { code: string }).code, 'RECEIPT_LOCATOR_UNAVAILABLE');
@@ -120,7 +118,7 @@ try {
     facts.disabled = disabled;
     await manager.setSourceEnabled(topicId, 'apps', true);
     const heldRead = manager.readAppReceipt(topicId, firstQuery, 5000);
-    await watchUntil(() => stats().activeReads === 1);
+    await watchUntil(() => retainedOperations() === 2);
     await manager.setSourceItemEnabled(topicId, 'apps', 'mail_install', false);
     await rm(park);
     const revokedDuringRead = await heldRead;
@@ -153,17 +151,21 @@ try {
     assert.deepEqual(firstWrites.map(write => write.to), [ORIGINAL]);
     assert.deepEqual(firstHandlers, firstWrites);
     facts.firstOperation = { handlerEntries: firstHandlers.length, writes: firstWrites.length };
+    await watchUntil(() => retainedOperations() === 0);
     facts.afterTerminal = await manager.readAppReceipt(topicId, firstQuery);
     assert.equal((facts.afterTerminal as { code: string }).code, 'RECEIPT_LOCATOR_UNAVAILABLE');
 
     await writeFile(park, '');
     const beforeReopen = await turn('pending receipt on an instance that will close', [call('before-reopen')]);
     assert.match(JSON.stringify(beforeReopen.content[0]?.output), /INVOCATION_WAIT_TIMEOUT/);
+    await watchUntil(() => retainedOperations() === 1);
     await rm(park);
-    await watchUntil(() => stats().activeInvocations === 0);
-    await session.desktop.closeApp(mail.appId, mail.appInstanceId);
-    assert.equal(await session.desktop.openApp('mail_install'), mail.appId);
-    const newInstance = session.desktop.getInstalledApps().find(app => app.appId === mail.appId)?.appInstanceId;
+    await watchUntil(() => retainedOperations() === 0);
+    const closing = session.desktop.getRunningApp(mail.appId, mail.appInstanceId);
+    assert.equal(closing.status, 'ready');
+    assert.equal((await closing.app.beginClose().completion).ok, true);
+    assert.equal((await session.desktop.openApp('mail_install')).appId, mail.appId);
+    const newInstance = session.desktop.listApps().find(app => app.appId === mail.appId)?.appInstanceId;
     assert.ok(newInstance && newInstance !== mail.appInstanceId);
     const oldQuery = fromMessage(beforeReopen, 0);
     const wrongInstance = await manager.readAppReceipt(topicId, oldQuery);
@@ -183,7 +185,7 @@ try {
 } finally {
     await rm(park, { force: true });
     await manager.cleanup();
-    facts.shutdown = await runtime.beginShutdown().completion;
+    facts.shutdown = await runtime.beginClose().completion;
     await provider.close();
     config.mock.restore();
     db.closeDatabase();
