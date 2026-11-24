@@ -2,11 +2,14 @@
   "name": "@aotui/sqlite-work-items",
   "version": "0.1.0",
   "description": "View SQLite work items and set the status of the selected item.",
+  "aotui": {
+    "app_name": "sqlite_work_items"
+  },
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && generate-aoapp .",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && generate-aoapp .",
     "test": "node --test test/integration.test.mjs"
   },
   "dependencies": {

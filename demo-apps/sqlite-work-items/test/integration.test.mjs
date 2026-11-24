@@ -43,7 +43,7 @@ async function fixture(t, timeoutMs = 5_000) {
             try { process.kill(ownedPid, 'SIGKILL'); }
             catch (error) { if (error.code !== 'ESRCH') throw error; }
         }
-        await runtime.beginShutdown().completion;
+        await runtime.beginClose().completion;
         await rm(dir, { recursive: true, force: true });
     });
 
@@ -67,25 +67,29 @@ fi
 exec ${shellQuote(sqlite)} "$@"
 `, { mode: 0o700 });
 
-    const desktopId = createDesktopId('sqlite');
-    await runtime.createDesktop(desktopId);
-    const desktop = runtime.getDesktop(desktopId);
+    const desktop = await runtime.createDesktop(createDesktopId('sqlite'));
     const installationId = await desktop.registerPendingApp({
         installationId: 'sqlite_work_items', localPath: appDir,
         config: { databasePath: db, sqliteExecutable: executable, AOTUI_DATA_DIR: join(dir, 'app-data') },
     });
-    assert.equal(await desktop.openApp(installationId), 'sqlite_work_items');
-    const [app] = desktop.getInstalledApps();
-    const opened = runtime.getAppInteraction(desktopId, app.appId, app.appInstanceId);
-    assert.equal(opened.status, 'ready', JSON.stringify(opened));
-    const client = opened.interaction;
+    const app = await desktop.openApp(installationId);
+    assert.equal(app.appId, 'sqlite_work_items');
+    const turns = new Map();
+    const client = { readReceipt: app.readReceipt, invoke: (request, timeoutMs) => {
+        const turn = turns.get(request.observationId);
+        assert.ok(turn, 'Expected an adopted test turn');
+        return turn.invoke(app.appId, request, timeoutMs);
+    } };
     let sequence = 0;
 
     async function observe() {
-        const result = await client.observe({ all: true });
-        assert.equal(result.status, 'observed', JSON.stringify(result));
-        assert.equal(client.adoptObservation(result.observation.observationId).status, 'adopted');
-        return result.observation;
+        const result = await app.observe();
+        assert.equal(result.status, 'prepared', JSON.stringify(result));
+        const adopted = desktop.adoptTurn({ apps: [{ candidate: result.candidate }] });
+        assert.equal(adopted.status, 'adopted', JSON.stringify(adopted));
+        const { observation } = result.candidate;
+        turns.set(observation.observationId, adopted.turn);
+        return observation;
     }
     function request(observation, name, input = {}) {
         const tool = observation.tools.find(tool => tool.name === name);
@@ -179,20 +183,20 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
     assert.doesNotMatch(body(frame, 'items'), /\b101\b/);
     assert.equal(view(frame, 'detail'), undefined);
 
-    success(await f.call(frame, 'open_item', { item: '$sqlite_work_items.items.items[0]' }));
+    success(await f.call(frame, 'open_item', { item: '$ref.sqlite_work_items.items.items[0]' }));
     frame = await f.observe();
     const detailInstance = view(frame, 'detail').viewInstanceId;
     assert.deepEqual(toolNames(frame), ['close_item', 'open_item', 'refresh', 'set_status']);
     assert.match(body(frame, 'detail'), /\(private current: WorkItem\) · open · revision 0/);
     assert.match(body(frame, 'detail'), /Check the public App and Host examples/);
 
-    const wrongItem = toolError(await f.call(frame, 'set_status', { item: '$sqlite_work_items.items.items[1]', status: 'done' }), 'failed', 'WORK_ITEM_NOT_SELECTED');
+    const wrongItem = toolError(await f.call(frame, 'set_status', { item: '$ref.sqlite_work_items.items.items[1]', status: 'done' }), 'failed', 'WORK_ITEM_NOT_SELECTED');
     assert.match(wrongItem.details.result.error.message, /current detail View/);
-    const invalid = await f.call(frame, 'set_status', { item: '$sqlite_work_items.detail.current', status: "done'; SELECT 1; --" });
+    const invalid = await f.call(frame, 'set_status', { item: '$ref.sqlite_work_items.detail.current', status: "done'; SELECT 1; --" });
     assert.equal(outcome(invalid).status, 'rejected');
     assert.equal(await updates(f), 0);
 
-    const old = f.request(frame, 'set_status', { item: '$sqlite_work_items.detail.current', status: 'done' });
+    const old = f.request(frame, 'set_status', { item: '$ref.sqlite_work_items.detail.current', status: 'done' });
     success(await f.client.invoke(old), { written: true, refreshed: true });
     assert.deepEqual(await f.sql(currentItem), [{ status: 'done', revision: 1 }]);
     assert.equal(await updates(f), 1);
@@ -200,10 +204,10 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
     assert.equal(view(frame, 'detail').viewInstanceId, detailInstance);
     assert.equal(frame.views.filter(view => view.id === 'detail').length, 1);
     assert.match(body(frame, 'detail'), /done · revision 1/);
-    assert.equal((await f.client.invoke({ ...old, invocationId: 'unseen-old-observation' })).code, 'OBSERVATION_UNAVAILABLE');
+    assert.equal((await f.client.invoke({ ...old, invocationId: 'unseen-old-observation' })).code, 'TURN_NOT_ACTIVE');
 
     await f.sql("UPDATE work_items SET status = 'open', revision = revision + 1 WHERE id = 101;");
-    const stale = toolError(await f.call(frame, 'set_status', { item: '$sqlite_work_items.detail.current', status: 'done' }), 'failed', 'VERSION_CONFLICT');
+    const stale = toolError(await f.call(frame, 'set_status', { item: '$ref.sqlite_work_items.detail.current', status: 'done' }), 'failed', 'VERSION_CONFLICT');
     assert.match(stale.details.result.error.message, /Refresh/);
     assert.deepEqual(await f.sql(currentItem), [{ status: 'open', revision: 2 }]);
     assert.equal(await updates(f), 2);
@@ -214,7 +218,7 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
 
     await f.sql(`CREATE TRIGGER enlarge_detail AFTER UPDATE OF status ON work_items
         BEGIN UPDATE work_items SET body = printf('%070000d', 1) WHERE id = NEW.id; END;`);
-    const write = f.request(frame, 'set_status', { item: '$sqlite_work_items.detail.current', status: 'done' });
+    const write = f.request(frame, 'set_status', { item: '$ref.sqlite_work_items.detail.current', status: 'done' });
     const written = await f.client.invoke(write);
     success(written, { written: true, refreshed: false,
         refreshIssue: { code: 'SQLITE_OUTPUT_LIMIT', message: 'SQLite output exceeded 64 KiB.' } });
@@ -239,12 +243,12 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
     frame = await f.observe();
     assert.equal(view(frame, 'detail'), undefined);
     assert.deepEqual(toolNames(frame), ['open_item', 'refresh']);
-    assert.equal((await f.runtime.beginShutdown().completion).ok, true);
+    assert.equal((await f.runtime.beginClose().completion).ok, true);
 });
 
 test('reports the SQLite changes when a real trigger skips the selected update', { timeout: 10_000 }, async t => {
     const f = await fixture(t);
-    success(await f.call(await f.observe(), 'open_item', { item: '$sqlite_work_items.items.items[0]' }));
+    success(await f.call(await f.observe(), 'open_item', { item: '$ref.sqlite_work_items.items.items[0]' }));
     const frame = await f.observe();
     await f.sql(`CREATE TRIGGER skip_selected BEFORE UPDATE OF status ON work_items WHEN OLD.id = 101
         BEGIN
@@ -252,7 +256,7 @@ test('reports the SQLite changes when a real trigger skips the selected update',
             SELECT RAISE(IGNORE);
         END;`);
 
-    const write = f.request(frame, 'set_status', { item: '$sqlite_work_items.detail.current', status: 'done' });
+    const write = f.request(frame, 'set_status', { item: '$ref.sqlite_work_items.detail.current', status: 'done' });
     const result = await f.client.invoke(write);
     const rowsSql = 'SELECT id, title, status, revision FROM work_items ORDER BY id;';
     const rows = [
@@ -285,10 +289,10 @@ test('reports the SQLite changes when a real trigger skips the selected update',
 
 test('real SQLite start failure leaves the row unchanged and stderr overflow reports an unconfirmed write', { timeout: 10_000 }, async t => {
     const f = await fixture(t);
-    success(await f.call(await f.observe(), 'open_item', { item: '$sqlite_work_items.items.items[0]' }));
+    success(await f.call(await f.observe(), 'open_item', { item: '$ref.sqlite_work_items.items.items[0]' }));
     const frame = await f.observe();
     await rename(f.executable, f.executable + '.held');
-    const input = { item: '$sqlite_work_items.detail.current', status: 'done' };
+    const input = { item: '$ref.sqlite_work_items.detail.current', status: 'done' };
     toolError(await f.call(frame, 'set_status', input), 'failed', 'SQLITE_START_FAILED');
     assert.equal(await updates(f), 0);
     assert.deepEqual(await f.sql(currentItem), [{ status: 'open', revision: 0 }]);
@@ -316,7 +320,7 @@ test('real SQLite start failure leaves the row unchanged and stderr overflow rep
 test('normal shutdown cancels a real SQLite command and confirms App cleanup', { timeout: 10_000 }, async t => {
     const f = await fixture(t);
     const { pending, pid } = await f.startHeldRead(await f.observe(), false);
-    const report = await f.runtime.beginShutdown().completion;
+    const report = await f.runtime.beginClose().completion;
     assert.equal(alive(pid), false);
     assert.equal(report.ok, true, JSON.stringify(report));
     assert.equal(report.appCleanup.completedApps, 1);
@@ -332,7 +336,7 @@ for (const force of [false, true]) {
             const timedOut = await pending;
             assert.equal(timedOut.kind, 'unavailable');
             assert.equal(timedOut.code, 'INVOCATION_WAIT_TIMEOUT');
-            const close = f.runtime.beginShutdown();
+            const close = f.runtime.beginClose();
             const waiting = await close.wait({ timeoutMs: 100 });
             assert.equal(waiting.status, 'deadline');
             assert.equal(waiting.report.resourcesReleased, false);

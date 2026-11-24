@@ -25,25 +25,27 @@ try {
         const historyPath = path.join(working, 'admission-history.json');
         const app = await start(root, 'admission', { historyPath });
         await invoke(app, 'multi_open_file', { filePaths: [a, b] });
-        const client = scope(app), initial = (await client.observe({ all: true })).observation;
+        const client = scope(app), prepared = await client.prepare();
+        assert.equal(prepared.status, 'prepared', JSON.stringify(prepared.issue));
+        const initial = prepared.candidate.observation;
         const first = fileView(app, a);
         assert.ok(first);
-        assert.equal(client.adoptObservation(initial.observationId).status, 'adopted');
+        const turn = client.adopt(prepared.candidate);
         const tool = initial.tools.find(tool => tool.name === 'multi_open_file');
-        const attempt = await client.invoke({ invocationId: 'too-many-files', observationId: initial.observationId,
+        const attempt = await turn.invoke(app.id, { invocationId: 'too-many-files', observationId: initial.observationId,
             toolId: tool.id, input: { filePaths: [c] } });
-        const preview = await client.preview(), next = await client.observe({ all: true });
+        const preview = await client.preview(), next = await client.prepare();
         const known = fileViews(initial);
         assert.deepEqual({
             outcome: attempt.kind === 'receipt' ? attempt.receipt.outcome.status : attempt.code,
             preview: preview.status === 'previewed' ? fileViews(preview) : preview.issue.code,
-            observation: next.status === 'observed' ? fileViews(next.observation) : next.issue.code,
+            observation: next.status === 'prepared' ? fileViews(next.candidate.observation) : next.issue.code,
         }, { outcome: 'failed', preview: known, observation: known });
         assert.equal(attempt.receipt.outcome.details.result.error.code, 'OBSERVATION_CAPACITY');
-        assert.deepEqual(next.observation.source, initial.source);
+        assert.deepEqual(next.candidate.observation.source, initial.source);
         assert.equal(fileView(app, a).viewInstanceId, first.viewInstanceId);
-        client.releaseObservation(initial.observationId);
-        client.releaseObservation(next.observation.observationId);
+        turn.release();
+        next.candidate.discard();
 
         await invoke(app, 'edit_file', { oldString: 'before-open-proof', newString: 'edited-open-proof' }, { view: first.id });
         assert.match(await fs.readFile(a, 'utf8'), /^edited-open-proof/);
@@ -79,18 +81,20 @@ try {
         assert.deepEqual((await client.preview()).source, before.source);
 
         await invoke(app, 'search_files_by_pattern', { pattern: '**/a.txt' });
-        const previous = (await client.observe({ all: true })).observation;
-        assert.equal(client.adoptObservation(previous.observationId).status, 'adopted');
+        const prepared = await client.prepare();
+        assert.equal(prepared.status, 'prepared', JSON.stringify(prepared.issue));
+        const previous = prepared.candidate.observation;
+        const turn = client.adopt(prepared.candidate);
         const searchView = previous.views.find(view => view.type === 'SearchResult');
         const replacing = await invoke(app, 'search_files_by_pattern', { pattern: '**/match-*.txt' },
-            { status: 'failed', client, observation: previous });
+            { status: 'failed', turn, observation: previous });
         assert.equal(replacing.details.result.error.code, 'OBSERVATION_CAPACITY');
         const recoveredSearch = (await client.preview()).views.find(view => view.type === 'SearchResult');
         assert.deepEqual(recoveredSearch.content, searchView.content);
         assert.notEqual(recoveredSearch.viewInstanceId, searchView.viewInstanceId);
-        const stale = await invoke(app, 'close_search_view', {}, { view: searchView.id, status: 'rejected', client, observation: previous });
+        const stale = await invoke(app, 'close_search_view', {}, { view: searchView.id, status: 'rejected', turn, observation: previous });
         assert.equal(stale.code, 'VIEW_INSTANCE_REVOKED');
-        client.releaseObservation(previous.observationId);
+        turn.release();
         await invoke(app, 'close_search_view', {}, { view: recoveredSearch.id });
         const beforeCreate = await client.preview();
 
@@ -110,7 +114,7 @@ try {
         assert.equal(edit.value.data.diskCommitted, true);
         assert.match(edit.value.data.warnings.join(' '), /view synchronization did not complete/);
         assert.ok((await fs.readFile(pad, 'utf8')).startsWith(growth));
-        for (const read of [await client.preview(), await client.observe({ all: true })]) {
+        for (const read of [await client.preview(), await client.prepare()]) {
             assert.equal(read.status, 'rejected');
             assert.equal(read.issue.code, 'OBSERVATION_CAPACITY');
         }
@@ -130,6 +134,41 @@ try {
         assert.ok(toolNames(recovered).includes('close_search_view'));
         await close(recovered);
         assert.deepEqual(await activeFiles(recovered, 'disk'), [b, created]);
+    });
+    await runCase('capacity-rejected open preserves the mounted file IDs and the next receipt selects the actual FileDetail', async () => {
+        const root = path.join(working, 'sequence-alignment');
+        await fs.mkdir(root);
+        const [a, b, c] = ['a.txt', 'b.txt', 'c.txt'].map(file => path.join(root, file));
+        const page = 'seq-proof ' + 'x'.repeat(245 * 1024 - 10);
+        await Promise.all([a, b, c].map(file => fs.writeFile(file, page)));
+        const app = await start(root, 'seq-alignment', { historyPath: path.join(working, 'seq-history.json') });
+        await invoke(app, 'multi_open_file', { filePaths: [a, b] });
+        assert.equal(fileView(app, a)?.id, 'fd_1');
+        assert.equal(fileView(app, b)?.id, 'fd_2');
+        assert.ok(viewText(app, 'workspace').includes(a));
+        assert.ok(viewText(app, 'workspace').includes(b));
+
+        const rejected = await invoke(app, 'multi_open_file', { filePaths: [c] }, { status: 'failed' });
+        assert.equal(rejected.details.result.error.code, 'OBSERVATION_CAPACITY');
+        assert.equal(fileView(app, c), undefined);
+        assert.ok(!viewText(app, 'workspace').includes(c));
+
+        await invoke(app, 'close_file_detail', {}, { view: 'fd_2' });
+        await invoke(app, 'multi_open_file', { filePaths: [c] });
+        const prepared = await scope(app).prepare();
+        assert.equal(prepared.status, 'prepared', JSON.stringify(prepared.issue));
+        const observed = prepared.candidate.observation;
+        try {
+            const observedC = observed.views.find(view => view.type === 'FileDetail' && view.content.value.includes(c));
+            assert.equal(observedC?.id, 'fd_3');
+            assert.equal(fileView(app, c)?.id, 'fd_3');
+            assert.equal(observedC?.name, 'File: ' + c);
+            assert.ok(fileView(app, c)?.content.value.includes(c));
+            assert.ok(viewText(app, 'workspace').includes(c));
+        } finally { prepared.candidate.discard(); }
+        const edited = await invoke(app, 'edit_file', { oldString: 'seq-proof', newString: 'seq-edited' }, { view: 'fd_3' });
+        assert.equal(edited.value.data.view_id, 'fd_3');
+        await close(app);
     });
     facts.passed = true;
 } catch (error) {

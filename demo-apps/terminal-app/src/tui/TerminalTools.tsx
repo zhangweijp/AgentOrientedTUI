@@ -1,11 +1,11 @@
-import { defineViewType } from '@aotui/sdk';
+import { defineViewType, type ToolResult } from '@aotui/sdk';
 import Type from 'typebox';
 import type { TerminalSession } from '../types.js';
 
 export interface TerminalActions {
     onCloseTerminal: (terminalId: string) => boolean;
     onSendCommand: (terminalId: string, command: string) => Promise<{ success: boolean; message: string }>;
-    onSendCommandNewTerminal: (command: string) => Promise<{ success: boolean; terminalId?: string; message: string }>;
+    onSendCommandNewTerminal: (command: string) => Promise<ToolResult>;
     onLoadMoreOutput: (terminalId: string, tailLines: number) => boolean;
 }
 
@@ -31,16 +31,11 @@ export const RootType = defineViewType({ name: 'Root', multiplicity: 'single', r
 export const TerminalConsoleType = defineViewType<Pick<TerminalActions, 'onSendCommandNewTerminal'>>()({ name: 'TerminalConsole', multiplicity: 'single', region: 'dynamic', tools: {
         new_terminal_and_send_command: { description: 'Create a terminal and start a shell command. Inspect the new Terminal View for output and completion.',
             inputSchema: newTerminalInput,
-            async execute({ input: { command }, context: { onSendCommandNewTerminal } }) {
-                const result = await onSendCommandNewTerminal(command);
-                return result.success && result.terminalId
-                    ? { success: true, data: { message: result.message, terminal_id: result.terminalId } }
-                    : { success: false, error: { code: 'COMMAND_REJECTED', message: result.message } };
-            },
+            execute: ({ input: { command }, context: { onSendCommandNewTerminal } }) => onSendCommandNewTerminal(command),
         },
 } });
 
-export const TerminalType = defineViewType<TerminalContext>()({ name: 'Terminal', multiplicity: 'multiple', region: 'dynamic', createId: ({ context }) => context.terminal.id, tools: {
+export const TerminalType = defineViewType<TerminalContext>()({ name: 'Terminal', multiplicity: 'multiple', region: 'dynamic', tools: {
         send_command_to_exist_terminal: { description: 'Start a shell command in this Terminal. Read that Terminal View for output and completion.',
             inputSchema: sendCommandInput,
             enabled: ({ terminal }) => terminal.status !== 'running',

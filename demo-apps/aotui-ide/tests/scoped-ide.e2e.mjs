@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { repo, factsFile, facts, working, consumer, modules, apps, start, scope, snapshot, toolNames, viewText, fileView, invoke, close, eventually, runCase } from './ide-test-harness.mjs';
+import { repo, factsFile, facts, working, consumer, modules, apps, start, scope, snapshot, toolNames, viewText, fileView, invoke, close, eventuallyProjected, runCase } from './ide-test-harness.mjs';
 
 const workspaceTools = ['search_files_by_pattern', 'search_files_by_content', 'multi_open_file', 'multi_close_file', 'create_file',
     'batch_edit', 'multi_open_dirs', 'multi_close_dirs', 'add_folder_to_workspace', 'remove_folder_from_workspace', 'refresh_workspace'];
@@ -26,12 +26,13 @@ function assertJsonRecord(actual, expected, label) {
 }
 async function inspectTools(app, viewId) {
     const client = scope(app);
-    const observed = await client.observe({ all: true });
-    assert.equal(observed.status, 'observed', JSON.stringify(observed));
-    client.releaseObservation(observed.observation.observationId);
-    const view = observed.observation.views.find(view => view.id === viewId);
+    const prepared = await client.prepare();
+    assert.equal(prepared.status, 'prepared', JSON.stringify(prepared));
+    const { observation } = prepared.candidate;
+    prepared.candidate.discard();
+    const view = observation.views.find(view => view.id === viewId);
     assert.ok(view, 'Expected to observe ' + viewId);
-    return { ...observed.observation, tools: observed.observation.tools.filter(tool =>
+    return { ...observation, tools: observation.tools.filter(tool =>
         tool.viewType === view.type && (!tool.eligibleViewIds || tool.eligibleViewIds.includes(viewId))) };
 }
 try {
@@ -41,14 +42,16 @@ try {
     const source = 'export function leaf(value: number): number { return value + 1; }\nexport function caller(): number { return leaf(1); }\nconst broken: number = "wrong";\n';
     await fs.writeFile(file, source); await fs.writeFile(second, 'export const sibling = 7;\n');
     await fs.writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true }, include: ['src/**/*.ts'] }));
-    const a = await start(root, 'a'), b = await start(root, 'b');
+    let a = await start(root, 'a');
+    const b = await start(root, 'b');
+    const historyPath = path.join(working, 'history/a.json');
     await runCase('workspace discovery, ViewType Tool sharing, app-owned open-file check, exact range, two Apps', async () => {
         const initial = await inspectTools(a, 'workspace');
         assert.deepEqual(initial.tools.map(tool => tool.name).sort(), workspaceTools.filter(name => name !== 'batch_edit').sort());
         assert.equal(snapshot(a).views.filter(view => view.type === 'FileDetail').length, 0);
         assert.ok(!toolNames(a).includes('batch_edit'), 'batch_edit is unavailable while no file is loaded');
         for (const name of fileMutations) assert.ok(!toolNames(a).includes(name), name + ' is absent before a file is opened');
-        assert.match(viewText(a, 'root'), /FileDetail:[^\n]*edit_file/, 'Root lists registered FileDetail tools before any file opens');
+        assert.match(viewText(a, 'root'), /### FileDetail[\s\S]*?edit_file/, 'Root lists registered FileDetail tools before any file opens');
         await invoke(a, 'multi_open_file', { filePaths: [file] });
         assert.ok(toolNames(a).includes('batch_edit'), 'batch_edit becomes available after a file is loaded');
         const onlyA = snapshot(a).views.filter(view => view.type === 'FileDetail');
@@ -100,7 +103,7 @@ try {
         assert.equal(edited.value.data.view_id, secondView);
         assert.equal(await fs.readFile(second, 'utf8'), 'export const sibling = 8;\n');
         assert.equal(await fs.readFile(file, 'utf8'), source);
-        await eventually(() => viewText(a, secondView).includes('export const sibling = 8;'), 'edit published in second file View');
+        await eventuallyProjected(a, () => viewText(a, secondView).includes('export const sibling = 8;'), 'edit published in second file View');
         assert.doesNotMatch(viewText(a, secondView), /export const sibling = 7;/);
         assert.equal(viewText(a, firstView), firstText);
         await invoke(a, 'edit_file', { oldString: 'sibling = 8', newString: 'sibling = 7' }, { view: secondView });
@@ -108,7 +111,7 @@ try {
         assert.equal(toolNames(a).filter(name => name === 'edit_file').length, 1);
         await invoke(a, 'close_file_detail', {}, { view: secondView });
         assert.ok(!toolNames(a).includes('edit_file'), 'edit_file is withdrawn after the last FileDetail closes');
-        assert.match(viewText(a, 'root'), /FileDetail:[^\n]*edit_file/);
+        assert.match(viewText(a, 'root'), /### FileDetail[\s\S]*?edit_file/);
         await invoke(a, 'multi_open_file', { filePaths: [file, second] });
     });
     await runCase('real TypeScript seven queries, current document changes, readonly diagnostic slice', async () => {
@@ -129,17 +132,19 @@ try {
             ['lsp_incoming_calls', { line: 1, character: 18 }],
             ['lsp_outgoing_calls', { line: 2, character: 18 }],
         ];
-        const client = scope(a), observation = (await client.observe({ all: true })).observation;
-        assert.equal(client.adoptObservation(observation.observationId).status, 'adopted');
+        const client = scope(a), prepared = await client.prepare();
+        assert.equal(prepared.status, 'prepared', JSON.stringify(prepared.issue));
+        const { observation } = prepared.candidate;
+        const turn = client.adopt(prepared.candidate);
         try {
             for (const [name, args] of queries) {
-                const outcome = await invoke(a, name, args, { view, client, observation });
+                const outcome = await invoke(a, name, args, { view, turn, observation });
                 const kind = ({ lsp_hover: 'hover', lsp_goto_definition: 'definition', lsp_find_references: 'references', lsp_get_diagnostics: 'diagnostics', lsp_document_symbol: 'symbols', lsp_incoming_calls: 'incoming', lsp_outgoing_calls: 'outgoing' })[name];
                 assert.ok(JSON.stringify(panel(a, view, kind).value).length > 2, name + ' has a real nonempty View result');
                 assert.equal(outcome.value.data.value, undefined, 'Business results are only in Views');
                 assert.equal(outcome.value.data.view_id, view);
             }
-        } finally { client.releaseObservation(observation.observationId); }
+        } finally { turn.release(); }
         let loaded = await invoke(a, 'read_loaded_diagnostics', {}, { view, changes: false });
         assert.ok(panel(a, view, 'diagnostics').value.some(d => d.code === 2322));
         await invoke(a, 'edit_file', { oldString: '"wrong"', newString: '1' }, { view: fileView(a, file).id });
@@ -153,6 +158,9 @@ try {
         assert.equal(selectedB.value.data.view_id, fileView(a, second).id, 'the shared Tool runs on the selected View instance');
         assert.ok(panel(a, fileView(a, second).id, 'hover').value, 'LSP output appears in the selected file View');
     });
+    // Start a new receipt lifetime before the remaining scenarios while keeping the same saved workspace.
+    await close(a);
+    a = await start(root, 'a-after-lsp', { data: a.data, sessionKey: 'a', historyPath });
     await runCase('search completeness, complete View-owned contracts and ViewType exclusive creation', async () => {
         await invoke(a, 'search_files_by_pattern', { pattern: '**/*.ts' });
         assert.deepEqual([...new Set(toolNames(a))].sort(), [...workspaceTools, ...fileMutations, ...languageTools,
@@ -160,7 +168,7 @@ try {
         await invoke(a, 'close_search_view', {}, { view: 'search' });
         assert.equal(toolNames(a).includes('close_search_view'), false);
         await invoke(a, 'search_files_by_content', { pattern: 'caller\\(', include: '**/*.ts' });
-        await eventually(() => viewText(a, 'search').includes(file) && toolNames(a).includes('close_search_view'),
+        await eventuallyProjected(a, () => viewText(a, 'search').includes(file) && toolNames(a).includes('close_search_view'),
             'SearchResult matches and close Tool');
         const search = await inspectTools(a, 'search');
         assert.deepEqual(search.tools.map(tool => [tool.viewType, tool.name]), [['SearchResult', 'close_search_view']]);
@@ -170,7 +178,7 @@ try {
         assert.equal(viewText(a, 'search'), before);
         const createView = snapshot(a).views.find(view => view.type === 'WorkspaceCreate' && view.name === 'Workspace: ' + root).id;
         const relativePath = 'src/slice.ts', target = path.join(root, relativePath), content = 'export const 雪 = "😀";\n';
-        const created = await invoke(a, 'create_file_if_absent', { relativePath, content }, { view: createView });
+        const created = await invoke(a, 'create_file_if_absent', { relativePath, content }, { view: createView, changes: false });
         assertJsonRecord(created.value, { success: true, data: {
             filePath: target, bytesWritten: Buffer.byteLength(content),
             message: 'create_file_if_absent completed. Read the current IDE Views for the updated state.', view_id: 'workspace',
@@ -191,24 +199,25 @@ try {
         assert.match(await fs.readFile(second, 'utf8'), /10/);
         // A two-item batch can publish its first commit before the final one.
         // Wait for the actual final content before starting the next edit.
-        await eventually(() => viewText(a, fileView(a, second).id).includes('export const sibling = 10;'), 'complete batch snapshot');
+        await eventuallyProjected(a, () => viewText(a, fileView(a, second).id).includes('export const sibling = 10;'), 'complete batch snapshot');
         const created = path.join(root, 'new/deep/file.ts');
         await invoke(a, 'create_file', { filePath: created, content: 'export const created = true;\n' });
         const renamed = path.join(root, 'move/nested/file.ts'), beforeView = fileView(a, created);
-        await invoke(a, 'rename_file', { newPath: renamed }, { view: beforeView.id });
+        const rename = await invoke(a, 'rename_file', { newPath: renamed }, { view: beforeView.id });
         assert.equal(fileView(a, renamed).id, beforeView.id); assert.equal(fileView(a, renamed).viewInstanceId, beforeView.viewInstanceId);
+        assert.equal(rename.value.data.view_id, beforeView.id);
         const renamedView = fileView(a, renamed), content = await fs.readFile(renamed), stale = scope(a);
-        const observed = await stale.observe({ all: true });
-        assert.equal(observed.status, 'observed', JSON.stringify(observed));
-        const observation = observed.observation;
-        assert.equal(stale.adoptObservation(observation.observationId).status, 'adopted');
+        const prepared = await stale.prepare();
+        assert.equal(prepared.status, 'prepared', JSON.stringify(prepared.issue));
+        const { observation } = prepared.candidate;
+        const turn = stale.adopt(prepared.candidate);
         const writeTool = observation.tools.find(tool => tool.name === 'write_file');
         assert.ok(writeTool);
         assert.ok(snapshot(a).views.find(view => view.id === renamedView.id)?.toolBindings.some(binding =>
             binding.toolId === writeTool.id), 'the observed file owns the write operation');
         const replacement = renamed + '.replacement'; await fs.writeFile(replacement, content); await fs.rename(replacement, renamed);
-        try { await invoke(a, 'write_file', { content: 'bad' }, { view: renamedView.id, status: 'failed', changes: false, client: stale, observation }); }
-        finally { stale.releaseObservation(observation.observationId); }
+        try { await invoke(a, 'write_file', { content: 'bad' }, { view: renamedView.id, status: 'failed', changes: false, turn, observation }); }
+        finally { turn.release(); }
         assert.deepEqual(await fs.readFile(renamed), content);
         await invoke(a, 'multi_open_file', { filePaths: [renamed] }, { changes: false });
         await invoke(a, 'delete_file', {}, { view: fileView(a, renamed).id });
@@ -221,7 +230,7 @@ try {
     await runCase('shutdown, actual resource release, fresh Worker and managed restoration', async () => {
         const data = a.data, oldViews = snapshot(a).views.map(view => view.viewInstanceId);
         await close(a); await close(b);
-        const restarted = await start(root, 'restored', { data, sessionKey: 'a', historyPath: path.join(working, 'history/a.json') });
+        const restarted = await start(root, 'restored', { data, sessionKey: 'a', historyPath });
         assert.notEqual(restarted.worker, a.worker);
         assert.ok(fileView(restarted, file)); assert.ok(!fileView(restarted, second));
         assert.ok(snapshot(restarted).views.every(view => !oldViews.includes(view.viewInstanceId)));

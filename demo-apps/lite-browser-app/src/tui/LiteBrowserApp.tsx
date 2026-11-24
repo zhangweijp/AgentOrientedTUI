@@ -1,3 +1,4 @@
+import pkg from '../../package.json' with { type: 'json' };
 import { createTUIApp, useCallback, useState } from '@aotui/sdk';
 import { runWebFetch } from '../core/webfetch.js';
 import { runWebSearch } from '../core/websearch.js';
@@ -102,12 +103,9 @@ function LiteBrowserRoot() {
 }
 
 const browserApp: ReturnType<typeof createTUIApp> = createTUIApp({
-    app_name: 'lite_browser',
-    whatItIs: 'A lightweight TUI browser that runs web searches and fetches URL content into structured views for LLM workflows.',
-    whenToUse: 'Use Lite Browser when you need to search the web for current information and fetch specific URLs into a readable format.',
+    ...pkg.aotui,
     component: LiteBrowserRoot,
     viewTypes: browserViewTypes,
-    signalPolicy: 'auto'
 });
 
 export default browserApp;

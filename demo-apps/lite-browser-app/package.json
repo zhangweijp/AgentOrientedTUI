@@ -2,11 +2,16 @@
   "name": "@aotui/system-lite-browser",
   "version": "0.1.0",
   "description": "AOTUI Lite Browser App - web search and fetch views for LLM workflows",
+  "aotui": {
+    "app_name": "lite_browser",
+    "whatItIs": "A lightweight TUI browser that runs web searches and fetches URL content into structured views for LLM workflows.",
+    "whenToUse": "Use Lite Browser when you need to search the web for current information and fetch specific URLs into a readable format."
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc && generate-aoapp .",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && generate-aoapp .",
     "test": "vitest",
     "test:run": "vitest run"
   },

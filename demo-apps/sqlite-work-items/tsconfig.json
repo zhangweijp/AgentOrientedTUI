@@ -6,6 +6,7 @@
     "types": ["node"],
     "rootDir": "src",
     "outDir": "dist",
+    "resolveJsonModule": true,
     "strict": true,
     "exactOptionalPropertyTypes": true
   },

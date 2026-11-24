@@ -1,3 +1,4 @@
+import pkg from '../package.json' with { type: 'json' };
 import { arrayRef, createApp, createView, defineViewType, formatRef, ref, refParam,
     type PublishedRef, type ToolResult } from '@aotui/sdk/app';
 import Type from 'typebox';
@@ -55,7 +56,7 @@ export const workViewTypes = [WorkInstructionsType, WorkListType, WorkDetailType
 
 const instructions = [
     'Each page type has one instance. Supply the business parameters shown in the native tool.',
-    'Choose an item by its title. Use the actual app_id and view_id from the XML in $app_id.view_id.items[0] to select a list item. For an update select $app_id.detail.current.',
+    'Choose an item by its title. Use the actual app_id and view_id from the XML in $ref.app_id.view_id.items[0] to select a list item. For an update select $ref.app_id.detail.current.',
     'After an operation, observe the current Views for work item data. Use refresh after a conflict, a partial or unknown write, or an unavailable View.',
 ].join('\n');
 
@@ -73,7 +74,7 @@ function literalBlock(text: string): string {
 }
 
 export default createApp({
-    app_name: 'sqlite_work_items',
+    ...pkg.aotui,
     viewTypes: workViewTypes,
     async initialize({ launchConfig, prepareProjection, registerCleanup, signal }) {
         const sqlite = openSqlite(launchConfig?.databasePath, launchConfig?.sqliteExecutable);

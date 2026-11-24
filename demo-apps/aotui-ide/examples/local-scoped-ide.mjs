@@ -23,14 +23,14 @@ if (values.help) {
     const runtime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
     const input = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
     const lines = input[Symbol.asyncIterator]();
-    let client, closing, startup, initializing = true, queued = 0;
+    let closing, startup, initializing = true, queued = 0;
     const fail = error => { process.exitCode = 1; emit('error', { message: String(error) }); };
     function shutdown(reason) {
         if (!closing) {
             const acceptedStartup = startup;
             closing = (async () => {
                 await acceptedStartup?.catch(() => {});
-                const report = await runtime.beginShutdown().completion;
+                const report = await runtime.beginClose().completion;
                 if (!report.ok || !report.resourcesReleased) process.exitCode = 1;
                 emit('closed', { report });
                 return report;
@@ -50,10 +50,10 @@ if (values.help) {
     try {
         emit('starting', { project, data, session, runtimeModule: import.meta.resolve('@aotui/runtime'),
             ideModule: import.meta.resolve('@agentina/aotui-ide') });
-        const desktopId = await (startup = runtime.createDesktop('local-scoped-ide'));
+        const desktop = await (startup = runtime.createDesktop('local-scoped-ide'));
         startup = undefined;
         if (!closing) {
-            const appId = await (startup = runtime.installDynamicWorkerApp(desktopId, import.meta.resolve('@agentina/aotui-ide'), {
+            const client = await (startup = desktop.installDynamicWorkerApp(import.meta.resolve('@agentina/aotui-ide'), {
                 installationId: 'local-ide', name: 'system_ide',
                 config: { projectPath: project, ideSessionKey: session,
                     ideHistoryPath: path.join(data, 'history.json'), AOTUI_DATA_DIR: path.join(data, 'state'),
@@ -61,25 +61,38 @@ if (values.help) {
             }));
             startup = undefined;
             if (!closing) {
-                const instanceId = runtime.getDesktop(desktopId).getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
-                const opened = runtime.getAppInteraction(desktopId, appId, instanceId);
-                if (opened.status !== 'ready') throw new Error(JSON.stringify(opened));
-                client = opened.interaction;
+                const candidates = new Map();
+                let active;
+                async function observe() {
+                    const prepared = await client.observe();
+                    if (prepared.status === 'rejected') return prepared;
+                    const { observation } = prepared.candidate;
+                    candidates.set(observation.observationId, prepared.candidate);
+                    return { status: 'observed', observation };
+                }
+                function release(observationId) {
+                    if (active?.observationId === observationId) {
+                        active.turn.release();
+                        active = undefined;
+                    }
+                    candidates.get(observationId)?.discard();
+                    candidates.delete(observationId);
+                }
                 const deadline = Date.now() + 15000;
                 let ready;
                 while (!closing) {
-                    ready = await client.observe({ all: true });
+                    ready = await observe();
                     if (ready.status === 'observed') {
                         // This marker belongs to this packaged IDE's Root View.
                         // Workspace contents can contain arbitrary file names/text.
                         const root = ready.observation.views.find(view => view.id === 'root');
                         const failed = /^Initialization failed: ([A-Z][A-Z0-9_]{0,127})\r?$/m.exec(root?.content?.value ?? '');
                         if (failed) {
-                            client.releaseObservation(ready.observation.observationId);
+                            release(ready.observation.observationId);
                             throw new Error('Initialization failed: ' + failed[1]);
                         }
                         if (ready.observation.tools.some(tool => tool.name === 'multi_open_file')) break;
-                        client.releaseObservation(ready.observation.observationId);
+                        release(ready.observation.observationId);
                     }
                     if (Date.now() >= deadline) throw new Error('Workspace not ready: ' + JSON.stringify(ready));
                     await new Promise(resolve => setTimeout(resolve, 20));
@@ -104,11 +117,28 @@ if (values.help) {
                                 value = preview.views.map(({ id, type, name }) => ({ viewId: id, viewType: type, viewName: name }));
                                 break;
                             }
-                            case 'observe': value = await client.observe({ all: true }); break;
-                            case 'adopt': value = client.adoptObservation(command.observationId); break;
-                            case 'invoke': value = await client.invoke({ invocationId: command.invocationId ?? randomUUID(),
-                                observationId: command.observationId, toolId: command.toolId, input: command.input }); break;
-                            case 'release': client.releaseObservation(command.observationId); value = { released: true }; break;
+                            case 'observe': value = await observe(); break;
+                            case 'adopt': {
+                                const { observationId } = command;
+                                if (active?.observationId === observationId && active.turn.isCurrent) {
+                                    value = { status: 'adopted' };
+                                    break;
+                                }
+                                const result = desktop.adoptTurn({ apps: [{ candidate: candidates.get(observationId) }] });
+                                if (result.status === 'adopted') {
+                                    if (active && active.observationId !== observationId) candidates.delete(active.observationId);
+                                    active = { observationId, turn: result.turn };
+                                    value = { status: 'adopted' };
+                                } else value = result;
+                                break;
+                            }
+                            case 'invoke': {
+                                if (!active) throw new Error('Adopt an observation before invoking a Tool.');
+                                value = await active.turn.invoke(client.appId, { invocationId: command.invocationId ?? randomUUID(),
+                                    observationId: command.observationId, toolId: command.toolId, input: command.input });
+                                break;
+                            }
+                            case 'release': release(command.observationId); value = { released: true }; break;
                             default: throw new Error('Unknown op: ' + command.op);
                         }
                         emit('result', { request, op: command.op, value });

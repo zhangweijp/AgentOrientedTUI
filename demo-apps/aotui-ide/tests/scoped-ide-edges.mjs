@@ -157,24 +157,24 @@ try {
                 if (kind === 'hover') { entered.resolve(); await release.promise; }
                 return { documentVersion: 1, value: kind };
             };
-            const hover = x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, record.viewId);
+            const hover = x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, record.key);
             await entered.promise;
-            assert.equal((await x.call('lsp_goto_definition', { file_path: file, line: 1, character: 1 }, record.viewId)).success, true);
+            assert.equal((await x.call('lsp_goto_definition', { file_path: file, line: 1, character: 1 }, record.key)).success, true);
             release.resolve(); assert.equal((await hover).success, true);
             assert.deepEqual(Object.keys(record.panels).sort(), ['definition', 'hover']);
 
             const lateEntered = gate(), lateRelease = gate();
             try {
                 x.owner.lsp.query = async () => { lateEntered.resolve(); await lateRelease.promise; return { documentVersion: 1, value: 'obsolete' }; };
-                const late = x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, record.viewId);
+                const late = x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, record.key);
                 await lateEntered.promise;
                 await fs.writeFile(file, 'const x = 2;');
                 assert.equal((await x.call('multi_open_file', { filePaths: [file] })).success, true);
-                const current = x.owner.files.get(file); assert.notEqual(current, record); assert.equal(current.viewId, record.viewId);
+                const current = x.owner.files.get(file); assert.notEqual(current, record); assert.equal(current.key, record.key);
                 lateRelease.resolve(); const rejected = await late;
                 assert.equal(rejected.error.code, 'IDE_FILE_VIEW_STALE'); assert.equal(Object.hasOwn(rejected, 'effects'), false); assert.deepEqual(current.panels, {});
                 x.owner.lsp.query = async (_kind, _file, content) => ({ documentVersion: 2, value: content });
-                const fresh = await x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, current.viewId);
+                const fresh = await x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, current.key);
                 assert.equal(fresh.success, true); assert.equal(fresh.data.value, 'const x = 2;');
             } finally { lateRelease.resolve(); }
         } finally { release.resolve(); await x.close(); }
@@ -184,7 +184,7 @@ try {
         const x = await session(root); await x.owner.start(); await x.call('multi_open_file', { filePaths: [file] });
         const record = x.owner.files.get(file), before = JSON.stringify(record);
         x.owner.lsp.query = async () => ({ documentVersion: 1, value: [{ range: { start: { line: -1, character: 0 }, end: { line: 0, character: 1 } }, message: 'bad' }] });
-        const result = await x.call('lsp_get_diagnostics', { file_path: file }, record.viewId);
+        const result = await x.call('lsp_get_diagnostics', { file_path: file }, record.key);
         assert.equal(result.error.code, 'LSP_DIAGNOSTICS_INVALID'); assert.equal(Object.hasOwn(result, 'effects'), false); assert.equal(JSON.stringify(record), before); await x.close();
     });
     await run('queued history cancellation has no disk effect and is a healthy close', async () => {
@@ -348,11 +348,11 @@ try {
             const second = await h.start(root, 'recovery-ui-second', { data: first.data, sessionKey, slices: false });
             assert.ok(h.viewText(second, 'workspace').includes(extra)); assert.match(h.viewText(second, 'workspace'), /Unavailable folders/);
             await h.invoke(second, 'remove_folder_from_workspace', { folderPath: root });
-            await h.eventually(() => !h.toolNames(second).includes('multi_open_file'), 'unavailable-only tool availability');
+            await h.eventuallyProjected(second, () => !h.toolNames(second).includes('multi_open_file'), 'unavailable-only tool availability');
             const names = h.toolNames(second); assert.ok(names.includes('add_folder_to_workspace')); assert.ok(names.includes('remove_folder_from_workspace'));
             assert.ok(!names.includes('search_files_by_pattern')); assert.ok(!names.includes('create_file'));
             await h.invoke(second, 'remove_folder_from_workspace', { folderPath: extra });
-            await h.eventually(() => !h.toolNames(second).includes('remove_folder_from_workspace'), 'removed last saved root');
+            await h.eventuallyProjected(second, () => !h.toolNames(second).includes('remove_folder_from_workspace'), 'removed last saved root');
             assert.doesNotMatch(h.viewText(second, 'workspace'), /Unavailable folders/);
             await h.invoke(second, 'add_folder_to_workspace', { folderPath: root }); await h.close(second);
             facts.recoveryUI = { unavailableOnlyTools: names, cleanup: h.facts.cleanup };

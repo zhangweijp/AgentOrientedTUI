@@ -99,7 +99,7 @@ try {
         for (const delta of [-1, 0, 1]) {
             const result = { ...empty, value: 'x'.repeat(512 * 1024 - overhead + delta) }; boundedJSON(result); x.owner.lsp.query = async () => result;
             const before = JSON.stringify(record);
-            const reply = await x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, record.viewId);
+            const reply = await x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, record.key);
             if (delta <= 0) succeeds(reply); else { fails(reply, 'IDE_VIEW_TOO_LARGE'); assert.equal(JSON.stringify(record), before); }
         }
         await x.close();

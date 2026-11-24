@@ -1,4 +1,5 @@
-import { createTUIApp, useCallback, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
+import pkg from '../../package.json' with { type: 'json' };
+import { createTUIApp, useCallback, useMemo, useRef, useState, useAppRuntimeContext, type ToolResult } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
@@ -27,8 +28,19 @@ function createCommand(commandId: string, command: string): CommandRecord {
     };
 }
 
+function planCommand(cwd: string, projectPath: string, command: string): { isCd: boolean; cwd: string } | { error: string } {
+    if (hasChainedCd(command)) return { error: 'Chained cd commands are not supported.' };
+    const { isCd, target } = parseCdCommand(command);
+    const nextCwd = isCd ? resolveNextCwd(cwd, projectPath, target) : cwd;
+    if (!isPathWithinProject(projectPath, nextCwd)) return {
+        error: isCd ? 'Target path is outside projectPath.' : 'Terminal working directory is outside projectPath.',
+    };
+    return { isCd, cwd: nextCwd };
+}
+
 function TerminalRoot() {
-    const envProjectPath = useAppRuntimeContext().launchConfig?.projectPath as string | undefined;
+    const { launchConfig, prepareOpeningProjection, readPreparedViewId, requestAttention } = useAppRuntimeContext();
+    const envProjectPath = launchConfig?.projectPath as string | undefined;
     const projectPath = useMemo(() => envProjectPath || os.homedir(), [envProjectPath]);
     const terminalsRef = useRef<TerminalSession[]>([]);
     const [terminals, renderTerminals] = useState(terminalsRef.current);
@@ -44,22 +56,6 @@ function TerminalRoot() {
     const updateTerminal = useCallback((terminalId: string, updater: (terminal: TerminalSession) => TerminalSession) => {
         setTerminals(terminalsRef.current.map(terminal => terminal.id === terminalId ? updater(terminal) : terminal));
     }, [setTerminals]);
-
-    const addTerminal = useCallback((initialPath?: string) => {
-        const terminalId = `terminal_${terminalCounter.current++}`;
-        const nextCwd = resolveNextCwd(projectPath, projectPath, initialPath);
-        const safeCwd = isPathWithinProject(projectPath, nextCwd) ? nextCwd : projectPath;
-        const terminal: TerminalSession = {
-            id: terminalId,
-            cwd: safeCwd,
-            status: 'idle',
-            createdAt: new Date().toISOString(),
-            commands: [],
-            outputTail: DEFAULT_TAIL_LINES
-        };
-        setTerminals([...terminalsRef.current, terminal]);
-        return terminal;
-    }, [projectPath, setTerminals]);
 
     const closeTerminal = useCallback((terminalId: string) => {
         const target = terminalsRef.current.find((terminal: TerminalSession) => terminal.id === terminalId);
@@ -110,15 +106,10 @@ function TerminalRoot() {
         if (terminal.status === 'running') {
             return { success: false, message: 'Terminal is busy running another command.' };
         }
-        if (hasChainedCd(command)) {
-            return { success: false, message: 'Chained cd commands are not supported.' };
-        }
-        const cdResult = parseCdCommand(command);
-        if (cdResult.isCd) {
-            const nextCwd = resolveNextCwd(terminal.cwd, projectPath, cdResult.target);
-            if (!isPathWithinProject(projectPath, nextCwd)) {
-                return { success: false, message: 'Target path is outside projectPath.' };
-            }
+        const plan = planCommand(terminal.cwd, projectPath, command);
+        if ('error' in plan) return { success: false, message: plan.error };
+        if (plan.isCd) {
+            const nextCwd = plan.cwd;
             const commandId = `cmd_${commandCounter.current++}`;
             updateTerminal(terminalId, (current: TerminalSession) => ({
                 ...current,
@@ -138,10 +129,6 @@ function TerminalRoot() {
                 status: 'idle'
             }));
             return { success: true, message: `Directory changed to ${nextCwd}.` };
-        }
-
-        if (!isPathWithinProject(projectPath, terminal.cwd)) {
-            return { success: false, message: 'Terminal working directory is outside projectPath.' };
         }
 
         const commandId = `cmd_${commandCounter.current++}`;
@@ -169,7 +156,7 @@ function TerminalRoot() {
         });
 
         proc.on('close', (code: number | null) => {
-            processMap.current.delete(commandId);
+            if (!processMap.current.delete(commandId)) return;
             updateTerminal(terminalId, (current: TerminalSession) => {
                 const status: CommandStatus = code === 0 ? 'success' : 'failed';
                 const nextCommands = current.commands.map((item: CommandRecord) => {
@@ -190,20 +177,42 @@ function TerminalRoot() {
                     commands: nextCommands
                 };
             });
+            if (code !== 0) requestAttention();
         });
 
         return { success: true, message: `Command started in ${terminalId}.` };
-    }, [commandCounter, projectPath, updateCommandOutput, updateTerminal]);
+    }, [commandCounter, projectPath, requestAttention, updateCommandOutput, updateTerminal]);
 
-    const sendCommandNewTerminal = useCallback(async (command: string) => {
-        const terminal = addTerminal();
+    const sendCommandNewTerminal = useCallback(async (command: string): Promise<ToolResult> => {
+        const plan = planCommand(projectPath, projectPath, command);
+        if ('error' in plan) return { success: false, error: { code: 'COMMAND_REJECTED', message: plan.error } };
+        const terminal: TerminalSession = {
+            id: `Session ${++terminalCounter.current}`, cwd: projectPath, status: 'idle',
+            createdAt: new Date().toISOString(), commands: [], outputTail: DEFAULT_TAIL_LINES,
+        };
+        try {
+            await prepareOpeningProjection(
+                () => setTerminals([...terminalsRef.current, terminal]),
+                () => { closeTerminal(terminal.id); },
+            );
+        } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY') {
+                return { success: false, error: { code: error.code, message: 'Close a Terminal View before opening a new session.' } };
+            }
+            throw error;
+        }
+        const viewId = readPreparedViewId(TerminalType.name, terminal.id);
+        if (!viewId) {
+            closeTerminal(terminal.id);
+            return { success: false, error: { code: 'TERMINAL_VIEW_MISSING', message: 'The new Terminal View was not published.' } };
+        }
         const result = await sendCommand(terminal.id, command);
         if (!result.success) {
             closeTerminal(terminal.id);
-            return { success: false, message: result.message };
+            return { success: false, error: { code: 'COMMAND_REJECTED', message: result.message } };
         }
-        return { success: true, terminalId: terminal.id, message: result.message };
-    }, [addTerminal, closeTerminal, sendCommand]);
+        return { success: true, data: { view_id: viewId, message: result.message } };
+    }, [closeTerminal, prepareOpeningProjection, projectPath, readPreparedViewId, sendCommand, setTerminals]);
 
     return (
         <>
@@ -214,7 +223,7 @@ function TerminalRoot() {
                 <TerminalConsoleView projectPath={projectPath} terminals={terminals} />
             </TerminalConsoleType>
             {terminals.map((terminal: TerminalSession) => (
-                <TerminalType key={terminal.id} context={{ terminal, onSendCommand: sendCommand, onLoadMoreOutput: setOutputTail, onCloseTerminal: closeTerminal }} name={`Terminal ${terminal.id}`}>
+                <TerminalType key={terminal.id} idPrefix="terminal" context={{ terminal, onSendCommand: sendCommand, onLoadMoreOutput: setOutputTail, onCloseTerminal: closeTerminal }} name={terminal.id}>
                     <TerminalView terminal={terminal} />
                 </TerminalType>
             ))}
@@ -223,9 +232,7 @@ function TerminalRoot() {
 }
 
 export default createTUIApp({
-    app_name: 'terminal',
-    whatItIs: 'A multi-terminal shell application with command history, working directory tracking, and output tailing for LLM workflows.',
-    whenToUse: 'Run shell commands in the project workspace, manage terminal sessions, and inspect command status and output.',
+    ...pkg.aotui,
     component: TerminalRoot,
     viewTypes: terminalViewTypes,
 });

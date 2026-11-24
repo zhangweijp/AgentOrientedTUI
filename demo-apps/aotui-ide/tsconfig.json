@@ -1,12 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ES2020",
+    "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": [
       "ES2021"
     ],
     "outDir": "./dist",
+    "resolveJsonModule": true,
     "rootDir": "./src",
     "declaration": true,
     "declarationMap": true,

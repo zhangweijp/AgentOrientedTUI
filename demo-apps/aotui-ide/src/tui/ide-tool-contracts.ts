@@ -29,7 +29,7 @@ function fileReceipt(owner: IDESession, name: string, filePath: string, result: 
 }
 
 async function hoverReceipt(owner: IDESession, file: IDEFile, args: Readonly<Type.Static<typeof positionSchema>>): Promise<ToolResult> {
-    const result = await owner.invoke('lsp_hover', { ...args, file_path: file.observed.path }, file.viewId);
+    const result = await owner.invoke('lsp_hover', { ...args, file_path: file.observed.path }, file.key);
     if (!result.success) return result;
     const viewId = owner.getLoadedFileViewId(file.observed.path);
     if (!viewId) return receipt('lsp_hover', 'workspace', result, true);
@@ -43,7 +43,7 @@ async function hoverReceipt(owner: IDESession, file: IDEFile, args: Readonly<Typ
 type FileDetailContext = { readonly owner: IDESession; readonly file: IDEFile; readonly diagnostics: boolean };
 
 export async function closeFileDetail(owner: IDESession, file: IDEFile): Promise<ToolResult> {
-    return receipt('close_file_detail', 'workspace', await owner.invoke('close_file_detail', {}, file.viewId));
+    return receipt('close_file_detail', 'workspace', await owner.invoke('close_file_detail', {}, file.key));
 }
 const sessionReady = (owner: IDESession) => owner.live && owner.ready;
 const fileReady = ({ owner }: FileDetailContext) => sessionReady(owner);
@@ -56,12 +56,12 @@ function workspaceOperation(name: string, viewId = 'workspace', omitData = false
 
 async function changeFile({ owner, file }: FileDetailContext, operation: string,
     input: Readonly<Record<string, unknown>>, destination = file.observed.path): Promise<ToolResult> {
-    return fileReceipt(owner, operation, destination, await owner.invoke(operation, input, file.viewId));
+    return fileReceipt(owner, operation, destination, await owner.invoke(operation, input, file.key));
 }
 
 async function queryFile({ owner, file }: FileDetailContext, operation: string, input: object): Promise<ToolResult> {
     const path = file.observed.path;
-    const result = await owner.invoke(operation, { ...input, file_path: path }, file.viewId);
+    const result = await owner.invoke(operation, { ...input, file_path: path }, file.key);
     return fileReceipt(owner, operation, path, result, true);
 }
 
@@ -128,7 +128,7 @@ export const WorkspaceType = defineViewType<IDESession>()({ name: 'Workspace', m
 } });
 
 export const FileDetailType = defineViewType<FileDetailContext>()({
-    name: 'FileDetail', multiplicity: 'multiple', region: 'dynamic', createId: ({ context }) => context.file.viewId,
+    name: 'FileDetail', multiplicity: 'multiple', region: 'dynamic',
     tools: {
         write_file: {
             description: 'Replace the contents of a currently loaded file after checking its disk identity and content.',
