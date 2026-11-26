@@ -1,18 +1,38 @@
 import type { Plan, Phase, PhaseCompletion, PhaseInput, TaskInput, TaskItem } from '../types.js';
 import * as db from '../db/index.js';
 
-async function ensureDb() {
-    await db.initDatabase();
+let configuredDbPath: string | undefined;
+
+async function ensureDb(dbPath?: string) {
+    if (dbPath !== undefined) {
+        configuredDbPath = dbPath;
+    }
+    await db.initDatabase(configuredDbPath);
 }
 
 export const planningService = {
-    async init(): Promise<void> {
-        await ensureDb();
+    configure(dbPath?: string): void {
+        configuredDbPath = dbPath;
+    },
+
+    async init(dbPath?: string): Promise<void> {
+        configuredDbPath = dbPath;
+        await ensureDb(dbPath);
     },
 
     async getPlans(desktopId: string): Promise<Plan[]> {
         await ensureDb();
         return db.getPlans(desktopId);
+    },
+
+    async getActivePlanId(desktopId: string): Promise<string | null> {
+        await ensureDb();
+        return db.getActivePlanId(desktopId);
+    },
+
+    async setActivePlanId(desktopId: string, planId: string | null): Promise<void> {
+        await ensureDb();
+        await db.setActivePlanId(desktopId, planId);
     },
 
     async createPlan(
@@ -22,19 +42,19 @@ export const planningService = {
         phases: PhaseInput[] = []
     ): Promise<Plan> {
         await ensureDb();
-        const plan = db.createPlan(desktopId, title, description);
+        const plan = await db.createPlan(desktopId, title, description);
         if (phases.length === 0) {
             return plan;
         }
         const createdPhases: Phase[] = [];
         for (const phaseInput of phases) {
-            const phase = db.createPhase(desktopId, plan.id, phaseInput.title, phaseInput.description ?? '');
+            const phase = await db.createPhase(desktopId, plan.id, phaseInput.title, phaseInput.description ?? '');
             if (!phase) {
                 continue;
             }
             const createdTasks: TaskItem[] = [];
             for (const taskInput of phaseInput.tasks ?? []) {
-                const task = db.createTodo(desktopId, phase.id, taskInput.title, taskInput.description ?? '');
+                const task = await db.createTodo(desktopId, phase.id, taskInput.title, taskInput.description ?? '');
                 if (task) {
                     createdTasks.push(task);
                 }
@@ -62,13 +82,13 @@ export const planningService = {
         tasks: TaskInput[] = []
     ): Promise<Phase | null> {
         await ensureDb();
-        const phase = db.createPhase(desktopId, planId, title, description);
+        const phase = await db.createPhase(desktopId, planId, title, description);
         if (!phase) {
             return null;
         }
         const createdTasks: TaskItem[] = [];
         for (const taskInput of tasks) {
-            const task = db.createTodo(desktopId, phase.id, taskInput.title, taskInput.description ?? '');
+            const task = await db.createTodo(desktopId, phase.id, taskInput.title, taskInput.description ?? '');
             if (task) {
                 createdTasks.push(task);
             }

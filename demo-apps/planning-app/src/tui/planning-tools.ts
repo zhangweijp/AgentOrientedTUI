@@ -1,4 +1,4 @@
-import { defineViewType, refParam } from '@aotui/sdk';
+import { defineViewType, refParam, type ToolResult } from '@aotui/sdk';
 import Type from 'typebox';
 import { PlanSchema, PhaseSchema, TaskSchema } from './ref-schemas.js';
 import type { PhaseCompletion, PhaseInput, Plan, TaskInput } from '../types.js';
@@ -58,12 +58,24 @@ const updateTaskInput = Type.Object({
     description: Type.Optional(Type.String({ description: 'New task description' })),
 }, { additionalProperties: false });
 
+type CreatePlanOutcome = {
+    planId: string;
+    selectionSaved: boolean;
+    selectionError?: string;
+};
+
+type DeletePlanOutcome = {
+    deleted: boolean;
+    selectionCleared: boolean;
+    selectionError?: string;
+};
+
 type PlanListActions = {
     plans: Plan[];
     activePlan: Plan | null;
-    createPlan: (title: string, description?: string, phases?: PhaseInput[]) => Promise<string>;
+    createPlan: (title: string, description?: string, phases?: PhaseInput[]) => Promise<CreatePlanOutcome>;
     updatePlan: (planId: string, updates: { title?: string; description?: string }) => Promise<boolean>;
-    deletePlan: (planId: string) => Promise<boolean>;
+    deletePlan: (planId: string) => Promise<DeletePlanOutcome>;
     openPlan: (planId: string) => Promise<boolean>;
     closePlan: () => Promise<void>;
 };
@@ -105,18 +117,52 @@ function taskFor(plan: Plan | null, taskId: string) {
 
 const inactivePlan = () => ({ success: false as const, error: { code: 'PLAN_NOT_ACTIVE', message: 'Open the intended Plan and select a Ref from its current PlanDetail.' } });
 
+function dbToolFailure(error: unknown): ToolResult | null {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === 'PLANNING_DB_BUSY' || code === 'PLANNING_DB_PATH_INVALID' || code === 'OBSERVATION_CAPACITY') {
+        return {
+            success: false,
+            error: {
+                code,
+                message: error instanceof Error ? error.message : String(error),
+            },
+        };
+    }
+    return null;
+}
+
 export const RootType = defineViewType({ name: 'Root', multiplicity: 'single', region: 'static' });
 
 export const PlanListType = defineViewType<PlanListActions>()({ name: 'PlanList', multiplicity: 'single', region: 'dynamic', tools: {
         create_plan: { description: 'Create a new plan, optionally with phases and tasks.',
             inputSchema: planInput,
-            async execute({ input: args, context: actions }) {
+            async execute({ input: args, context: actions }): Promise<ToolResult> {
                 const phases: PhaseInput[] = (args.phases ?? []).map(({ title, description, tasks }) => ({
                     title, description, tasks: [...(tasks ?? [])],
                 }));
-                await actions.createPlan(args.title, args.description, phases);
+                let outcome: CreatePlanOutcome;
+                try {
+                    outcome = await actions.createPlan(args.title, args.description, phases);
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
+                }
                 const taskCount = phases.reduce((sum, phase) => sum + (phase.tasks?.length ?? 0), 0);
-                return { success: true, data: { message: `Plan created with ${phases.length} phases and ${taskCount} tasks.` } };
+                if (!outcome.selectionSaved) {
+                    const detail = outcome.selectionError ? ` (${outcome.selectionError})` : '';
+                    return {
+                        success: true,
+                        data: {
+                            planId: outcome.planId,
+                            planCreated: true,
+                            selectionSaved: false,
+                            selectionWarning: `Plan ${outcome.planId} was created on disk, but its active selection was not saved${detail}. Do not re-create the plan. Check PlanList before retrying open_plan.`,
+                            message: `Plan ${outcome.planId} created with ${phases.length} phases and ${taskCount} tasks. Active selection was not saved.`,
+                        },
+                    };
+                }
+                return { success: true, data: { planId: outcome.planId, message: `Plan created with ${phases.length} phases and ${taskCount} tasks.` } };
             },
         },
         update_plan: { description: 'Update the Plan selected by a View-qualified Plan Ref from the current PlanList. The plan parameter is required.',
@@ -124,18 +170,45 @@ export const PlanListType = defineViewType<PlanListActions>()({ name: 'PlanList'
             async execute({ input: args, context: actions }) {
                 const plan = shownPlan(actions, args.plan.id);
                 if (!plan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Observe PlanList and select a current View-qualified Plan Ref for plan.' } };
-                if (!await actions.updatePlan(plan.id, { title: args.title, description: args.description })) {
-                    return { success: false, error: { code: 'PLAN_UPDATE_FAILED', message: 'Plan update failed' } };
+                try {
+                    if (!await actions.updatePlan(plan.id, { title: args.title, description: args.description })) {
+                        return { success: false, error: { code: 'PLAN_UPDATE_FAILED', message: 'Plan update failed' } };
+                    }
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
                 }
                 return { success: true, data: { message: 'Plan updated.' } };
             },
         },
         delete_plan: { description: 'Delete the Plan selected by a View-qualified Plan Ref from the current PlanList. The plan parameter is required.',
             inputSchema: targetPlanInput,
-            async execute({ input: args, context: actions }) {
+            async execute({ input: args, context: actions }): Promise<ToolResult> {
                 const plan = shownPlan(actions, args.plan.id);
                 if (!plan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Observe PlanList and select a current View-qualified Plan Ref for plan.' } };
-                if (!await actions.deletePlan(plan.id)) return { success: false, error: { code: 'PLAN_DELETE_FAILED', message: 'Plan delete failed' } };
+                let outcome: DeletePlanOutcome;
+                try {
+                    outcome = await actions.deletePlan(plan.id);
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
+                }
+                if (!outcome.deleted) return { success: false, error: { code: 'PLAN_DELETE_FAILED', message: 'Plan delete failed' } };
+                if (!outcome.selectionCleared) {
+                    const detail = outcome.selectionError ? ` (${outcome.selectionError})` : '';
+                    return {
+                        success: true,
+                        data: {
+                            planId: plan.id,
+                            planDeleted: true,
+                            selectionCleared: false,
+                            selectionWarning: `Plan ${plan.id} was deleted from disk, but clearing the saved active plan selection failed${detail}.`,
+                            message: `Plan ${plan.id} deleted, but clearing saved active selection failed.`,
+                        },
+                    };
+                }
                 return { success: true, data: { message: 'Plan deleted.' } };
             },
         },
@@ -143,8 +216,20 @@ export const PlanListType = defineViewType<PlanListActions>()({ name: 'PlanList'
             inputSchema: targetPlanInput,
             async execute({ input: { plan }, context: actions }) {
                 if (!shownPlan(actions, plan.id)) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Refresh PlanList and select a current View-qualified Plan Ref name for plan.' } };
-                if (!await actions.openPlan(plan.id)) return { success: false, error: { code: 'PLAN_OPEN_FAILED', message: 'Plan open failed' } };
-                return { success: true, data: { message: 'Plan opened.' } };
+                try {
+                    if (!await actions.openPlan(plan.id)) return { success: false, error: { code: 'PLAN_OPEN_FAILED', message: 'Plan open failed' } };
+                    return { success: true, data: { message: 'Plan opened.' } };
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    return {
+                        success: false,
+                        error: {
+                            code: 'PLAN_SELECTION_SAVE_FAILED',
+                            message: error instanceof Error ? error.message : String(error),
+                        },
+                    };
+                }
             },
         },
         close_plan: { description: 'Close the active plan.',
@@ -152,8 +237,20 @@ export const PlanListType = defineViewType<PlanListActions>()({ name: 'PlanList'
             enabled: ({ activePlan }) => Boolean(activePlan),
             async execute({ context: actions }) {
                 if (!actions.activePlan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'There is no active plan to close.' } };
-                await actions.closePlan();
-                return { success: true, data: { message: 'Active plan closed.' } };
+                try {
+                    await actions.closePlan();
+                    return { success: true, data: { message: 'Active plan closed.' } };
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    return {
+                        success: false,
+                        error: {
+                            code: 'PLAN_SELECTION_SAVE_FAILED',
+                            message: error instanceof Error ? error.message : String(error),
+                        },
+                    };
+                }
             },
         },
 } });
@@ -164,7 +261,13 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
             async execute({ input: args, context: actions }) {
                 if (!findActivePlan(actions.activePlan, args.plan.id)) return inactivePlan();
                 const tasks = [...(args.tasks ?? [])];
-                if (!await actions.addPhase(args.title, args.description, tasks)) return { success: false, error: { code: 'PHASE_ADD_FAILED', message: 'Add phase failed' } };
+                try {
+                    if (!await actions.addPhase(args.title, args.description, tasks)) return { success: false, error: { code: 'PHASE_ADD_FAILED', message: 'Add phase failed' } };
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
+                }
                 return { success: true, data: { message: `Phase added with ${tasks.length} tasks.` } };
             },
         },
@@ -174,7 +277,13 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 const { plan, phase } = phaseFor(actions.activePlan, args.phase.id);
                 if (!plan) return inactivePlan();
                 if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Phase Ref from that Plan.' } };
-                if (!await actions.deletePhase(phase.id)) return { success: false, error: { code: 'PHASE_DELETE_FAILED', message: 'Phase delete failed' } };
+                try {
+                    if (!await actions.deletePhase(phase.id)) return { success: false, error: { code: 'PHASE_DELETE_FAILED', message: 'Phase delete failed' } };
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
+                }
                 return { success: true, data: { message: 'Phase deleted.' } };
             },
         },
@@ -184,7 +293,14 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 const { plan, phase } = phaseFor(actions.activePlan, args.phase.id);
                 if (!plan) return inactivePlan();
                 if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Phase Ref from that Plan.' } };
-                const completed = await actions.completePhase(phase.id).catch(() => undefined);
+                let completed: (PhaseCompletion & { projectionWarning?: string }) | null | undefined;
+                try {
+                    completed = await actions.completePhase(phase.id);
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    completed = undefined;
+                }
                 if (completed === undefined) return { success: false, error: { code: 'PHASE_COMPLETE_FAILED', message: `Could not save completion for phase "${phase.title}".` } };
                 if (!completed) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'The selected Phase is no longer in the active Plan.' } };
                 const { title, phaseChanged, tasksCompleted, ...projection } = completed;
@@ -201,7 +317,13 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 const { plan, phase } = phaseFor(actions.activePlan, args.phase.id);
                 if (!plan) return inactivePlan();
                 if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Phase Ref from that Plan.' } };
-                if (!await actions.addTask(phase.id, args.title, args.description)) return { success: false, error: { code: 'TASK_ADD_FAILED', message: 'Add task failed' } };
+                try {
+                    if (!await actions.addTask(phase.id, args.title, args.description)) return { success: false, error: { code: 'TASK_ADD_FAILED', message: 'Add task failed' } };
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
+                }
                 return { success: true, data: { message: 'Task added.' } };
             },
         },
@@ -211,7 +333,13 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 const { plan, task } = taskFor(actions.activePlan, args.task.id);
                 if (!plan) return inactivePlan();
                 if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Task Ref from that Plan.' } };
-                if (!await actions.updateTask(task.id, { title: args.title, description: args.description })) return { success: false, error: { code: 'TASK_UPDATE_FAILED', message: 'Update task failed' } };
+                try {
+                    if (!await actions.updateTask(task.id, { title: args.title, description: args.description })) return { success: false, error: { code: 'TASK_UPDATE_FAILED', message: 'Update task failed' } };
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
+                }
                 return { success: true, data: { message: 'Task updated.' } };
             },
         },
@@ -221,7 +349,13 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 const { plan, task } = taskFor(actions.activePlan, args.task.id);
                 if (!plan) return inactivePlan();
                 if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Task Ref from that Plan.' } };
-                if (!await actions.deleteTask(task.id)) return { success: false, error: { code: 'TASK_DELETE_FAILED', message: 'Delete task failed' } };
+                try {
+                    if (!await actions.deleteTask(task.id)) return { success: false, error: { code: 'TASK_DELETE_FAILED', message: 'Delete task failed' } };
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    throw error;
+                }
                 return { success: true, data: { message: 'Task deleted.' } };
             },
         },
@@ -231,7 +365,14 @@ export const PlanDetailType = defineViewType<PlanDetailActions>()({ name: 'PlanD
                 const { plan, task } = taskFor(actions.activePlan, args.task.id);
                 if (!plan) return inactivePlan();
                 if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Task Ref from that Plan.' } };
-                const completed = await actions.completeTask(task.id).catch(() => null);
+                let completed: { projectionWarning?: string } | null;
+                try {
+                    completed = await actions.completeTask(task.id);
+                } catch (error) {
+                    const failure = dbToolFailure(error);
+                    if (failure) return failure;
+                    completed = null;
+                }
                 if (!completed) return { success: false, error: { code: 'TASK_COMPLETE_FAILED', message: `Could not complete task "${task.title}".` } };
                 return { success: true, data: { message: `Task "${task.title}" completed.`, ...completed } };
             },

@@ -1,12 +1,22 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { planningService } from '../src/core/planning-service.js';
 
 const TEST_DESKTOP = 'planning_test_desktop_1';
 const OTHER_DESKTOP = 'planning_test_desktop_2';
+let tempDir = '';
+let testDbFile = '';
 
 describe('planning service with sqlite', () => {
     beforeAll(async () => {
-        await planningService.init();
+        tempDir = mkdtempSync(join(tmpdir(), 'planning-service-test-'));
+        testDbFile = join(tempDir, 'planning.sqlite');
+        await planningService.init(testDbFile);
         for (const desktop of [TEST_DESKTOP, OTHER_DESKTOP]) {
             for (const plan of await planningService.getPlans(desktop)) await planningService.deletePlan(desktop, plan.id);
         }
@@ -14,6 +24,9 @@ describe('planning service with sqlite', () => {
 
     afterAll(() => {
         planningService.close();
+        if (tempDir) {
+            rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('creates plan, phase, and task', async () => {
@@ -108,6 +121,58 @@ describe('planning service with sqlite', () => {
         expect(stored?.phases[0]).toMatchObject({ status: 'pending', tasks: [{ status: 'pending' }] });
         expect(await planningService.deletePhase(TEST_DESKTOP, phase.id)).toBe(true);
         expect(await planningService.completePhase(TEST_DESKTOP, plan.id, phase.id)).toBeNull();
+    });
+
+    it('persists active plan selection and explicit null clears across reopen', async () => {
+        await planningService.setActivePlanId(TEST_DESKTOP, 'plan-123');
+        planningService.close();
+        expect(await planningService.getActivePlanId(TEST_DESKTOP)).toBe('plan-123');
+
+        await planningService.setActivePlanId(TEST_DESKTOP, null);
+        planningService.close();
+        expect(await planningService.getActivePlanId(TEST_DESKTOP)).toBeNull();
+    });
+
+    it('rejects concurrent writes with PLANNING_DB_BUSY while another holder owns the lock file', async () => {
+        const lock = new DatabaseSync(`${testDbFile}.lock`);
+        try {
+            lock.exec('BEGIN IMMEDIATE');
+            await expect(planningService.createPlan(TEST_DESKTOP, 'Blocked')).rejects.toMatchObject({
+                code: 'PLANNING_DB_BUSY',
+            });
+        } finally {
+            lock.close();
+        }
+    });
+
+    it('takes over after the external lock owner is killed', async () => {
+        const lockPath = `${testDbFile}.lock`;
+        const child = spawn(process.execPath, [
+            '--input-type=module',
+            '-e',
+            `import { DatabaseSync } from 'node:sqlite';
+             const lock = new DatabaseSync(${JSON.stringify(lockPath)});
+             lock.exec('BEGIN IMMEDIATE');
+             console.log('LOCKED');
+             setInterval(() => {}, 1000);`,
+        ], { stdio: ['ignore', 'pipe', 'inherit'] });
+
+        const exit = once(child, 'exit');
+        try {
+            expect(await Promise.race([
+                once(child.stdout, 'data').then(([data]) => String(data).trim()),
+                exit.then(([status]) => `unexpected exit: ${status}`),
+            ])).toBe('LOCKED');
+            await expect(planningService.createPlan(TEST_DESKTOP, 'Blocked While Child Lives')).rejects.toMatchObject({
+                code: 'PLANNING_DB_BUSY',
+            });
+        } finally {
+            child.kill('SIGKILL');
+            await exit;
+        }
+
+        const plan = await planningService.createPlan(TEST_DESKTOP, 'Recovered After SIGKILL');
+        expect(plan.title).toBe('Recovered After SIGKILL');
     });
 
     it('deletes plan with phases and tasks', async () => {

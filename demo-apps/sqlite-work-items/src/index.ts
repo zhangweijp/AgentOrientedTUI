@@ -1,6 +1,6 @@
 import pkg from '../package.json' with { type: 'json' };
 import { arrayRef, createApp, createView, defineViewType, formatRef, ref, refParam,
-    type PublishedRef, type ToolResult } from '@aotui/sdk/app';
+    type PublishedRef, type ToolResult, type ViewHandle } from '@aotui/sdk';
 import Type from 'typebox';
 import { Check } from 'typebox/value';
 import { openSqlite, type SqliteIssue } from './sqlite.js';
@@ -76,35 +76,35 @@ function literalBlock(text: string): string {
 export default createApp({
     ...pkg.aotui,
     viewTypes: workViewTypes,
-    async initialize({ launchConfig, prepareProjection, registerCleanup, signal }) {
+    async initialize({ launchConfig, prepareProjection, prepareOpeningProjection, registerCleanup, signal }) {
         const sqlite = openSqlite(launchConfig?.databasePath, launchConfig?.sqliteExecutable);
         registerCleanup({ stop: sqlite.stop, close: sqlite.close });
-        let selectedId: number | undefined;
-
         type Content = { readonly body: string; readonly refs?: readonly PublishedRef[] };
-        let available = false;
-        let listContent: Content = { body: 'Loading work items.' };
-        let detailContent: Content = { body: 'Detail unavailable. Use refresh to read it again.' };
+        type Detail = { id: number; content: Content; view: ViewHandle };
+        type WorkState = { available: boolean; list: Content; detail?: Detail | undefined };
+        let state: WorkState = { available: false, list: { body: 'Loading work items.' } };
+        let candidate: WorkState | undefined;
+        const displaying = () => candidate ?? state;
         const root = createView(WorkInstructionsType, {
-            id: 'root', region: 'static', name: 'SQLite work items', render: () => ({ body: instructions }),
+            id: 'root', name: 'SQLite work items', render: () => ({ body: instructions }),
         });
         const list = createView(WorkListType, {
-            id: 'items', region: 'dynamic', name: 'Work items',
-            render: () => ({ ...listContent, context: { available, openItem, refresh: refreshReceipt } }),
+            id: 'items', name: 'Work items',
+            render: () => ({ ...displaying().list, context: { available: displaying().available, openItem, refresh: refreshReceipt } }),
         });
 
         async function openItem(id: number): Promise<ToolResult> {
-            selectedId = id;
-            return refreshReceipt();
+            const issue = await refresh(id, true);
+            return issue ? failure(issue) : { success: true };
         }
 
         async function closeItem(): Promise<ToolResult> {
-            selectedId = undefined;
+            show({ ...state, detail: undefined });
             return refreshReceipt();
         }
 
         async function setStatus(id: number, item: ItemSelector, nextStatus: ItemStatus): Promise<ToolResult> {
-            if (item.id !== id || id !== selectedId) return failure({
+            if (item.id !== id || id !== state.detail?.id) return failure({
                 code: 'WORK_ITEM_NOT_SELECTED', message: 'Use the item Ref from the current detail View.',
             });
             if (item.revision === maxRevision) return failure({
@@ -133,26 +133,33 @@ SELECT changes() AS direct, total_changes() AS total;`);
                 : { written: true, refreshed: true } };
         }
 
-        function createDetail(id: number) {
+        function createDetail(id: number): ViewHandle {
             return createView(WorkDetailType, {
-                id: 'detail', region: 'dynamic', name: 'Work item detail',
-                render: () => ({ ...detailContent, context: { available, id, setStatus, closeItem } }),
+                id: 'detail', name: 'Work item detail',
+                render: () => ({
+                    ...displaying().detail!.content,
+                    context: { available: displaying().available, id, setStatus, closeItem },
+                }),
             });
         }
-        let detail: { id: number; view: ReturnType<typeof createDetail> } | undefined;
-        function show(detailId: number | undefined) {
-            if (detailId === undefined) detail = undefined;
-            else if (detail?.id !== detailId) detail = { id: detailId, view: createDetail(detailId) };
-            prepareProjection({ views: detail ? [root, list, detail.view] : [root, list] });
+
+        function show(next: WorkState, opening = false): SqliteIssue | undefined {
+            const views = next.detail ? [root, list, next.detail.view] : [root, list];
+            candidate = next;
+            try {
+                if (opening && next.detail && next.detail.view !== state.detail?.view) {
+                    const result = prepareOpeningProjection({ views });
+                    if (result.status === 'rejected') return { code: result.issue.code, message: 'The selected item does not fit in the current projection.' };
+                } else prepareProjection({ views });
+                state = next;
+            } finally { candidate = undefined; }
         }
 
         function unavailable(issue: SqliteIssue): SqliteIssue {
             if (signal.aborted) return issue;
             const body = `Work item data is unavailable (${issue.code}). ${issue.message} Use refresh to read SQLite.`;
-            available = false;
-            listContent = { body };
-            detailContent = { body: 'Detail unavailable. Use refresh to read it again.' };
-            try { show(selectedId); }
+            const detail = state.detail && { ...state.detail, content: { body: 'Detail unavailable. Use refresh to read it again.' } };
+            try { show({ available: false, list: { body }, detail }); }
             catch { return { code: 'WORK_ITEMS_PROJECTION_FAILED', message: 'Could not publish the refresh issue.' }; }
             return issue;
         }
@@ -163,7 +170,7 @@ SELECT changes() AS direct, total_changes() AS total;`);
                 message: `${issue.message} The write effect is unknown. Use refresh to check SQLite.` } };
         }
 
-        async function refresh(): Promise<SqliteIssue | undefined> {
+        async function refresh(selectedId = state.detail?.id, opening = false): Promise<SqliteIssue | undefined> {
             // A single SELECT supplies both Views. Unselected bodies do not enter the output.
             const result = await sqlite.query('ro', `SELECT id, title, status, revision,
 CASE WHEN id = ${selectedId ?? 'NULL'} THEN body ELSE NULL END AS body FROM work_items ORDER BY id LIMIT ${maxItems + 1};`);
@@ -176,26 +183,32 @@ CASE WHEN id = ${selectedId ?? 'NULL'} THEN body ELSE NULL END AS body FROM work
                 code: 'WORK_ITEM_LIMIT', message: `The demo supports at most ${maxItems} work items.` });
             const selected = items.find(item => item.id === selectedId);
             const missing = selectedId !== undefined && !selected;
+            const missingIssue = { code: 'WORK_ITEM_MISSING', message: 'The selected item no longer exists. Choose from the refreshed list.' };
+            if (opening && missing) return missingIssue;
             const listRef = arrayRef('items', items.map(({ id, revision }) => ({ id, revision })),
                 { scope: 'protected', itemType: 'WorkItem', schema: selectors });
-            listContent = {
+            const listContent = {
                 body: items.map((item, index) => '- ' + itemLine(item, formatRef(item.title, listRef, index))).join('\n') || 'No work items.',
                 refs: [listRef],
             };
+            let detail: Detail | undefined;
             if (selected) {
                 if (selected.body === null) return unavailable({ code: 'SQLITE_INVALID_OUTPUT', message: 'SQLite omitted the selected body.' });
                 const current = ref('current', { id: selected.id, revision: selected.revision }, { scope: 'private', refType: 'WorkItem', schema: selector });
-                detailContent = {
-                    body: `${itemLine(selected, formatRef(selected.title, current))}\n\n${literalBlock(selected.body)}`,
-                    refs: [current],
+                detail = {
+                    id: selected.id,
+                    view: state.detail?.id === selected.id ? state.detail.view : createDetail(selected.id),
+                    content: {
+                        body: `${itemLine(selected, formatRef(selected.title, current))}\n\n${literalBlock(selected.body)}`,
+                        refs: [current],
+                    },
                 };
             }
-            available = true;
-            try { show(selected?.id); }
-            catch { return unavailable({ code: 'WORK_ITEMS_PROJECTION_FAILED', message: 'Could not publish work item data.' }); }
-            if (missing) {
-                selectedId = undefined;
-                return { code: 'WORK_ITEM_MISSING', message: 'The selected item no longer exists. Choose from the refreshed list.' };
+            try {
+                const issue = show({ available: true, list: listContent, detail }, opening);
+                return issue ?? (missing ? missingIssue : undefined);
+            } catch {
+                return unavailable({ code: 'WORK_ITEMS_PROJECTION_FAILED', message: 'Could not publish work item data.' });
             }
         }
 
@@ -204,6 +217,7 @@ CASE WHEN id = ${selectedId ?? 'NULL'} THEN body ELSE NULL END AS body FROM work
             return issue ? failure(issue) : { success: true };
         }
 
+        show(state);
         await refresh();
     },
 });

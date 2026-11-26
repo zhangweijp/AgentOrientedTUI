@@ -1,13 +1,18 @@
-import { defineViewType } from '@aotui/sdk';
+import { defineViewType, type ToolResult } from '@aotui/sdk';
 import Type from 'typebox';
 import type { FetchFormat, SearchQuery, SearchResultItem } from '../types.js';
 
 export interface BrowserActions {
-    onSearch: (params: SearchQuery) => Promise<{ summary: string; resultCount: number }>;
+    onSearch: (params: SearchQuery) => Promise<{ resultCount: number }>;
     onOpenResult: (url: string) => Promise<string>;
     onClearResults: () => void;
     onFetch: (params: { url: string; format?: FetchFormat; timeout?: number }) => Promise<string>;
     onClosePage: () => void;
+}
+
+function failure(code: string, error: unknown): ToolResult {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'OBSERVATION_CAPACITY') code = error.code;
+    return { success: false, error: { code, message: error instanceof Error ? error.message : String(error) } };
 }
 
 type ResultListContext = Pick<BrowserActions, 'onOpenResult' | 'onClearResults'>
@@ -47,7 +52,7 @@ export const SearchType = defineViewType<Pick<BrowserActions, 'onSearch'>>()({ n
                     });
                     return { success: true, data: { message: 'Search completed.', result_count: result.resultCount } };
                 } catch (error) {
-                    return { success: false, error: { code: 'SEARCH_FAILED', message: (error as Error).message } };
+                    return failure('SEARCH_FAILED', error);
                 }
             },
         },
@@ -64,7 +69,7 @@ export const ResultListType = defineViewType<ResultListContext>()({ name: 'Resul
                     const viewId = await onOpenResult(url);
                     return { success: true, data: { message: 'Result opened.', view_id: viewId } };
                 } catch (error) {
-                    return { success: false, error: { code: 'OPEN_RESULT_FAILED', message: (error as Error).message } };
+                    return failure('OPEN_RESULT_FAILED', error);
                 }
             },
         },
@@ -89,7 +94,7 @@ export const RootType = defineViewType<Pick<BrowserActions, 'onFetch'>>()({ name
                     });
                     return { success: true, data: { message: 'Page fetched.', view_id: viewId } };
                 } catch (error) {
-                    return { success: false, error: { code: 'FETCH_FAILED', message: (error as Error).message } };
+                    return failure('FETCH_FAILED', error);
                 }
             },
         },

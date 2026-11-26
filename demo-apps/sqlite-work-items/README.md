@@ -1,6 +1,6 @@
 # SQLite 工作项 App
 
-普通 TypeScript App 使用 `@aotui/sdk/app`。`aoapp.json` 由 Host 发现，Runtime 为 App 实例启动 Worker。SQLite 保存标题、正文、状态与修订号。App 实例只保存当前选中项。
+普通 TypeScript App 使用 `@aotui/sdk`。`aoapp.json` 由 Host 发现，Runtime 为 App 实例启动 Worker。SQLite 保存标题、正文、状态与修订号。App 实例只保存当前选中项。
 
 ## 本地运行
 

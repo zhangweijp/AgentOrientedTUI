@@ -3,8 +3,8 @@ import Type from 'typebox';
 import type { TerminalSession } from '../types.js';
 
 export interface TerminalActions {
-    onCloseTerminal: (terminalId: string) => boolean;
-    onSendCommand: (terminalId: string, command: string) => Promise<{ success: boolean; message: string }>;
+    onCloseTerminal: (terminalId: string) => Promise<boolean>;
+    onSendCommand: (terminalId: string, command: string) => Promise<ToolResult>;
     onSendCommandNewTerminal: (command: string) => Promise<ToolResult>;
     onLoadMoreOutput: (terminalId: string, tailLines: number) => boolean;
 }
@@ -43,10 +43,7 @@ export const TerminalType = defineViewType<TerminalContext>()({ name: 'Terminal'
                 if (terminal.status === 'running') {
                     return { success: false, error: { code: 'COMMAND_REJECTED', message: 'Terminal is busy running another command.' } };
                 }
-                const result = await onSendCommand(terminal.id, command);
-                return result.success
-                    ? { success: true, data: { message: result.message } }
-                    : { success: false, error: { code: 'COMMAND_REJECTED', message: result.message } };
+                return onSendCommand(terminal.id, command);
             },
         },
         load_more_output: { description: 'Show more lines of output in this Terminal.',
@@ -63,7 +60,7 @@ export const TerminalType = defineViewType<TerminalContext>()({ name: 'Terminal'
         close_terminal: { description: 'Close this Terminal and request termination of its active command.',
             inputSchema: closeTerminalInput,
             async execute({ context: { terminal: { id: terminalId }, onCloseTerminal } }) {
-                return onCloseTerminal(terminalId)
+                return await onCloseTerminal(terminalId)
                     ? { success: true, data: { message: 'Terminal closed; its current View and tools are removed.' } }
                     : { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'Terminal is already closed.' } };
             },

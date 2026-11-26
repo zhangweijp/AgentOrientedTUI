@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { captureViewBindings, captureViewTypes } from '../../../sdk/src/tools/view-type-tool.js';
 import { TerminalType, type TerminalActions } from '../src/tui/TerminalTools.js';
-import { TerminalView } from '../src/tui/TerminalView.js';
+import { terminalBody } from '../src/tui/TerminalView.js';
 import type { TerminalSession } from '../src/types.js';
 
 const terminal = (id: string, status: TerminalSession['status'] = 'idle'): TerminalSession => ({
@@ -26,11 +26,11 @@ function terminalTool(name: keyof typeof TerminalType.tools, terminal: TerminalS
 describe('Terminal View type tools', () => {
     it('shows the selected terminal identity in its current View', () => {
         const selected = terminal('terminal_9');
-        expect(JSON.stringify(TerminalView({ terminal: selected }))).toContain(selected.id);
+        expect(terminalBody(selected)).toContain(selected.id);
     });
 
     it('runs the same declared command against each receiving View context', async () => {
-        const onSendCommand = vi.fn(async (terminalId: string) => ({ success: true, message: 'started in ' + terminalId }));
+        const onSendCommand = vi.fn(async (terminalId: string) => ({ success: true as const, data: { message: 'started in ' + terminalId } }));
         const a = terminalTool('send_command_to_exist_terminal', terminal('terminal_1'), { onSendCommand });
         const b = terminalTool('send_command_to_exist_terminal', terminal('terminal_9'), { onSendCommand });
         expect((await a.execute({ command: 'pwd' })).success).toBe(true);
@@ -39,7 +39,7 @@ describe('Terminal View type tools', () => {
     });
 
     it('disables a busy terminal and refuses to start another command if called', async () => {
-        const onSendCommand = vi.fn(async (terminalId: string) => ({ success: true, message: terminalId }));
+        const onSendCommand = vi.fn(async (terminalId: string) => ({ success: true as const, data: { message: terminalId } }));
         const busy = terminalTool('send_command_to_exist_terminal', terminal('terminal_busy', 'running'), { onSendCommand });
         expect(busy.enabled).toBe(false);
         expect(await busy.execute({ command: 'pwd' })).toMatchObject({ success: false, error: { code: 'COMMAND_REJECTED' } });
@@ -48,7 +48,7 @@ describe('Terminal View type tools', () => {
 
     it('reports an already closed terminal from the application callback', async () => {
         const liveTerminals = new Set(['terminal_open']);
-        const onCloseTerminal = vi.fn((terminalId: string) => liveTerminals.delete(terminalId));
+        const onCloseTerminal = vi.fn(async (terminalId: string) => liveTerminals.delete(terminalId));
         const tool = terminalTool('close_terminal', terminal('terminal_open'), { onCloseTerminal });
 
         expect(await tool.execute({})).toMatchObject({ success: true });
