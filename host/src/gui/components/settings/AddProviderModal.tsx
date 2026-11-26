@@ -82,6 +82,10 @@ const Field = React.forwardRef<HTMLDivElement, {
     </div>
 ));
 
+function errorAttributes(id: string, error?: string) {
+    return error ? { 'aria-invalid': true, 'aria-describedby': `${id}-error` } : {};
+}
+
 const inputBase = `lg-input h-[44px]`;
 const inputError = `border-[var(--color-danger)] ring-1 ring-[var(--color-danger)/15]`;
 
@@ -314,7 +318,11 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                     </div>
 
                     {/* ── Form Body ─────────────────────────────────────── */}
-                    <div className="px-6 pb-6 flex flex-col gap-5">
+                    <form className="px-6 pb-6 flex flex-col gap-5" noValidate onSubmit={event => {
+                        event.preventDefault();
+                        if (mode === 'template' && !isTemplateSaveDisabled) void handleTemplateSave();
+                        if (mode === 'custom' && !isCustomSaveDisabled) void handleCustomSave();
+                    }}>
 
                         {/* ══════ TEMPLATE TAB ══════ */}
                         {mode === 'template' && (
@@ -322,7 +330,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                 {/* Provider picker */}
                                 <Field label="Provider" htmlFor="provider-select" required error={templateErrors.providerId}>
                                     <div className="relative" ref={providerDropdownRef}>
-                                        <button id="provider-select"
+                                        <button id="provider-select" type="button" {...errorAttributes("provider-select", templateErrors.providerId)}
                                             onClick={() => setShowProviderDropdown(!showProviderDropdown)}
                                             disabled={isLoadingProviders || isSaving}
                                             aria-haspopup="listbox" aria-expanded={showProviderDropdown}
@@ -352,7 +360,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                                         <div className="px-3 py-2 text-[11px] text-[var(--color-text-tertiary)]">No providers found</div>
                                                     )}
                                                     {filteredProviders.map((p) => (
-                                                        <button key={p.id}
+                                                        <button key={p.id} type="button"
                                                             onClick={() => selectTemplateProvider(p)}
                                                             role="option" aria-selected={selectedProviderId === p.id}
                                                             className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[var(--color-bg-surface)] text-left transition-colors">
@@ -370,14 +378,14 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                 </Field>
 
                                 <Field label="Display Name" htmlFor="t-custom-name" required error={templateErrors.customName}>
-                                    <input id="t-custom-name" type="text" value={customName}
+                                    <input id="t-custom-name" {...errorAttributes("t-custom-name", templateErrors.customName)} type="text" value={customName}
                                         onChange={(e) => { setCustomName(e.target.value); setTemplateErrors(prev => { const { customName: _, ...r } = prev; return r; }); }}
                                         disabled={isSaving} placeholder="e.g., My OpenAI Account"
                                         className={`${inputBase} ${templateErrors.customName ? inputError : ''} disabled:opacity-50`} />
                                 </Field>
 
                                 <Field label="API Key" htmlFor="t-api-key" required error={templateErrors.apiKey}>
-                                    <input id="t-api-key" type="password" value={apiKey}
+                                    <input id="t-api-key" {...errorAttributes("t-api-key", templateErrors.apiKey)} type="password" value={apiKey}
                                         onChange={(e) => { setApiKey(e.target.value); setTemplateErrors(prev => { const { apiKey: _, ...r } = prev; return r; }); }}
                                         disabled={isSaving} placeholder="sk-…"
                                         className={`${inputBase} font-mono ${templateErrors.apiKey ? inputError : ''} disabled:opacity-50`} />
@@ -389,7 +397,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                             <div className={`${inputBase} flex items-center text-[var(--color-text-tertiary)] text-[13px]`}>Loading models…</div>
                                         ) : availableModels.length > 0 ? (
                                             <div className="relative" ref={modelDropdownRef}>
-                                                <button id="t-model"
+                                                <button id="t-model" type="button"
                                                     onClick={() => setShowModelDropdown(!showModelDropdown)}
                                                     disabled={isSaving}
                                                     aria-haspopup="listbox" aria-expanded={showModelDropdown}
@@ -409,7 +417,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                                         </div>
                                                         <div className="max-h-[168px] overflow-y-auto">
                                                             {filteredModels.map((id) => (
-                                                                <button key={id} onClick={() => { setModel(id); setShowModelDropdown(false); setModelSearchQuery(''); }}
+                                                                <button key={id} type="button" onClick={() => { setModel(id); setShowModelDropdown(false); setModelSearchQuery(''); }}
                                                                     className="w-full text-left px-3 py-2 text-[13px] hover:bg-[var(--color-bg-surface)] transition-colors">
                                                                     {id}
                                                                 </button>
@@ -433,7 +441,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                         {mode === 'custom' && (
                             <>
                                 <Field label="Provider Name" htmlFor="c-name" required error={customErrors.name}>
-                                    <input id="c-name" type="text" value={customProviderName}
+                                    <input id="c-name" {...errorAttributes("c-name", customErrors.name)} type="text" value={customProviderName}
                                         onChange={(e) => { setCustomProviderName(e.target.value); setCustomErrors(prev => { const { name: _, ...r } = prev; return r; }); }}
                                         disabled={isSaving} placeholder="e.g., My LLaMA Server"
                                         className={`${inputBase} ${customErrors.name ? inputError : ''} disabled:opacity-50`} />
@@ -460,7 +468,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
 
                                 <Field label="Base URL" htmlFor="c-base-url" required error={customErrors.baseUrl}
                                     hint="The root API endpoint — e.g. https://my-server.com/v1">
-                                    <input id="c-base-url" type="url" value={customBaseUrl}
+                                    <input id="c-base-url" {...errorAttributes("c-base-url", customErrors.baseUrl)} type="url" value={customBaseUrl}
                                         onChange={(e) => { setCustomBaseUrl(e.target.value); setCustomErrors(prev => { const { baseUrl: _, ...r } = prev; return r; }); }}
                                         disabled={isSaving} placeholder="https://api.example.com/v1"
                                         className={`${inputBase} font-mono text-[13px] ${customErrors.baseUrl ? inputError : ''} disabled:opacity-50`} />
@@ -477,18 +485,18 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
 
                         {/* ── Action Buttons ────────────────────────────── */}
                         <div className="flex justify-end gap-3 pt-2">
-                            <button onClick={onClose} disabled={isSaving}
+                            <button type="button" onClick={onClose} disabled={isSaving}
                                 className="lg-btn hover:bg-[var(--mat-content-card-hover-bg)] disabled:opacity-50">
                                 Cancel
                             </button>
                             <button
-                                onClick={mode === 'template' ? handleTemplateSave : handleCustomSave}
+                                type="submit"
                                 disabled={mode === 'template' ? isTemplateSaveDisabled : isCustomSaveDisabled}
                                 className="lg-btn rounded-full bg-[var(--color-accent)] text-white border-transparent hover:bg-[var(--color-accent)]/90 px-6 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95">
                                 {isSaving ? 'Saving…' : mode === 'custom' ? 'Create Provider' : 'Add Provider'}
                             </button>
                         </div>
-                    </div>
+                    </form>
                 </div>
             </div>
         </div>

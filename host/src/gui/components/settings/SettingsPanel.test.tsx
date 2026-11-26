@@ -43,14 +43,14 @@ describe('SettingsPanel', () => {
             const { container } = render(<SettingsPanel {...defaultProps} />);
 
             const backdrop = container.querySelector('[role="dialog"]');
-            expect(backdrop).toHaveClass('backdrop-blur-[12px]');
+            expect(backdrop).toHaveClass('backdrop-blur-md');
             expect(backdrop).toHaveClass('bg-[var(--mat-overlay-bg)]');
         });
 
         it('should render close button', () => {
             render(<SettingsPanel {...defaultProps} />);
 
-            const closeButton = screen.getByLabelText('Close settings panel');
+            const closeButton = screen.getByLabelText('Exit settings panel');
             expect(closeButton).toBeInTheDocument();
         });
 
@@ -58,7 +58,7 @@ describe('SettingsPanel', () => {
             const onClose = vi.fn();
             render(<SettingsPanel {...defaultProps} onClose={onClose} />);
 
-            const closeButton = screen.getByLabelText('Close settings panel');
+            const closeButton = screen.getByLabelText('Exit settings panel');
             fireEvent.click(closeButton);
 
             expect(onClose).toHaveBeenCalledTimes(1);
@@ -124,7 +124,7 @@ describe('SettingsPanel', () => {
             render(<SettingsPanel {...defaultProps} onClose={onClose} />);
 
             // Click on a tab button in the sidebar
-            const modelTab = screen.getByText('MODEL');
+            const modelTab = screen.getByRole('tab', { name: 'Model' });
             fireEvent.click(modelTab);
 
             expect(onClose).not.toHaveBeenCalled();
@@ -163,51 +163,48 @@ describe('SettingsPanel', () => {
     });
 
     describe('tab switching', () => {
-        it('should render Model tab by default', () => {
+        it('opens the Agent tab by default', () => {
             render(<SettingsPanel {...defaultProps} />);
-
-            // Model tab should be active (highlighted)
-            const modelButton = screen.getByText('MODEL').closest('button');
-            expect(modelButton).toHaveClass('bg-primary/10');
+            expect(screen.getByRole('tab', { name: 'Agent', selected: true })).toBeInTheDocument();
+            expect(screen.getByRole('tabpanel', { name: 'Agent' })).toBeInTheDocument();
         });
 
         it('should switch to Theme tab when clicked', () => {
             render(<SettingsPanel {...defaultProps} />);
 
-            const themeButton = screen.getByText('THEME').closest('button');
+            const themeButton = screen.getByRole('tab', { name: 'Theme' });
             fireEvent.click(themeButton!);
 
             // Theme tab should now be active
-            expect(themeButton).toHaveClass('bg-primary/10');
+            expect(themeButton).toHaveAttribute('aria-selected', 'true');
         });
 
         it('should render ModelTab content when Model tab is active', () => {
-            render(<SettingsPanel {...defaultProps} />);
-
-            // ModelTab should render "Model Configurations" heading
-            expect(screen.getByText('Model Configurations')).toBeInTheDocument();
+            render(<SettingsPanel {...defaultProps} initialTab="model" />);
+            expect(screen.getByRole('tab', { name: 'Model', selected: true })).toBeInTheDocument();
+            expect(screen.getByRole('tabpanel', { name: 'Model' })).toBeInTheDocument();
         });
 
         it('should render ThemeTab content when Theme tab is active', () => {
             render(<SettingsPanel {...defaultProps} />);
 
             // Click Theme tab
-            const themeButton = screen.getByText('THEME').closest('button');
+            const themeButton = screen.getByRole('tab', { name: 'Theme' });
             fireEvent.click(themeButton!);
 
             // ThemeTab should render "Theme" heading
-            expect(screen.getByText('Theme')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
         });
 
         it('should pass theme props to ThemeTab', () => {
             render(<SettingsPanel {...defaultProps} theme="light" />);
 
             // Click Theme tab
-            const themeButton = screen.getByText('THEME').closest('button');
+            const themeButton = screen.getByRole('tab', { name: 'Theme' });
             fireEvent.click(themeButton!);
 
             // ThemeTab should be rendered (we can't easily test the props, but we can verify it renders)
-            expect(screen.getByText('Theme')).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
         });
 
         it('should call onThemeChange when theme is changed in ThemeTab', () => {
@@ -215,15 +212,13 @@ describe('SettingsPanel', () => {
             render(<SettingsPanel {...defaultProps} theme="dark" onThemeChange={onThemeChange} />);
 
             // Click Theme tab
-            const themeButton = screen.getByText('THEME').closest('button');
+            const themeButton = screen.getByRole('tab', { name: 'Theme' });
             fireEvent.click(themeButton!);
 
             // Find and click the light theme card
-            const lightThemeCard = screen.getByText('Light').closest('button');
-            if (lightThemeCard) {
-                fireEvent.click(lightThemeCard);
-                expect(onThemeChange).toHaveBeenCalledWith('light');
-            }
+            const lightThemeCard = screen.getByRole('radio', { name: 'Light theme' });
+            fireEvent.click(lightThemeCard);
+            expect(onThemeChange).toHaveBeenCalledExactlyOnceWith('light');
         });
     });
 
@@ -303,30 +298,29 @@ describe('SettingsPanel', () => {
             const panel = container.querySelector('[role="dialog"] > div');
             expect(panel).toHaveClass('transition-all');
             expect(panel).toHaveClass('duration-300');
-            expect(panel).toHaveClass('ease-out');
+            expect(panel).toHaveClass('ease-[var(--ease-spring)]');
         });
 
         it('should have proper dimensions', () => {
             const { container } = render(<SettingsPanel {...defaultProps} />);
 
             const panel = container.querySelector('[role="dialog"] > div');
-            expect(panel).toHaveClass('max-w-[900px]');
-            expect(panel).toHaveClass('max-h-[600px]');
+            expect(panel).toHaveClass('max-w-[1100px]');
+            expect(panel).toHaveClass('max-h-[800px]');
         });
 
         it('should have rounded corners', () => {
             const { container } = render(<SettingsPanel {...defaultProps} />);
 
             const panel = container.querySelector('[role="dialog"] > div');
-            expect(panel).toHaveClass('rounded-[var(--radius-lg)]');
+            expect(panel).toHaveClass('rounded-[20px]');
         });
 
-        it('should have border and shadow', () => {
+        it('should use the regular material treatment for border and shadow', () => {
             const { container } = render(<SettingsPanel {...defaultProps} />);
 
             const panel = container.querySelector('[role="dialog"] > div');
-            expect(panel).toHaveClass('border');
-            expect(panel).toHaveClass('shadow-2xl');
+            expect(panel).toHaveClass('mat-lg-regular');
         });
     });
 
@@ -343,13 +337,12 @@ describe('SettingsPanel', () => {
             expect(contentArea).toBeInTheDocument();
         });
 
-        it('should position close button in top-right', () => {
+        it('should keep the exit button in the sidebar footer', () => {
             render(<SettingsPanel {...defaultProps} />);
 
-            const closeButton = screen.getByLabelText('Close settings panel');
-            expect(closeButton).toHaveClass('absolute');
-            expect(closeButton).toHaveClass('top-4');
-            expect(closeButton).toHaveClass('right-4');
+            const closeButton = screen.getByLabelText('Exit settings panel');
+            expect(closeButton).toHaveClass('md:mt-auto');
+            expect(closeButton.previousElementSibling).toBe(screen.getByRole('tablist'));
         });
 
         it('should make content area scrollable', () => {

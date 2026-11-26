@@ -20,13 +20,13 @@ describe('ThemeTab', () => {
         it('should render header with title', () => {
             render(<ThemeTab currentTheme="dark" onThemeChange={() => {}} />);
             
-            expect(screen.getByText('Theme Selection')).toBeTruthy();
+            expect(screen.getByText('Appearance')).toBeTruthy();
         });
 
         it('should render header with description', () => {
             render(<ThemeTab currentTheme="dark" onThemeChange={() => {}} />);
             
-            expect(screen.getByText('Choose your preferred color scheme')).toBeTruthy();
+            expect(screen.getByText('Choose your preferred interface theme')).toBeTruthy();
         });
 
         it('should mark dark theme as active when currentTheme is dark', () => {
@@ -60,7 +60,7 @@ describe('ThemeTab', () => {
             
             const grid = container.querySelector('.grid');
             expect(grid).toBeTruthy();
-            expect(grid?.className).toContain('grid-cols-2');
+            expect(grid?.className).toContain('sm:grid-cols-2');
         });
 
         it('should have radiogroup role for accessibility', () => {
@@ -143,15 +143,14 @@ describe('ThemeTab', () => {
     });
 
     describe('styling and transitions', () => {
-        it('should apply transition classes to the grid container', () => {
+        it('should apply transition classes to the theme cards', () => {
             const { container } = render(
                 <ThemeTab currentTheme="dark" onThemeChange={() => {}} />
             );
             
-            const grid = container.querySelector('.grid');
-            expect(grid?.className).toContain('transition-all');
-            expect(grid?.className).toContain('duration-300');
-            expect(grid?.className).toContain('ease-in-out');
+            for (const card of screen.getAllByRole('radio')) {
+                expect(card).toHaveClass('transition-all', 'duration-200', 'ease-[var(--ease-spring)]');
+            }
         });
 
         it('should apply proper spacing between cards', () => {
@@ -160,7 +159,7 @@ describe('ThemeTab', () => {
             );
             
             const grid = container.querySelector('.grid');
-            expect(grid?.className).toContain('gap-6');
+            expect(grid?.className).toContain('gap-4');
         });
 
         it('should apply proper padding to the container', () => {
@@ -169,7 +168,7 @@ describe('ThemeTab', () => {
             );
             
             const mainContainer = container.querySelector('.flex.flex-col.h-full');
-            expect(mainContainer?.className).toContain('p-8');
+            expect(mainContainer?.className).toContain('p-2');
         });
     });
 

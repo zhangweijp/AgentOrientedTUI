@@ -336,7 +336,7 @@ describe('ModelCard', () => {
                 />
             );
             
-            const badge = screen.getByText('ACTIVE');
+            const badge = screen.getByText('Active');
             expect(badge).toBeInTheDocument();
             expect(badge).toHaveClass('bg-[var(--color-success)/15]');
         });

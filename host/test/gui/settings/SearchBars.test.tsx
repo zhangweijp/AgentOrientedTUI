@@ -224,7 +224,8 @@ describe('ProviderSearchBar', () => {
             );
 
             const input = screen.getByRole('textbox');
-            expect(input.className).toContain('focus:border-[var(--color-primary)]');
+            expect(input).toHaveClass('lg-input');
+            expect(input.previousElementSibling).toHaveClass('group-focus-within:text-[var(--color-accent)]');
         });
 
         it('should have proper padding for icon', () => {
@@ -236,7 +237,7 @@ describe('ProviderSearchBar', () => {
             );
 
             const input = screen.getByRole('textbox');
-            expect(input.className).toContain('pl-10');
+            expect(input).toHaveClass('!pl-11');
         });
     });
 });
@@ -405,7 +406,8 @@ describe('ModelSearchBar', () => {
             );
 
             const iconContainer = container.querySelector('.absolute');
-            expect(iconContainer?.className).toContain('opacity-50');
+            expect(iconContainer).toHaveClass('text-[var(--color-text-tertiary)]');
+            expect(iconContainer).not.toHaveClass('group-focus-within:text-[var(--color-accent)]');
         });
     });
 
@@ -553,7 +555,8 @@ describe('ModelSearchBar', () => {
             );
 
             const input = screen.getByRole('textbox');
-            expect(input.className).toContain('focus:border-[var(--color-primary)]');
+            expect(input).toHaveClass('lg-input');
+            expect(input.previousElementSibling).toHaveClass('group-focus-within:text-[var(--color-accent)]');
         });
 
         it('should not have focus styles when disabled', () => {
@@ -566,7 +569,7 @@ describe('ModelSearchBar', () => {
             );
 
             const input = screen.getByRole('textbox');
-            expect(input.className).not.toContain('focus:border-[var(--color-primary)]');
+            expect(input.previousElementSibling).not.toHaveClass('group-focus-within:text-[var(--color-accent)]');
         });
 
         it('should have proper padding for icon', () => {
@@ -579,7 +582,7 @@ describe('ModelSearchBar', () => {
             );
 
             const input = screen.getByRole('textbox');
-            expect(input.className).toContain('pl-10');
+            expect(input).toHaveClass('!pl-11');
         });
     });
 

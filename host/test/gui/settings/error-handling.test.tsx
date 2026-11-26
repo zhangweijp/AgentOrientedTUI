@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { SettingsErrorBoundary } from '../../../src/gui/components/settings/SettingsErrorBoundary.js';
 import { LoadingState } from '../../../src/gui/components/settings/LoadingState.js';
@@ -64,7 +64,7 @@ describe('SettingsErrorBoundary', () => {
         expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
     });
 
-    it('should reset error state when "Try Again" is clicked', async () => {
+    it('should reset error state when "Try Again" is clicked', () => {
         const { rerender } = render(
             <SettingsErrorBoundary>
                 <ThrowError shouldThrow={true} />
@@ -74,17 +74,15 @@ describe('SettingsErrorBoundary', () => {
         // Error should be displayed
         expect(screen.getByText('Something went wrong')).toBeInTheDocument();
 
-        // Click "Try Again" - this resets the error boundary state
-        const tryAgainButton = screen.getByRole('button', { name: /try again/i });
-        fireEvent.click(tryAgainButton);
-
-        // After clicking "Try Again", the error boundary resets its state
-        // but the component will throw again if we don't change the prop
-        // So we need to wait for the state to reset first
-        await waitFor(() => {
-            // The error boundary should have reset and be ready to render children again
-            expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
-        });
+        rerender(
+            <SettingsErrorBoundary>
+                <ThrowError shouldThrow={false} />
+            </SettingsErrorBoundary>
+        );
+        expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+        expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
+        expect(screen.getByText('No error')).toBeInTheDocument();
     });
 
     it('should log error to console', () => {
@@ -210,12 +208,10 @@ describe('ToastNotification', () => {
 
         expect(screen.getByText('Test message')).toBeInTheDocument();
 
-        // Fast-forward time
-        await vi.advanceTimersByTimeAsync(3000);
-
-        await waitFor(() => {
-            expect(onClose).toHaveBeenCalled();
-        });
+        await vi.advanceTimersByTimeAsync(2999);
+        expect(onClose).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(onClose).toHaveBeenCalledOnce();
     });
 
     it('should call onClose when close button is clicked', async () => {

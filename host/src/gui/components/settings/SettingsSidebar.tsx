@@ -33,6 +33,14 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({ activeTab, onT
             className="w-full md:w-[160px] flex flex-row md:flex-col gap-1 p-2"
             role="tablist"
             aria-label="Settings navigation"
+            onKeyDown={event => {
+                const target = event.target;
+                if (!(target instanceof HTMLButtonElement) || target.getAttribute('role') !== 'tab') return;
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    target.click();
+                }
+            }}
         >
             {/* Agent Tab Button */}
             <button

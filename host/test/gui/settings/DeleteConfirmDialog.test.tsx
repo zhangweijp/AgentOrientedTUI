@@ -224,7 +224,7 @@ describe('DeleteConfirmDialog', () => {
             );
 
             // Check for danger color styling (Liquid Glass red subtle)
-            const warningBox = container.querySelector('[class*="bg-[var(--ac-red-subtle)]"]');
+            const warningBox = container.querySelector('[class*="bg-[var(--color-danger)/15]"]');
             expect(warningBox).toBeInTheDocument();
         });
     });
@@ -324,7 +324,7 @@ describe('DeleteConfirmDialog', () => {
 
             const deleteButton = screen.getByRole('button', { name: /delete provider/i });
             // Check that the button has danger styling via class
-            expect(deleteButton.className).toContain('bg-[var(--ac-red)]');
+            expect(deleteButton.className).toContain('bg-[var(--color-danger)]');
             expect(deleteButton.className).toContain('text-white');
         });
     });

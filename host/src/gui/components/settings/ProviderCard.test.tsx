@@ -75,7 +75,7 @@ describe('ProviderCard', () => {
     });
 
     describe('Selected state styling', () => {
-        it('should not apply special border when selected', () => {
+        it('should highlight the selected provider card', () => {
             render(
                 <ProviderCard
                     provider={mockProvider}
@@ -86,8 +86,8 @@ describe('ProviderCard', () => {
             );
 
             const card = screen.getByRole('radio', { name: /My OpenAI provider/ });
-            // Selection style is removed as per new design
-            expect(card).toHaveClass('border-[var(--mat-border)]');
+            expect(card).toHaveAttribute('aria-checked', 'true');
+            expect(card).toHaveClass('border-[var(--color-accent)]');
         });
 
         it('should apply default border when not selected', () => {
