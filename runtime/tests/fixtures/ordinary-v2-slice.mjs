@@ -1,7 +1,5 @@
 import * as SDK from '@aotui/sdk';
 import { Type } from 'typebox';
-import { h, Component } from 'preact';
-import { useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 
 let behaviour = 'normal', sequence = 0;
@@ -19,13 +17,6 @@ function enter(name, view, args, revision) {
   if (behaviour === 'hold') return new Promise(resolve => held.set(id, () => resolve(result())));
   return Promise.resolve(result());
 }
-class Boundary extends Component {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch() { parentPort.postMessage({ type: 'TEST_UNSUPPORTED', code: 'ORDINARY_PARAMETERS_UNSUPPORTED' }); }
-  render() { return this.state.failed ? h('p', {}, 'ordinary-v2 unsupported') : this.props.children; }
-}
-
 const flagsSchema = Type.Object({
   flags: Type.Array(Type.Boolean(), { minItems: 1 }),
 }, { additionalProperties: false });
@@ -53,27 +44,36 @@ function declareTools() {
   }));
 }
 const [File,OtherFile] = declareTools();
-function Detail({ state, viewId }) {
-  if (state.bad) throw Error('Controlled render failure');
-  return h('p', {}, `Business View ID: ${viewId}`);
-}
-function Root() {
-  const [state, set] = useState({ revision: 1, enabled: true, show: true, rule: false, bad: false, tag: 0 });
-  useLayoutEffect(() => {
+export default SDK.createApp({
+  app_name: 'ordinary_v3_fixture', viewTypes: [File, OtherFile],
+  initialize({ prepareProjection, registerCleanup }) {
+    let state = { revision: 1, enabled: true, show: true, rule: false, bad: false, tag: 0 };
+    const page = (id, type) => SDK.createView(type, { idPrefix: id, region: 'dynamic',
+      render: () => ({ body: 'Business View ID: ' + id, context: { id, state } }) });
+    let first = page('aa', File), second = page('bb', OtherFile);
+    function publish() { prepareProjection({ views: first ? [first, second] : [second] }); }
     const receive = message => {
       if (message.type !== 'TEST_COMMAND') return;
       const { command: type, data } = message;
-      if (type === 'mode') { behaviour = data.mode; parentPort.postMessage({ type: 'TEST_CONTROL_ACK', tag: data.tag }); }
-      else if (type === 'release') { held.get(data.id)?.(); held.delete(data.id); parentPort.postMessage({ type: 'TEST_CONTROL_ACK', tag: data.tag }); }
-      else if (type === 'state') set(current => ({ ...current, ...data.patch, tag: data.tag }));
+      if (type === 'mode') {
+        behaviour = data.mode;
+        parentPort.postMessage({ type: 'TEST_CONTROL_ACK', tag: data.tag });
+      } else if (type === 'release') {
+        held.get(data.id)?.(); held.delete(data.id);
+        parentPort.postMessage({ type: 'TEST_CONTROL_ACK', tag: data.tag });
+      } else if (type === 'state') {
+        const previous = state;
+        state = { ...state, ...data.patch, tag: data.tag };
+        if (state.rule !== previous.rule) { first = page('aa', File); second = page('bb', OtherFile); }
+        if (state.show) first ??= page('aa', File);
+        else first = undefined;
+        publish();
+        parentPort.postMessage({ type: 'TEST_COMMITTED', state, tag: state.tag });
+      }
     };
     parentPort.on('message', receive);
-    return () => parentPort.off('message', receive);
-  }, []);
-  useLayoutEffect(() => { parentPort.postMessage({ type: 'TEST_COMMITTED', state, tag: state.tag }); }, [state]);
-
-  const view = (id, type) => h(SDK.DynamicView, { key: id + ':' + state.rule, idPrefix: id, type, context: { id, state } },
-    h(Boundary, {}, h(Detail, { state, viewId: id })));
-  return h('main',{},[state.show ? view('aa',File) : null,view('bb',OtherFile)]);
-}
-export default SDK.createTUIApp({ app_name: 'ordinary_v3_fixture', component: Root, viewTypes:[File,OtherFile] });
+    registerCleanup({ stop() { parentPort.off('message', receive); } });
+    publish();
+    parentPort.postMessage({ type: 'TEST_COMMITTED', state, tag: state.tag });
+  },
+});

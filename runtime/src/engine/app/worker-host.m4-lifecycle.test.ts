@@ -99,9 +99,7 @@ describe('Worker Host lifecycle and physical resource release', () => {
         const resources = host.waitForResourceRelease();
         expect(host.waitForResourceRelease()).toBe(resources);
         expect(worker.listenerCount('message')).toBe(1);
-        expect(worker.listeners('exit')).toEqual(expect.arrayContaining([
-            externalExit, (host as any).workerExitListener,
-        ]));
+        expect(worker.listeners('exit')).toContain(externalExit);
         expect(worker.listenerCount('exit')).toBe(2);
         expect(host.getResourceReport()).toMatchObject({ worker: 'retiring', resourcesReleased: false });
         worker.emit('exit', 1);

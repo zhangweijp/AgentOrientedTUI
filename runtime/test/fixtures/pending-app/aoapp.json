@@ -2,6 +2,6 @@
   "app_name": "pending_app",
   "version": "0.1.0",
   "entry": { "main": "./entry.mjs" },
-  "toolAuthoringProtocol": "view-type-tools-v7",
+  "toolAuthoringProtocol": "view-type-tools-v8",
   "appLifecycleSupport": "app-lifecycle-v2"
 }

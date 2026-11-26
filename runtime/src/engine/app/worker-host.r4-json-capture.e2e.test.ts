@@ -16,10 +16,8 @@ type Capture =
 function appSource(): string {
     return `
         import { parentPort } from 'node:worker_threads';
-        import { h } from 'preact';
-        import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
+        import { createApp, createView, defineViewType, ref, formatRef } from '@aotui/sdk';
         const DetailType = defineViewType()({ multiplicity: 'multiple', name: 'Detail', tools: {
             stats: {
                 description: 'Read the getter counter', inputSchema: Type.Object({}, { additionalProperties: false }),
@@ -35,32 +33,25 @@ function appSource(): string {
         });
         const oversizedData = { payload: 'x'.repeat(9 * 1024 * 1024) };
 
-        function Detail({ state }) {
-            const data = useMemo(() => state.mode === 'getter'
-                ? getterData
-                : state.mode === 'oversized' ? oversizedData : { value: 'valid' }, [state.mode]);
-            const ref = useDataRef('payload', data, { schema: { type: 'object' }, scope: 'protected' });
-            return h('section', {}, [
-                h('p', {}, [state.mode, ref('payload')]),
-            ]);
-        }
-        function Root() {
-            const [state, setState] = useState({ mode: 'valid' });
-            useLayoutEffect(() => {
-                const onCommand = message => {
-                    if (message.type !== 'TEST_COMMAND') return;
-                    const mode = message.command;
-                    if (mode === 'getter' || mode === 'oversized' || mode === 'recover') {
-                        setState({ mode: mode === 'recover' ? 'valid' : mode });
-                    }
+        export default createApp({ viewTypes: [DetailType], app_name: 'strict_json_capture',
+            initialize({ prepareProjection, registerCleanup }) {
+                let mode = 'valid';
+                const detail = createView(DetailType, { idPrefix: 'detail', region: 'dynamic', render() {
+                    const data = mode === 'getter' ? getterData : mode === 'oversized' ? oversizedData : { value: 'valid' };
+                    const payload = ref('payload', data, { schema: { type: 'object' }, scope: 'protected' });
+                    return { body: mode + ' ' + formatRef('payload', payload), refs: [payload], context: {} };
+                } });
+                const publish = () => prepareProjection({ views: [detail] });
+                const receive = message => {
+                    if (message.type !== 'TEST_COMMAND' || !['getter', 'oversized', 'recover'].includes(message.command)) return;
+                    mode = message.command === 'recover' ? 'valid' : message.command;
+                    try { publish(); } catch { /* Runtime reports the failed projection. */ }
                 };
-                parentPort.on('message', onCommand);
-                return () => parentPort.off('message', onCommand);
-            }, []);
-            return h('div', null, h(DynamicView, { idPrefix: 'detail', type: DetailType, context: {} }, h(Detail, { state })));
-        }
-
-        export default createTUIApp({viewTypes:[DetailType],  app_name: 'strict_json_capture', component: Root });
+                parentPort.on('message', receive);
+                registerCleanup({ stop() { parentPort.off('message', receive); } });
+                publish();
+            },
+        });
     `;
 }
 
@@ -68,8 +59,6 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
     const runtime = resolve(process.cwd());
     const modules = join(directory, 'node_modules');
     await mkdir(modules, { recursive: true });
-    await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
     await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
     await mkdir(join(modules, '@aotui'), { recursive: true });
     await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
@@ -161,9 +150,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
                 const result = waitForCapture(worker!, captures, after);
                 worker!.postMessage({ type: 'TEST_COMMAND', command: type });
                 if (type === 'recover') {
-                    const opened = host!.getAppInteraction();
-                    if (opened.status !== 'ready') throw Error(opened.issue.code);
-                    expect((await opened.interaction.preview()).status).toBe('previewed');
+                    expect((await host!.preview()).status).toBe('previewed');
                 }
                 return result;
             };
@@ -190,7 +177,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
 
             const recovery = await publishEvent('recover');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');
-            expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, unchanged: 1,
+            expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 2, unchanged: 0,
                 prepareFailed: 2, lastRefCount: 1 });
             expect(healthNotifications).toEqual(['projection_failed', 'projection_failed', 'projection_recovered']);
 

@@ -85,10 +85,6 @@ export function mergeCloseReport(state: CloseState, child: CloseReport): void {
     for (const group of ['apps', 'desktops', 'resources'] as const) {
         for (const key of Object.keys(state[group])) (state[group] as unknown as Record<string, number>)[key] += (child[group] as unknown as Record<string, number>)[key];
     }
-    if (child.persistence) {
-        const persistence = state.persistence ??= newPersistenceSummary();
-        for (const key of Object.keys(persistence) as Array<keyof typeof persistence>) persistence[key] += child.persistence[key];
-    }
     if (child.appCleanup && state.appCleanup) for (const key of Object.keys(state.appCleanup) as Array<keyof NonNullable<CloseReport['appCleanup']>>)
         state.appCleanup[key] += child.appCleanup[key];
     state.resourcesReleased &&= child.resourcesReleased;
@@ -124,14 +120,9 @@ export function snapshotClose<R extends CloseReport>(state: R): R {
     freezeClose(report);
     return report;
 }
-function newPersistenceSummary(): NonNullable<CloseState['persistence']> {
-    return { managedApps: 0, closeReceipts: 0, missingCloseReceipts: 0, confirmedFlushes: 0,
-        failedFlushes: 0, unknownApps: 0, unsavedKeys: 0 };
-}
-
-/** Build the App's report from verified Worker and backend facts. */
+/** Build the App's report from verified Worker facts. */
 export function recordAppClose(state: CloseState, host: HostResourceReport, ids: { desktopId: string; appId: string }, codes: ReadonlySet<Code>): void {
-    const { storage, appCleanup } = host;
+    const { appCleanup } = host;
     state.resourcesReleased = host.resourcesReleased;
     state.apps.accepted = 1;
     state.apps.settled = state.state === 'settled' ? 1 : 0;
@@ -139,34 +130,13 @@ export function recordAppClose(state: CloseState, host: HostResourceReport, ids:
     const closed = host.interactions?.closed;
     mergeInteractions(state, typeof closed === 'boolean', host.interactions?.retainedOperations);
     if (closed !== true) state.resourcesReleased = false;
-    const appIssues = new Set([...codes].filter(code => code !== 'PERSISTENCE_CLOSE_FAILED'));
+    const appIssues = new Set(codes);
     if (appCleanup?.support === 'managed') {
         state.appCleanup!.managedApps = 1;
         state.appCleanup!.completedApps = appCleanup.report?.state === 'completed' ? 1 : 0;
         state.appCleanup!.failedApps = appCleanup.report?.state === 'failed' ? 1 : 0;
         if (state.appCleanup!.failedApps || state.state === 'settled' && !state.appCleanup!.completedApps)
             appIssues.add('APP_CLOSE_FAILED');
-    }
-    if (storage) {
-        const persistence = state.persistence = newPersistenceSummary();
-        const lifecycle = storage.lifecycle;
-        persistence.managedApps = 1;
-        if (lifecycle) {
-            persistence.closeReceipts = 1;
-            if (lifecycle.flush.ok) persistence.confirmedFlushes = 1;
-            else persistence.failedFlushes = 1;
-        } else if (state.state === 'settled') persistence.missingCloseReceipts = 1;
-        state.resources.retainedOwners = Number(storage.ownerRetained);
-        state.resources.pendingOperations = storage.pending;
-        persistence.unsavedKeys = new Set(lifecycle?.dispose.unsaved.map(entry => JSON.stringify([entry.address.namespace, entry.address.key]))).size;
-        const unknown = storage.uncertain || storage.release?.status === 'unknown' || lifecycle?.dispose.release.status === 'unknown' ||
-            lifecycle?.flush.entries.some(entry => entry.status === 'unknown') || lifecycle?.dispose.unsaved.some(entry => entry.status === 'unknown');
-        persistence.unknownApps = unknown ? 1 : 0;
-        if (codes.has('PERSISTENCE_CLOSE_FAILED') || storage.unsafe || unknown || persistence.failedFlushes || persistence.unsavedKeys ||
-            storage.release?.status === 'failed' || lifecycle?.dispose.release.status === 'failed' ||
-            state.state === 'settled' && (!lifecycle || storage.release?.status !== 'released'))
-            addCloseFailure(state, 'persistence', ['PERSISTENCE_CLOSE_FAILED'], ids);
-        if (lifecycle?.unmount === 'failed') appIssues.add('APP_UNMOUNT_FAILED');
     }
     state.apps.notVerifiedReleased = state.resourcesReleased ? 0 : 1;
     addCloseFailure(state, 'apps', [...appIssues], ids);

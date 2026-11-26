@@ -7,6 +7,7 @@ import { WORKER_DEFAULTS } from './domains/worker.config.js';
 import { LOGGER_DEFAULTS } from './domains/logger.config.js';
 import { AOTUIError } from '@aotui/core';
 import type { RuntimeConfig, RuntimeConfigInput } from './types.js';
+import type { AppExecutionBackend } from '../runtime/execution-backend.js';
 
 function isConfigRecord(value: unknown): value is Record<string, unknown> {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -36,6 +37,22 @@ export const RUNTIME_DEFAULTS: RuntimeConfig = Object.freeze({
     logger: Object.freeze({ ...LOGGER_DEFAULTS }),
 });
 
+function captureBackends(source: unknown): NonNullable<RuntimeConfig['executionBackends']> {
+    const path = 'executionBackends';
+    if (!isConfigRecord(source)) invalidConfiguration(path, 'must be a plain registry of named execution backends');
+    const backends: Record<string, AppExecutionBackend> = Object.create(null);
+    for (const key of Reflect.ownKeys(source)) {
+        const field = path + '.' + String(key);
+        if (typeof key !== 'string' || !key || key !== key.trim()) invalidConfiguration(field, 'provide a backend name');
+        const value = readOwnEnumerableConfigValue(source, key, path) as AppExecutionBackend | undefined;
+        const start = value && typeof value === 'object' ? value.start : undefined;
+        if (typeof start !== 'function')
+            invalidConfiguration(field, 'provide an execution backend with start()');
+        backends[key] = Object.freeze({ start: start.bind(value) });
+    }
+    return Object.freeze(backends);
+}
+
 /**
  * 深度合并 plain own enumerable data properties，并在同一次遍历中校验形状和字段。
  */
@@ -49,12 +66,14 @@ function mergeConfig<T extends object>(target: T, source: unknown, path = ''): T
         const keyPath = path ? `${path}.${keyText}` : keyText;
         const sourceValue = readOwnEnumerableConfigValue(source, key, path);
         if (typeof key !== 'string') invalidConfiguration(keyPath, 'configuration keys must be strings');
-        if (!Object.hasOwn(targetRecord, key)) invalidConfiguration(keyPath, 'unknown configuration key');
+        if (!Object.hasOwn(targetRecord, key) && keyPath !== 'executionBackends') invalidConfiguration(keyPath, 'unknown configuration key');
 
         if (sourceValue === undefined) continue;
 
         const targetValue = targetRecord[key];
-        if (isConfigRecord(targetValue)) {
+        if (keyPath === 'executionBackends') {
+            (result as Record<string, unknown>)[key] = captureBackends(sourceValue);
+        } else if (isConfigRecord(targetValue)) {
             if (!isConfigRecord(sourceValue)) invalidConfiguration(keyPath, 'must be a plain object');
             (result as Record<string, unknown>)[key] = mergeConfig(targetValue, sourceValue, keyPath);
         } else {

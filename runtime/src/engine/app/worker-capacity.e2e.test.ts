@@ -1,17 +1,14 @@
 import { expect, it } from 'vitest';
-import { mkdtemp, writeFile, mkdir, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
 
 const repo = resolve(process.cwd(), '..'), url = (p: string) => pathToFileURL(p).href;
-async function linkSDKPeers(dir: string) {
-    await mkdir(join(dir, 'node_modules'), { recursive: true });
-    await symlink(join(repo, 'sdk/node_modules/preact'), join(dir, 'node_modules/preact'), 'dir');
-    await symlink(join(repo, 'sdk/node_modules/typebox'), join(dir, 'node_modules/typebox'), 'dir');
-}
+
 async function capture(file: string, body: string) {
     await writeFile(file, body);const folder = process.env.AOTUI_W08_C1_FACTS_DIR ?? process.env.AOTUI_W08_B2_FACTS_DIR;
     if (folder) {
@@ -26,19 +23,20 @@ async function fact(name: string, value: object) {
 }
 it('C1-08 separate Runtimes use the bundled Worker and each Runtime shares one capacity bound', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-runtimes-')), app = join(dir, 'app.mjs');
-    await linkSDKPeers(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, defineViewType, StaticView } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
+    await capture(app, `import { createApp, createView, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
 const RootType = defineViewType()({ multiplicity: 'multiple', name: 'Root', tools: {
     inspect: {
-        description: 'Inspect launch facts', inputSchema: Type.Object({}, { additionalProperties: false }),
+        description: 'Inspect launch facts',
         execute: async ({ context }) => ({ success: true, data: { launch: context.launch.C1_LAUNCH } }),
     },
 } });
-function Root() {
-    const launch = useAppRuntimeContext().launchConfig;
-    return h('div', null, h(StaticView, { idPrefix: 'root', type: RootType, context: { launch } }, 'Worker capacity'));
-}
-export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root});`);
+export default createApp({ viewTypes: [RootType], app_name: 'c1',
+    initialize({ launchConfig: launch, prepareProjection }) {
+        const page = createView(RootType, { idPrefix: 'root', region: 'static',
+            render: () => ({ body: 'Worker capacity', context: { launch } }) });
+        prepareProjection({ views: [page] });
+    },
+});`);
     const { createRuntime } = await import(url(join(repo, 'runtime/dist/index.js')));
     const workerFile = join(repo, 'runtime/dist/worker-runtime/index.js');
     const runtimes = [createRuntime({ worker: { timeoutMs: 2345, maxWorkers: 1 } }), createRuntime({ worker: { maxWorkers: 1 } })] as any[];
@@ -53,7 +51,7 @@ export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root}
                 expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
                 return result.receipt.outcome.value.data;
             };
-            expect(sandbox.host.workerScriptPath).toBe(workerFile);
+            expect(sandbox.host.worker).toBeInstanceOf(Worker);
             expect((await inspect()).launch).toBe(index ? 'B' : 'A');
             if (!index) {
                 expect(sandbox.host.timeout).toBe(2345);

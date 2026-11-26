@@ -14,28 +14,23 @@ const settle = (task: Promise<void>) => task.then(
     (error: Error) => ({ status: 'rejected' as const, message: error.message }),
 );
 
-function respond(worker: EventEmitter, request: Request, storage = false) {
+function respond(worker: EventEmitter, request: Request) {
     const init = request.type === 'INIT' ? request : undefined;
     const instanceId = init ? (init as any).appInstanceId : managedInstances.get(worker);
     if (init && typeof instanceId === 'string') managedInstances.set(worker, instanceId);
     const closesApp = ['APP_STOP', 'APP_CLOSE'].includes(request.type);
-    const closesPersistence = storage && request.type === 'APP_CLOSE';
     const fullyClosed = request.type === 'APP_CLOSE';
     worker.emit('message', {
         type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
         requestId: request.requestId, success: true,
         ...(init ? {
             appLifecycle: { protocol: 'app-lifecycle-v2', instanceId },
-            ...(storage ? { persistence: { protocol: 'state-session-v2', version: 2, instanceId } } : {}),
             protocol: (init as any).protocol, toolsEnabled: (init as any).toolsEnabled,
             projectionLimits: (init as any).projectionLimits,
             appInstanceId: instanceId,
         } : {}),
         ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
             state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
-        ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v2', instanceId,
-            ok: fullyClosed, unmount: fullyClosed ? 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
-            ...(fullyClosed ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}),
     });
 }
 
@@ -140,21 +135,13 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
 
     it('keeps managed-ACK transitions and requires a new Host and Worker after close', async () => {
         const { host, worker, sent } = controlledHost();
-        let waitingForRelease: Request | undefined;
         worker.postMessage = message => {
             sent.push(message);
-            if (message.type === 'APP_CLOSE') {
-                waitingForRelease = message;
-                queueMicrotask(() => worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2,
-                    instanceId: managedInstances.get(worker), sequence: 1, action: 'release' }));
-            } else if (message.type === 'STATE_STORAGE_RESPONSE' && waitingForRelease) {
-                const request = waitingForRelease;waitingForRelease = undefined;queueMicrotask(() => respond(worker, request, true));
-            } else queueMicrotask(() => respond(worker, message, true));
+            queueMicrotask(() => respond(worker, message));
         };
         let next: AppWorkerHost | undefined;
         try {
             await host.start();
-            expect(host.getPersistenceReport()).toBeDefined();
             await host.open();
             expect(host.getStatus()).toBe('running');
             await host.close();
@@ -166,7 +153,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             expect(() => new AppWorkerHost({
                 appId: 'r1_app' as any, desktopId: 'r1_desktop' as any,
                 appModulePath: 'not-loaded', existingWorker: worker as any,
-            })).toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
+            })).toThrow(expect.objectContaining({ code: 'APP_INSTANCE_REUSE_UNSUPPORTED' }));
             next = controlledHost().host;
             expect(next.appInstanceId).not.toBe(host.appInstanceId);
         } finally { host.terminate();next?.terminate(); }
@@ -244,7 +231,6 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             expect(host.getStatus()).toBe('closed');
             expect(nextHost!.getStatus()).toBe('ready');
             expect(nextHost!.appInstanceId).not.toBe(host.appInstanceId);
-            expect(nextHost!.getPersistenceReport()).toBeUndefined();
             expect((nextHost as any).worker).toBe(replacement);
         } finally {
             host?.terminate();

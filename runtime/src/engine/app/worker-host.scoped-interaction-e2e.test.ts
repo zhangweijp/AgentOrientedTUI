@@ -61,7 +61,7 @@ function scope(x: Awaited<ReturnType<typeof start>>) {
             turn = turns.adopt(prepared.candidate);
             return prepared.candidate.observation;
         },
-        invoke: (request: AppInvocation, timeout?: number) => turn.invoke(x.host.appId, request, timeout),
+        invoke: (request: AppInvocation, timeout?: number) => turn.invoke(x.host.appId, request, timeout ?? x.host.timeout),
         release: () => turn.release(),
         request(o: any, id = 'call', input: any = { file: REF_A }, name = 'read', view = 'aa_1') {
             const tool = o.tools.find((t: any) => t.name === name); expect(tool).toBeDefined();
@@ -84,7 +84,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         temporary = await mkdtemp(join(process.env.AOTUI_MIGRATION_TEMP_DIR ?? tmpdir(), 'aotui-scoped-c-'));
         Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
         const modules = join(temporary, 'node_modules'); await mkdir(join(modules, '@aotui'), { recursive: true });
-        for (const [owner, pkg] of [['.', 'preact'], ['../sdk', 'linkedom'], ['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', pkg), join(modules, pkg), 'dir');
+        for (const [owner, pkg] of [['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', pkg), join(modules, pkg), 'dir');
         await symlink(runtime, join(modules, '@aotui/runtime'), 'dir');
         await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
         await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
@@ -112,9 +112,9 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
     });
     afterAll(async () => {
         if (process.env.AOTUI_C_FACTS_FILE) {
-            const runtime = resolve(process.cwd()), paths = ['dist/engine/app/worker-host.js', 'dist/worker-runtime/index.js', 'src/e2e-test/fixtures/snapshot-value-sdk.mjs', '../sdk/dist/app-factory/createTUIApp.js', '../sdk/dist/components/View.js'];
+            const runtime = resolve(process.cwd()), paths = ['dist/engine/app/worker-host.js', 'dist/worker-runtime/index.js', 'src/e2e-test/fixtures/snapshot-value-sdk.mjs', '../sdk/dist/app-factory/createApp.js'];
             const inputs = await Promise.all(paths.map(async path => ({ path: resolve(runtime, path), sha256: createHash('sha256').update(await readFile(resolve(runtime, path))).digest('hex') })));
-            await writeFile(process.env.AOTUI_C_FACTS_FILE, JSON.stringify({ kind: 'Actual emitted Host and Node Worker; accepted SDK dist; existing immutable fixture', inputs, cases: facts }, null, 2), { flag: 'wx' });
+            await writeFile(process.env.AOTUI_C_FACTS_FILE, JSON.stringify({ kind: 'Actual emitted Host and Node Worker; accepted SDK dist; plain TypeScript fixture', inputs, cases: facts }, null, 2), { flag: 'wx' });
         }
         if (temporary) await rm(temporary, { recursive: true, force: true });
     });
@@ -150,7 +150,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
     });
     it('preserves the original Ref through a read-only preview and replaces it on adoption', async () => {
         const x = await start(), s = scope(x), old = await s.observe(); await configure(x, { text: 'B' });
-        expect(await s.client.preview()).toMatchObject({ status: 'previewed' });
+        expect(await x.host.preview()).toMatchObject({ status: 'previewed' });
         const oldRequest = s.request(old, 'old'), first = receipt(await s.invoke(oldRequest));
         expect(first.outcome).toMatchObject({ value: { data: { args: { file: { text: 'A' } } } } });
         expect(first.source?.snapshotId).toBe(old.source.snapshotId);
@@ -176,7 +176,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         try {
             await entered.promise;
             await configure(x, { toolEnabled: false });
-            if (visibility === 'with preview') expect((await s.client.preview()).status).toBe('previewed');
+            if (visibility === 'with preview') expect((await x.host.preview()).status).toBe('previewed');
             else expect(x.snapshot().id).toBe(o.source.snapshotId);
             gate.resolve(true); const r = receipt(await running);
             expect(r.outcome.status).toBe('rejected'); expect(r.executionPhase).toBe('not-dispatched');

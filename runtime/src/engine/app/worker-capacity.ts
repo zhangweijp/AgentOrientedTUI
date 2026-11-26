@@ -6,7 +6,7 @@ export interface WorkerCapacityReport {
     readonly total: number;
 }
 
-/** Admission only. The Host releases its slot after the Worker actually exits. */
+/** Shared execution capacity. The controller returns a slot after confirmed exit and drain. */
 export class WorkerCapacity {
     private state: WorkerCapacityReport['state'] = 'open';
     private total = 0;

@@ -1,0 +1,18 @@
+{
+  "source": "A <&>\r\nline two\rlast",
+  "indexXml": "<view view_id=\"Index\" view_type=\"Index\" app_id=\"stdio_files\" app_name=\"stdio_files\" region=\"static\">\n# Files\n</view>",
+  "fileXml": "<view view_id=\"A_1\" view_type=\"File\" app_id=\"stdio_files\" app_name=\"stdio_files\" region=\"dynamic\">\nA &lt;&amp;&gt;&#13;\nline two&#13;last\n[小梅](people[0])\n\nAvailable references\n- public $ref.stdio_files.A_1.content (string)\n- public $ref.stdio_files.A_1.people (Person[])\n</view>",
+  "hintXml": "<view view_id=\"A_1\" view_type=\"File\" app_id=\"stdio_files\" app_name=\"stdio_files\" region=\"dynamic\">\nThis View is open. Its body is omitted this turn for the model context budget.\n</view>",
+  "collapsedXml": "<view view_id=\"A_1\" view_type=\"File\" app_id=\"stdio_files\" app_name=\"stdio_files\" region=\"dynamic\">\nCollapsed · Agent note\n\nhold &lt;&amp;&gt;&#13;end\n</view>",
+  "nameAtPath": "小梅 & Team",
+  "editSchema": {
+    "type": "object",
+    "properties": {
+      "view_id": { "type": "string", "description": "Receiving File page XML view_id." },
+      "text": { "type": "string" },
+      "wait": { "type": "boolean" }
+    },
+    "required": ["view_id", "text"],
+    "additionalProperties": false
+  }
+}

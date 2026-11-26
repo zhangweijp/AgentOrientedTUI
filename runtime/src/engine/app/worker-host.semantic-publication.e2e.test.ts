@@ -29,10 +29,8 @@ function deferred<T>() {
 function applicationSource(initiallyOpen: boolean, faultTools = false): string {
     return `
         import { parentPort } from 'node:worker_threads';
-        import { h } from 'preact';
         import Type from 'typebox';
-        import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, useAppRuntimeContext, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
+        import { createApp, createView, defineViewType, ref, formatRef } from '@aotui/sdk';
 
         Date.now = () => 1700000000000;
         let businessCalls = 0;
@@ -67,21 +65,31 @@ function applicationSource(initiallyOpen: boolean, faultTools = false): string {
             },
         } });
 
-        function Workspace({ state }) {
-            const selection = useMemo(() => state.invalidRef
-                ? { value: () => 'not cloneable' }
-                : { value: state.refValue }, [state.invalidRef, state.refValue]);
-            const ref = useDataRef('selection', selection, { schema: { type: 'object' }, scope: 'protected' });
-            useLayoutEffect(() => { if (state.invalidLayout) throw new Error('Layout did not finish'); });
-            return h('section', {}, h('p', {}, state.text + ' ' + ref('Selection')));
-        }
-        function Root() {
-            const { requestAttention } = useAppRuntimeContext();
-            const [state, setState] = useState({
-                open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
-                toolEnabled: true, extraToolEnabled: false, invalidRef: false, invalidLayout: false,
-            });
-            useLayoutEffect(() => {
+        export default createApp({ viewTypes: [WorkspaceType], app_name: 'publication_fixture',
+            initialize({ prepareProjection, requestAttention, registerCleanup }) {
+                let state = {
+                    open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
+                    toolEnabled: true, extraToolEnabled: false, invalidRef: false, invalidLayout: false,
+                };
+                const makePage = () => createView(WorkspaceType, {
+                    idPrefix: 'workspace', region: 'dynamic', name: 'Workspace',
+                    render() {
+                        if (state.invalidLayout) throw Error('The fixture page could not render');
+                        const selection = ref('selection', state.invalidRef
+                            ? { value: () => 'not cloneable' } : { value: state.refValue },
+                            { schema: { type: 'object' }, scope: 'protected' });
+                        return { refs: [selection], body: state.text + ' ' + formatRef('Selection', selection),
+                            context: { state, setState } };
+                    },
+                });
+                let page = state.open ? makePage() : undefined;
+                function publish() { return prepareProjection({ views: page ? [page] : [] }); }
+                function setState(update) {
+                    state = update(state);
+                    if (state.open) page ??= makePage();
+                    else page = undefined;
+                    try { publish(); } catch { /* Runtime records failure without repeating the business change. */ }
+                }
                 const onCommand = message => {
                     if (message.type !== 'TEST_COMMAND') return;
                     const { command, data } = message;
@@ -100,20 +108,15 @@ function applicationSource(initiallyOpen: boolean, faultTools = false): string {
                         case 'refresh-tool': setState(current => ({ ...current, toolEnabled: data.enabled })); break;
                         case 'poison-ref': setState(current => ({ ...current, invalidRef: true })); break;
                         case 'recover-ref': setState(current => ({ ...current, invalidRef: false, refValue: 'recovered' })); break;
-                        case 'break-layout': setState(current => ({ ...current, invalidLayout: true, text: 'partial layout', refValue: 'partial ref' })); break;
-                        case 'repair-layout': setState(current => ({ ...current, invalidLayout: false, text: 'repaired layout', refValue: 'repaired ref' })); break;
+                        case 'break-render': setState(current => ({ ...current, invalidLayout: true, text: 'partial layout', refValue: 'partial ref' })); break;
+                        case 'repair-render': setState(current => ({ ...current, invalidLayout: false, text: 'repaired layout', refValue: 'repaired ref' })); break;
                     }
                 };
                 parentPort.on('message', onCommand);
-                return () => parentPort.off('message', onCommand);
-            }, []);
-            return h('div', null, state.open
-                ? h(DynamicView, { idPrefix: 'workspace', type: WorkspaceType, context: { state, setState }, name: 'Workspace' },
-                    h(Workspace, { state }))
-                : null);
-        }
-
-        export default createTUIApp({ viewTypes: [WorkspaceType], app_name: 'publication_fixture', component: Root });
+                registerCleanup({ stop() { parentPort.off('message', onCommand); } });
+                publish();
+            },
+        });
     `;
 }
 
@@ -138,8 +141,6 @@ beforeAll(async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aotui-semantic-publication-'));
     const modules = join(temporaryDirectory, 'node_modules');
     await mkdir(modules, { recursive: true });
-    await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
     await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
     await mkdir(join(modules, '@aotui'), { recursive: true });
     await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
@@ -224,11 +225,9 @@ async function change(x: Awaited<ReturnType<typeof start>>, eventType: string, d
     const before = sequence(x.captures.at(-1));
     const updates = x.updates.length;
     x.worker.postMessage({ type: 'TEST_COMMAND', command: eventType, data });
-    if (eventType === 'break-layout') return waitForCapture(x, before);
+    if (eventType === 'break-render') return waitForCapture(x, before);
     await vi.waitFor(() => expect(x.updates.length).toBeGreaterThan(updates));
-    const opened = x.host.getAppInteraction();
-    if (opened.status !== 'ready') throw Error(opened.issue.code);
-    expect((await opened.interaction.preview()).status).toBe('previewed');
+    expect((await x.host.preview()).status).toBe('previewed');
     return waitForCapture(x, before);
 }
 
@@ -270,23 +269,23 @@ async function createToolCaller(host: AppWorkerHost, name: string, input: AppInv
             observationId: observation.observationId,
             toolId: tool!.id,
             viewId: target!.id, input,
-        }),
+        }, host.timeout),
         close: turn.release,
     };
 }
 
 describe('Semantic publication through the current SDK and a real Node Worker', () => {
-    it('keeps the Worker alive after a managed queued layout error and waits for a valid repair', async () => {
+    it('keeps the Worker alive after a page render error and waits for a valid repair', async () => {
         const x = await start('empty');
         await x.host.open();
         await change(x, 'open');
         const initial = latestSnapshot(x.host);
-        const failed = await change(x, 'break-layout');
+        const failed = await change(x, 'break-render');
         expect(failed).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED', error: { code: 'SNAPSHOT_INVALID' } });
         expect((x.host as any).snapshotReceiver.core.store.readLatest(x.host.appId)).toMatchObject({
             status: 'degraded', lastGood: { id: initial.id },
         });
-        const recovered = await change(x, 'repair-layout');
+        const recovered = await change(x, 'repair-render');
         expect(recovered.type).toBe('SNAPSHOT_PREPARED');
         expect(latestSnapshot(x.host)).toMatchObject({
             views: [{ content: { value: expect.stringContaining('repaired layout') } }],
@@ -354,9 +353,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         await vi.waitFor(() => expect(x.updates).toContain('attention_requested'));
         expect(x.updates.filter(reason => reason === 'attention_requested')).toHaveLength(1);
         expect(x.captures).toHaveLength(1);
-        const opened = x.host.getAppInteraction();
-        if (opened.status !== 'ready') throw Error(opened.issue.code);
-        expect(await opened.interaction.preview()).toMatchObject({ status: 'previewed', views: [
+        expect(await x.host.preview()).toMatchObject({ status: 'previewed', views: [
             { content: { value: expect.stringContaining('background failure') } },
         ] });
     });

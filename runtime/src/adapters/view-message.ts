@@ -1,4 +1,4 @@
-import type { ObservedRef } from '@aotui/core';
+import type { ObservedRef, ViewRegion } from '@aotui/core';
 import { formatRefPath } from '@aotui/core/host';
 
 export const escapeXmlText = (value: string): string =>
@@ -14,6 +14,7 @@ export function buildViewMessageMarkup(view: {
     appName: string;
     viewId: string;
     viewType: string;
+    region: ViewRegion;
     markup: string;
     suffix?: string;
     /** The Ref descriptions from this View's Observation. */
@@ -21,7 +22,7 @@ export function buildViewMessageMarkup(view: {
 }): string {
     const attrs = Object.entries({
         view_id: view.viewId, view_type: view.viewType,
-        app_id: view.appId, app_name: view.appName,
+        app_id: view.appId, app_name: view.appName, region: view.region,
     }).map(([name, value]) => `${name}="${escapeXmlText(value).replace(/"/g, '&quot;')
         .replace(/[\r\n\t]/g, char => `&#${char.charCodeAt(0)};`)}"`).join(' ');
     const references = view.refs?.map(ref => {

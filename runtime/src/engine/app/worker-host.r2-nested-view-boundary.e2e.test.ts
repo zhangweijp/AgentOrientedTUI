@@ -16,10 +16,8 @@ type Capture =
 function appSource(): string {
     return `
         import { parentPort } from 'node:worker_threads';
-        import { h } from 'preact';
-        import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
+        import { createApp, createView, defineViewType, ref, formatRef } from '@aotui/sdk';
         const inputSchema = Type.Object({}, { additionalProperties: false });
         const ParentType = defineViewType()({ multiplicity: 'multiple', name: 'Parent', tools: {
             parent_action: {
@@ -34,53 +32,35 @@ function appSource(): string {
             },
         } });
 
-        function Parent({ state }) {
-            const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []), { schema: { type: 'object' }, scope: 'protected' });
-            return h('section', {}, [
-                h('div', {}, h('article', {}, 'ORDINARY_NESTED_DOM_MARKER')),
-                h('p', {}, ref('PARENT_REF_MARKER')),
-                h('p', {}, state.parentText),
-                state.injectRawView
-                    ? h('div', { 'data-aotui-view': 'RawChild' },
-                        h('p', {}, 'RAW_NESTED_VIEW_MARKER'))
-                    : null,
-            ]);
-        }
-
-        function Sibling() {
-            const ref = useDataRef('sibling_ref', useMemo(() => ({ owner: 'sibling' }), []), { schema: { type: 'object' }, scope: 'protected' });
-            return h('section', {}, [
-                h('p', {}, ref('SIBLING_REF_MARKER')),
-            ]);
-        }
-        function Root() {
-            const [state, setState] = useState({
-                parentText: 'PARENT_INITIAL_MARKER', injectRawView: false, siblingOpen: true,
-            });
-            useLayoutEffect(() => {
-                const onCommand = message => {
+        export default createApp({ viewTypes: [ParentType, SiblingType], app_name: 'nested_view_rejection',
+            initialize({ prepareProjection, registerCleanup }) {
+                let parentText = 'PARENT_INITIAL_MARKER', invalid = false;
+                const parent = createView(ParentType, { idPrefix: 'parent', region: 'dynamic', render() {
+                    const selection = ref('parent_ref', { owner: 'parent' }, { schema: { type: 'object' }, scope: 'protected' });
+                    return { body: ['PARENT_SECTION', formatRef('PARENT_REF_MARKER', selection), parentText].join('\\n'),
+                        refs: invalid ? [selection, selection] : [selection], context: {} };
+                } });
+                const newSibling = () => createView(SiblingType, { idPrefix: 'sibling', region: 'dynamic', render() {
+                    const selection = ref('sibling_ref', { owner: 'sibling' }, { schema: { type: 'object' }, scope: 'protected' });
+                    return { body: formatRef('SIBLING_REF_MARKER', selection), refs: [selection], context: {} };
+                } });
+                let sibling = newSibling();
+                const publish = () => prepareProjection({ views: sibling ? [parent, sibling] : [parent] });
+                const receive = message => {
                     if (message.type !== 'TEST_COMMAND') return;
                     switch (message.command) {
-                        case 'inject-raw-view':
-                            setState(current => ({ ...current, parentText: 'PARENT_INVALID_ATTEMPT', injectRawView: true }));
-                            break;
-                        case 'repair':
-                            setState(current => ({ ...current, parentText: 'PARENT_RECOVERED_MARKER', injectRawView: false }));
-                            break;
-                        case 'close-sibling': setState(current => ({ ...current, siblingOpen: false })); break;
-                        case 'open-sibling': setState(current => ({ ...current, siblingOpen: true })); break;
+                        case 'duplicate-ref': invalid = true; parentText = 'PARENT_INVALID_ATTEMPT'; break;
+                        case 'repair': invalid = false; parentText = 'PARENT_RECOVERED_MARKER'; break;
+                        case 'close-sibling': sibling = undefined; break;
+                        case 'open-sibling': sibling = newSibling(); break;
                     }
+                    try { publish(); } catch { /* Runtime reports the failed projection. */ }
                 };
-                parentPort.on('message', onCommand);
-                return () => parentPort.off('message', onCommand);
-            }, []);
-            return h('div', null, h('main', {}, [
-                h(DynamicView, { idPrefix: 'parent', type: ParentType, context: {} }, h(Parent, { state })),
-                state.siblingOpen ? h(DynamicView, { idPrefix: 'sibling', type: SiblingType, context: {} }, h(Sibling)) : null,
-            ]));
-        }
-
-        export default createTUIApp({ viewTypes: [ParentType, SiblingType], app_name: 'nested_view_rejection', component: Root });
+                parentPort.on('message', receive);
+                registerCleanup({ stop() { parentPort.off('message', receive); } });
+                publish();
+            },
+        });
     `;
 }
 
@@ -88,8 +68,6 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
     const runtime = resolve(process.cwd());
     const modules = join(directory, 'node_modules');
     await mkdir(modules, { recursive: true });
-    await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
     await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
     await mkdir(join(modules, '@aotui'), { recursive: true });
     await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
@@ -147,8 +125,8 @@ function policyForSelection(): AppInteractionPolicy {
     };
 }
 
-describe('R2 DOM Producer rejects nested View identities in a real Worker', () => {
-    it('rejects a raw nested View marker, recovers atomically, and keeps sibling lifecycle valid', async () => {
+describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
+    it('rejects duplicate Ref IDs, recovers atomically, and keeps the sibling lifecycle valid', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'aotui-r2-view-boundary-'));
         let host: AppWorkerHost | undefined;
         let worker: Worker | undefined;
@@ -186,9 +164,7 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 const capture = waitForCapture(worker!, captures, after);
                 worker!.postMessage({ type: 'TEST_COMMAND', command: eventType });
                 if (eventType === 'close-sibling' || eventType === 'open-sibling' || eventType === 'repair') {
-                    const opened = host!.getAppInteraction();
-                    if (opened.status !== 'ready') throw Error(opened.issue.code);
-                    expect((await opened.interaction.preview()).status).toBe('previewed');
+                    expect((await host!.preview()).status).toBe('previewed');
                 }
                 return capture;
             };
@@ -196,9 +172,9 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
             const initial = readySnapshot();
             expect(initial.views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_1']);
             const parent = initial.views.find((view: any) => view.id === 'parent_1');
-            expect(parent.content.value).toContain('ORDINARY_NESTED_DOM_MARKER');
+            expect(parent.content.value).toContain('PARENT_SECTION');
             expect(parent.content.value).toContain('PARENT_INITIAL_MARKER');
-            expect(parent.content.value).not.toContain('RAW_NESTED_VIEW_MARKER');
+            expect(parent.content.value).not.toContain('PARENT_INVALID_ATTEMPT');
             expect(Object.values(initial.refs).find((ref: any) => ref.id === 'parent_ref'))
                 .toMatchObject({ ownerViewId: 'parent_1', target: { payload: { owner: 'parent' } } });
             expect(Object.values(initial.refs).find((ref: any) => ref.id === 'sibling_ref'))
@@ -222,14 +198,11 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
 
             const beforeInvalid = host.getSemanticSnapshotReport()!;
             const previousGood = readySnapshot();
-            const invalid = await sendEvent('inject-raw-view');
+            const invalid = await sendEvent('duplicate-ref');
             expect(invalid).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED', error: { code: 'SNAPSHOT_INVALID' } });
-            if (invalid.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected nested View rejection');
-            expect(invalid.error.message).toContain('NESTED_VIEW_UNSUPPORTED');
-            expect(invalid.error.message).toContain('Parent');
-            expect(invalid.error.message).toContain('RawChild');
-            expect(invalid.error.message).toContain('Declare independent Views.');
-            expect(invalid.error.message.length).toBeLessThanOrEqual(160);
+            if (invalid.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected duplicate Ref rejection');
+            expect(invalid.error.message).toContain('Ref IDs must be unique');
+            expect(invalid.error.path).toContain('parent');
             expect(host.getSemanticSnapshotReport()).toMatchObject({
                 health: 'degraded',
                 published: beforeInvalid.published,
@@ -240,7 +213,7 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
             });
             expect(healthNotifications.at(-1)).toBe('projection_failed');
             expect(previousGood.views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_2']);
-            expect(previousGood.views.some((view: any) => view.content.value.includes('RAW_NESTED_VIEW_MARKER'))).toBe(false);
+            expect(previousGood.views.some((view: any) => view.content.value.includes('PARENT_INVALID_ATTEMPT'))).toBe(false);
 
             const recovery = await sendEvent('repair');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');

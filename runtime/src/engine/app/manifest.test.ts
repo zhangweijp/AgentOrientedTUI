@@ -18,7 +18,7 @@ async function app(fields: Record<string, unknown> = {}) {
     await writeFile(modulePath, 'throw new Error("Discovery must not import the App.");');
     await writeFile(manifestPath, JSON.stringify({
         app_name: '3' + 'a'.repeat(50), version: '1.0.0', description: 'Declared description',
-        toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2',
+        toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
         entry: { main: './dist/entry.mjs' }, ...fields,
     }));
     return { modulePath, manifestPath };
@@ -27,7 +27,7 @@ async function app(fields: Record<string, unknown> = {}) {
 it('discovers the same immutable metadata from a directory or its generated entry without importing it', async () => {
     const { modulePath } = await app();
     const result = await readAppManifest(directory);
-    expect(result).toEqual({ metadata: { app_name: '3' + 'a'.repeat(50), description: 'Declared description' }, modulePath, persistenceSupport: null });
+    expect(result).toEqual({ metadata: { app_name: '3' + 'a'.repeat(50), description: 'Declared description' }, modulePath });
     expect(Object.isFrozen(result) && Object.isFrozen(result.metadata)).toBe(true);
     expect(await readAppManifest(modulePath)).toEqual(result);
     expect(await readAppManifest(pathToFileURL(modulePath).href)).toEqual(result);
@@ -50,7 +50,6 @@ it.each([
     [{ app_name: '' }, 'APP_MANIFEST_INVALID', 'app_name'],
     [{ entry: { main: './dist/missing.mjs' } }, 'APP_MANIFEST_INVALID', 'entry.main'],
     [{ toolAuthoringProtocol: 'old' }, 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', 'toolAuthoringProtocol'],
-    [{ persistenceSupport: 'old' }, 'PERSISTENCE_UNAVAILABLE', 'persistenceSupport'],
     [{ appLifecycleSupport: 'old' }, 'APP_MANIFEST_INVALID', 'appLifecycleSupport'],
 ] as const)('rejects invalid static fields (%s) with a located diagnostic', async (fields, code, field) => {
     const { manifestPath } = await app(fields);

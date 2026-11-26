@@ -116,6 +116,11 @@ export class SemanticSnapshotReceiver {
         return Object.freeze({ ...result, healthChanged: before !== this.healthKey() });
     }
 
+    invalidatePublication(): void {
+        if (this.stopped) return;
+        this.core.lifecycle.invalidatePublication({ code: 'SNAPSHOT_UNAVAILABLE', message: 'The App execution is disconnected.' });
+    }
+
     close(): Promise<void> {
         if (this.completion) return this.completion;
         this.stopped = true;

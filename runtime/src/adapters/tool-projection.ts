@@ -1,6 +1,6 @@
 import { checkWireJson, DEFAULT_SNAPSHOT_LIMITS, SnapshotDataError } from '@aotui/core';
 import type { JsonValue, ObservationSource, ObservedRef, ObservedTool, RefConsumer, ViewIdentity } from '@aotui/core';
-import { refConsumerAllowed, scopeAllows } from '@aotui/core/host';
+import { encodeRefLiteral, REF_ADDRESS_PREFIX, refConsumerAllowed, scopeAllows } from '@aotui/core/host';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 export interface PresentedRef {
@@ -9,9 +9,11 @@ export interface PresentedRef {
 }
 
 const REF_KIND = 'x-aotui-ref-kind';
-const hint = 'A compatible $ref.app_id.view_id.ref_id address is also accepted. Escape literal $ref. as $$ref.';
+const hint = 'A compatible $ref.app_id.view_id.ref_id address is also accepted.';
 /** The adapter-added address alternative. Script signatures can express it as a template literal. */
 export const NATIVE_REF_ADDRESS_SCHEMA = Object.freeze({ type: 'string', description: 'A complete $ref.app_id.view_id.ref_id address.' });
+export const NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA = Object.freeze({ ...NATIVE_REF_ADDRESS_SCHEMA,
+    pattern: '^\\$ref\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\.[A-Za-z_][A-Za-z0-9_]*([.\\[][\\s\\S]*)?$' });
 const budgets = {
     maxDepth: DEFAULT_SNAPSHOT_LIMITS.maxDepth,
     maxNodes: DEFAULT_SNAPSHOT_LIMITS.maxNodes,
@@ -73,24 +75,33 @@ function addressSlot(field: JsonObject, shapes: ReadonlySet<string>): JsonObject
         return { type: 'string', description: description + 'Provide a published ' + label + ' address using $ref.app_id.view_id.ref_id.' };
     }
     if (!canSelect(shapes, field) || acceptsAnyString(field)) return field;
-    const candidates = types(field);
-    if (candidates.size === 1 && candidates.has('string')) {
-        // Both inputs are strings on the wire. The business constraints apply after resolution.
-        return { type: 'string', description: description + hint + ' Literal input is checked against the App’s string rules.' };
+    const address = types(field).has('string') ? NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA : NATIVE_REF_ADDRESS_SCHEMA;
+    return { anyOf: [field, address], description: description + hint };
+}
+
+function wireLiterals(schema: JsonObject, shapes: ReadonlySet<string>, directItems: boolean): JsonObject {
+    const field = { ...schema };
+    const string = (value: JsonValue) => typeof value === 'string' ? encodeRefLiteral(value) : value;
+    const literal = (value: JsonValue) => directItems && Array.isArray(value) ? value.map(string) : string(value);
+    if (Object.hasOwn(schema, 'const')) field.const = literal(schema.const!);
+    if (Object.hasOwn(schema, 'default')) field.default = literal(schema.default!);
+    if (Array.isArray(schema.enum)) field.enum = schema.enum.map(literal);
+    // A literal may gain one dollar sign in transit. The original bounds are checked after decoding.
+    if (typeof schema.maxLength === 'number' && schema.maxLength >= REF_ADDRESS_PREFIX.length)
+        field.maxLength = schema.maxLength + 1;
+    if (Array.isArray(schema.anyOf)) field.anyOf = schema.anyOf.map(branch =>
+        object(branch) ? wireLiterals(branch, shapes, directItems) : branch);
+    if (directItems) {
+        const element = (item: JsonValue) => object(item) ? addressSlot(wireLiterals(item, shapes, false), shapes) : item;
+        if (object(schema.items)) field.items = element(schema.items);
+        if (Array.isArray(schema.prefixItems)) field.prefixItems = schema.prefixItems.map(element);
     }
-    return { anyOf: [field, NATIVE_REF_ADDRESS_SCHEMA], description: description + hint };
+    return field;
 }
 
 function argumentSlot(schema: JsonObject, shapes: ReadonlySet<string>): JsonObject {
-    if (typeof schema[REF_KIND] === 'string') return addressSlot(schema, shapes);
-    const items = object(schema.items) ? addressSlot(schema.items, shapes) : schema.items;
-    const prefix = schema.prefixItems;
-    const positions = Array.isArray(prefix) ? prefix.map(item => object(item) ? addressSlot(item, shapes) : item) : undefined;
-    const alternatives = Array.isArray(schema.anyOf) ? schema.anyOf.map(branch =>
-        object(branch) && branch.type === 'array' ? argumentSlot(branch, shapes) : branch) : undefined;
-    const field = { ...schema, ...(items === undefined ? {} : { items }),
-        ...(positions ? { prefixItems: positions } : {}), ...(alternatives ? { anyOf: alternatives } : {}) };
-    if (object(schema.items) && typeof schema.items[REF_KIND] === 'string') return field;
+    const field = wireLiterals(schema, shapes, true);
+    if (object(schema.items) && typeof schema.items[REF_KIND] === 'string' && !Object.hasOwn(schema, REF_KIND)) return field;
     return addressSlot(field, shapes);
 }
 

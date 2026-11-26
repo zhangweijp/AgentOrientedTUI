@@ -1,12 +1,11 @@
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AOTUIError, APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL, captureAppMetadata, hasViewTypeToolAuthoringProtocol, type AppMetadata } from '@aotui/core';
+import { AOTUIError, APP_LIFECYCLE_PROTOCOL, captureAppMetadata, hasViewTypeToolAuthoringProtocol, type AppMetadata } from '@aotui/core';
 
 export interface AppManifest {
     readonly metadata: AppMetadata;
     readonly modulePath: string;
-    readonly persistenceSupport: typeof STATE_SESSION_PROTOCOL | null;
 }
 
 function localTarget(localPath: string): string {
@@ -45,9 +44,6 @@ function findAppManifest(target: string): AppManifest | undefined {
                 if (!hasViewTypeToolAuthoringProtocol(manifest)) throw Object.assign(new Error('The generated manifest declares an unsupported authoring protocol; rebuild with the matching SDK'), {
                     code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', path: manifestPath + '#toolAuthoringProtocol',
                 });
-                if (Object.hasOwn(manifest, 'persistenceSupport') && manifest.persistenceSupport !== STATE_SESSION_PROTOCOL)
-                    throw new AOTUIError('PERSISTENCE_UNAVAILABLE', { path: manifestPath + '#persistenceSupport',
-                        reason: 'The App requires another persistence contract. Rebuild with the matching SDK.' });
                 location = manifestPath + '#appLifecycleSupport';
                 if (manifest.appLifecycleSupport !== APP_LIFECYCLE_PROTOCOL)
                     throw new TypeError('The generated manifest requires the current App lifecycle contract');
@@ -58,7 +54,7 @@ function findAppManifest(target: string): AppManifest | undefined {
                 if (file && target !== modulePath)
                     throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: modulePath, actual: target, path: location });
                 if (!statIfPresent(modulePath)?.isFile()) throw new TypeError('The generated entry.main file does not exist; build the App first');
-                return Object.freeze({ metadata, modulePath, persistenceSupport: manifest.persistenceSupport ?? null });
+                return Object.freeze({ metadata, modulePath });
             }
             if (!file || statIfPresent(join(directory, 'package.json')) || dirname(directory) === directory) return;
             directory = dirname(directory);
@@ -79,7 +75,7 @@ export async function readAppManifest(localPath: string): Promise<AppManifest> {
     return manifest;
 }
 
-export function resolveAppModule(modulePath: string, expected?: string): Omit<AppManifest, 'persistenceSupport'> & Partial<Pick<AppManifest, 'persistenceSupport'>> {
+export function resolveAppModule(modulePath: string, expected?: string): AppManifest {
     const target = localTarget(modulePath);
     const manifest = findAppManifest(target);
     if (manifest) {

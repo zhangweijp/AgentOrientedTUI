@@ -7,11 +7,11 @@ import { AppWorkerHost } from './worker-host.js';
 import { refKey } from '@aotui/core';
 
 /**
- * M3 real Worker + bundled REAL SDK createTUIApp + Preact hooks.
- * Task object A -> B after initial commit, while rendered DOM stays identical.
+ * M3 real Worker and bundled SDK with explicit Ref publication.
+ * Task object A -> B after initial commit, while the Markdown body stays identical.
  */
 describe('Semantic real Worker / SDK projection round trip', () => {
-    it('advances the accepted Snapshot on a Ref-only update without DOM mutation', async () => {
+    it('advances the accepted Snapshot on a Ref-only update without changing the body', async () => {
         const temporary = await mkdtemp(join(tmpdir(), 'aotui-m3-'));
         const root = resolve(process.cwd()); // runtime/
         let host: AppWorkerHost | undefined;
@@ -19,9 +19,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             // Isolated module resolution: DO NOT write into the original node_modules.
             const modules = join(temporary, 'node_modules');
             await mkdir(join(modules, '@aotui'), { recursive: true });
-            await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
             await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
-            await symlink(join(root, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
             await symlink(join(root, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
             await symlink(join(root, '../core'), join(modules, '@aotui/core'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
@@ -34,16 +32,9 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             });
             const sdkFixture = `
         import { parentPort } from 'node:worker_threads';
-                import { h } from 'preact';
                 import Type from 'typebox';
-                import { useLayoutEffect, useState } from 'preact/hooks';
-                import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
-                import { DynamicView } from './sdk/src/components/View.tsx';
-                import { useAppRuntimeContext } from './sdk/src/context/AppRuntimeContext.tsx';
-                import { useDataRef } from './sdk/src/hooks/useRef.ts';
-                import { useArrayRef } from './sdk/src/hooks/useArrayRef.ts';
+                import { createApp, createView, defineViewType, ref, arrayRef, formatRef } from './sdk/src/index.ts';
 
-                import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
                 const WorkspaceType = defineViewType()({ multiplicity: 'multiple', name: 'Workspace', tools: {
                     complete: {
                         description: 'Complete selected task', inputSchema: Type.Object({}, { additionalProperties: false }),
@@ -51,37 +42,36 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                     },
                 } });
 
-                function Content() {
-                    const appId = useAppRuntimeContext().appId;
-                    const [target, setTarget] = useState({ id: 'A' });
-                    useLayoutEffect(() => {
+                export default createApp({ viewTypes: [WorkspaceType], app_name: 'm3_integration',
+                    initialize({ appId, prepareProjection, registerCleanup }) {
+                        let target = { id: 'A' };
+                        const page = createView(WorkspaceType, { idPrefix: 'workspace', region: 'dynamic', render() {
+                            const selected = ref('selected', target, { schema: { type: 'object' }, scope: 'protected' });
+                            const pending = arrayRef('pending', [target], {
+                                schema: { type: 'array', items: { type: 'object' } }, scope: 'protected', itemType: 'Task',
+                            });
+                            return { refs: [selected, pending], body: [
+                                formatRef('Stable task label', selected), formatRef('Stable list label', pending),
+                                formatRef('Stable task label', pending, 0), 'App=' + appId,
+                            ].join('\\n'), context: {} };
+                        } });
+                        const publish = () => prepareProjection({ views: [page] });
                         const onCommand = message => {
-                    if (message.type !== 'TEST_COMMAND') return;
-                            if (message.command === 'replace-target') {
-                                setTarget({ id: message.data.id });
+                            if (message.type === 'TEST_COMMAND' && message.command === 'replace-target') {
+                                target = { id: message.data.id };
+                                publish();
                             }
                         };
                         parentPort.on('message', onCommand);
-                        return () => parentPort.off('message', onCommand);
-                    }, []);
-                    const selected = useDataRef('selected', target, { schema: { type: 'object' }, scope: 'protected' });
-                    const [listLabel, itemLabel] = useArrayRef('pending', [target], { schema: { type: 'array', items: { type: 'object' } }, scope: 'protected', itemType: 'Task' });
-                    return h('section', {}, [
-                        h('p', {key:'selected'}, selected('Stable task label')),
-                        h('p', {key:'list'}, listLabel('Stable list label')),
-                        h('p', {key:'item'}, itemLabel(0, 'Stable task label')),
-                        h('p', {key:'app-id'}, 'App=' + appId),
-                    ]);
-                }
-                function Root() {
-                    return h('div', null, h(DynamicView, { idPrefix: 'workspace', type: WorkspaceType, context: {} }, h(Content)));
-                }
-                export default createTUIApp({viewTypes:[WorkspaceType], app_name:'m3_integration',component:Root});
+                        registerCleanup({ stop() { parentPort.off('message', onCommand); } });
+                        publish();
+                    },
+                });
             `;
             await build({
                 stdin: {
                     contents: sdkFixture, resolveDir: resolve(root, '..'),
-                    sourcefile: 'm3-sdk-fixture.tsx', loader: 'tsx',
+                    sourcefile: 'm3-sdk-fixture.ts', loader: 'ts',
                 },
                 outfile: appPath, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
@@ -111,9 +101,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'replace-target', data: { id: 'B' } });
-            const opened = host.getAppInteraction();
-            if (opened.status !== 'ready') throw Error(opened.issue.code);
-            expect((await opened.interaction.preview()).status).toBe('previewed');
+            expect((await host.preview()).status).toBe('previewed');
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
                 const report = host?.getSemanticSnapshotReport();
                 expect(report?.health).toBe('ready');

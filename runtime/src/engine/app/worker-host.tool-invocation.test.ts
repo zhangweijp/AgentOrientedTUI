@@ -35,7 +35,7 @@ function scope(x: any) {
   return { client, control, authorized,
     async invoke(request: AppInvocation, timeoutMs?: number) {
       const invocationId = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value;
-      const response = await turn.invoke(x.host.appId, request, timeoutMs);
+      const response = await turn.invoke(x.host.appId, request, timeoutMs ?? x.host.timeout);
       recorded.invocations.push({ invocationId, response });
       return response;
     },
@@ -74,8 +74,7 @@ async function control(x: any, type: string, data: any = {}) { const id = ++tag,
   } finally { x.host.timeout = previousTimeout; } }
 async function change(x: any, patch: any, predicate: (draft: any) => boolean) {
   await control(x, 'state', { patch });
-  const opened = x.host.getAppInteraction();
-  expect((await opened.interaction.preview()).status).toBe('previewed');
+  expect((await x.host.preview()).status).toBe('previewed');
   expect(predicate(x.snapshot())).toBe(true);
 }
 const good = { q: '😀', e: '1', items: ['a', 'b'] };
@@ -107,8 +106,8 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     temporary = await mkdtemp(join(process.env.AOTUI_MIGRATION_TEMP_DIR ?? tmpdir(), 'aotui-w07-b2-'));
     Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
     workerFile = join(runtime, 'dist/worker-runtime/index.js');
-    await mkdir(join(temporary, 'node_modules/@aotui'), { recursive: true }); await mkdir(join(temporary, 'node_modules/@preact'), { recursive: true });
-    for (const [owner, name] of [['.', 'preact'], ['../sdk', 'linkedom'], ['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', name), join(temporary, 'node_modules', name), 'dir');
+    await mkdir(join(temporary, 'node_modules/@aotui'), { recursive: true });
+    for (const [owner, name] of [['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', name), join(temporary, 'node_modules', name), 'dir');
     await symlink(join(sdk, 'node_modules/typebox'), join(temporary, 'node_modules/typebox'), 'dir');
     await symlink(runtime, join(temporary, 'node_modules/@aotui/runtime'), 'dir');
     await symlink(resolve(runtime, '../core'), join(temporary, 'node_modules/@aotui/core'), 'dir');
@@ -118,7 +117,6 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     legacySdkAppFile = join(temporary, 'legacy-sdk-app.mjs');
     await writeFile(legacySdkAppFile, `export default {
       app_name: 'legacy_sdk',
-      persistenceSupport: 'state-session-v2',
       appLifecycleSupport: 'app-lifecycle-v2',
       initialize() { throw new Error('UNSUPPORTED_FACTORY_EXECUTED'); }
     };\n`);
@@ -150,6 +148,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     try {
       await expect(host.start()).rejects.toThrow('APP_AUTHORING_PROTOCOL_UNSUPPORTED');
       expect(host.getStatus()).toBe('closed');
+      await host.waitForResourceRelease();
       expect((host as any).worker).toBeNull();
     } finally {
       host.terminate();

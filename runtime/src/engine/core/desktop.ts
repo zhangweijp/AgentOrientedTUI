@@ -1,28 +1,27 @@
-import type { StateStorageBackend } from '@aotui/core/persistence';
 import type { ManagedApp } from '../app/managed-app.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
-import type { ActiveTurn as CoreTurn, DesktopID, AppID } from '@aotui/core';
+import type { ActiveTurn as CoreTurn, DesktopID, AppID, InstanceInteraction } from '@aotui/core';
 import type { UpdateSignal } from '../../spi/core/signals.js';
 import type { ActiveTurn, AdoptTurnResult, CreateDesktopOptions, IDesktop, AppDiscoveryInfo, OpenAppOptions, ReceiptAccess, ReceiptLocator,
     RunningApp, RunningAppResult } from '../../spi/runtime/kernel.interface.js';
-import { AOTUIError } from '@aotui/core';
+import { AOTUIError, captureAppMetadata } from '@aotui/core';
 import { SignalBus, type SignalListener } from './signal-bus.js';
 import type { AppCloseHandle, DesktopCloseHandle, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, createCloseHandle, displayCloseId, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
 import { DesktopLogger, type LogEntry } from './desktop-logger.js';
 import { AppManager } from '../app/manager.js';
 import { RUNTIME_DEFAULTS, type RuntimeConfig } from '../../spi/config/index.js';
-import { appInteractionUnavailable, type WorkerInteraction } from '../../spi/runtime/app-interaction.interface.js';
+import { appInteractionUnavailable } from '../../spi/runtime/app-interaction.interface.js';
 import type { ReceiptQuery, TurnSelection } from '@aotui/core';
 import type { AppWindowTarget, ViewWindowTarget } from '../../spi/runtime/windows.js';
 import { createTurnCoordinator } from '@aotui/core/host';
-import { appInteractionFields, captureOptions } from '../app/interaction-config.js';
+import { captureOptions, pendingAppFields } from '../app/interaction-config.js';
+import { createCandidateScope } from './candidate-scope.js';
 import { readAppManifest } from '../app/manifest.js';
 
 
 export interface DesktopOptions {
     workerCapacity?: WorkerCapacity;
-    storageBackend?: StateStorageBackend;
     policyForApp?: CreateDesktopOptions['policyForApp'];
     onResourcesReleased?: (desktop: Desktop) => void;
     /** 使用外部 AppManager (默认创建内部实例) */
@@ -42,7 +41,7 @@ export class Desktop implements IDesktop {
     private readonly appManager: AppManager;
     private readonly turns = createTurnCoordinator();
     private readonly managedTurns = new WeakMap<ActiveTurn, CoreTurn>();
-    private readonly runningApps = new WeakMap<WorkerInteraction, RunningApp>();
+    private readonly runningApps = new WeakMap<InstanceInteraction, RunningApp>();
 
     constructor(readonly id: DesktopID, options?: DesktopOptions) {
         const runtimeConfig = options?.runtimeConfig ?? RUNTIME_DEFAULTS;
@@ -50,7 +49,7 @@ export class Desktop implements IDesktop {
         this.logger = new DesktopLogger(runtimeConfig.logger.maxSystemLogs);
 
         this.appManager = options?.appManager || new AppManager(this, { workerCapacity: options?.workerCapacity,
-            runtimeConfig, storageBackend: options?.storageBackend, policyForApp: options?.policyForApp,
+            runtimeConfig, policyForApp: options?.policyForApp,
             onAppClosing: () => this.turns.eligibilityChanged() });
 
         this.logSystem('Desktop initialized.');
@@ -127,27 +126,32 @@ export class Desktop implements IDesktop {
         return this.openedApp(await this.appManager.install(appModulePath, options));
     }
 
-    /** Discover and register a local package without starting a Worker. */
+    /** Register a fixed App entry before starting its execution. */
     async registerPendingApp(options: Parameters<IDesktop['registerPendingApp']>[0]): Promise<string> {
-        const captured = captureOptions(options, { ...appInteractionFields, installationId: 'string', localPath: 'string', config: 'object' });
+        const captured = captureOptions(options, pendingAppFields);
         if (!captured?.installationId || captured.installationId.trim() !== captured.installationId)
             throw new AOTUIError('CONFIG_INVALID', { path: 'options.installationId', reason: 'Provide a stable installation key' });
-        if (!captured.localPath?.trim()) throw new AOTUIError('CONFIG_INVALID', { path: 'options.localPath', reason: 'Provide the local App path' });
         this.assertActive();
-        const config = captured.config ?? {};
-        const { metadata, modulePath, persistenceSupport } = await readAppManifest(captured.localPath);
-        return this.appManager.registerPendingApp({
-            installationId: captured.installationId,
-            name: metadata.app_name,
-            description: metadata.description,
-            whatItIs: metadata.whatItIs,
-            whenToUse: metadata.whenToUse,
-            modulePath,
-            manifestPersistence: persistenceSupport,
-            config,
-            toolsEnabled: captured.toolsEnabled,
-            projectionLimits: captured.projectionLimits,
-        });
+        const { localPath, backend, command } = captured;
+        const { installationId, config, toolsEnabled, projectionLimits } = captured;
+        const common = { installationId, config: config ?? {}, toolsEnabled, projectionLimits };
+        if (localPath !== undefined) {
+            if (!localPath.trim() || command !== undefined || captured.name !== undefined)
+                throw new AOTUIError('CONFIG_INVALID', { path: 'options.localPath', reason: 'Provide the local App path and read its metadata from the manifest' });
+            const { metadata: { app_name: name, description, whatItIs, whenToUse }, modulePath } = await readAppManifest(localPath);
+            return this.appManager.registerPendingApp({ ...common, name, description, whatItIs, whenToUse, modulePath, backend });
+        }
+        if (command !== undefined) {
+            if (backend !== undefined || !command.length || typeof command[0] !== 'string' || command[0].length === 0 ||
+                command.some(value => typeof value !== 'string' || value.includes('\0'))) {
+                throw new AOTUIError('CONFIG_INVALID', { path: 'options.command', reason: 'Provide an executable and a fixed array of arguments' });
+            }
+        } else if (backend === undefined) {
+            throw new AOTUIError('CONFIG_INVALID', { path: 'options', reason: 'Provide a local App, a command or a configured execution backend' });
+        }
+        const name = captureAppMetadata({ app_name: captured.name }).app_name;
+        return this.appManager.registerPendingApp({ ...common, name, description: captured.description,
+            whatItIs: captured.whatItIs, whenToUse: captured.whenToUse, command, backend });
     }
     // --- Lifecycle Methods ---
 
@@ -169,7 +173,7 @@ export class Desktop implements IDesktop {
         if (this.isClosing) return appInteractionUnavailable();
         const result = manager.getAppInteraction(appId, expectedInstanceId);
         if (result.status === 'rejected') return result;
-        const current = () => !this.isClosing && manager.isRunningApp(appId, expectedInstanceId);
+        const current = () => !this.isClosing && manager.isCurrentApp(appId, expectedInstanceId);
         const { interaction } = result;
         const existing = this.runningApps.get(interaction);
         if (existing) return Object.freeze({ status: 'ready', app: existing });
@@ -178,12 +182,14 @@ export class Desktop implements IDesktop {
         const desktopId = this.id;
         const app: RunningApp = Object.freeze({
             appId: appId as AppID, instanceId: expectedInstanceId,
-            observe: () => this.turns.prepareObservation(interaction, current),
-            preview: () => current() ? interaction.preview() : Promise.resolve(appInteractionUnavailable()),
+            observe: () => current()
+                ? owner.prepareObservation(client => this.turns.prepareObservation(client, current))
+                : Promise.resolve(appInteractionUnavailable()),
+            preview: () => current() ? owner.preview() : Promise.resolve(appInteractionUnavailable()),
             async readReceipt(query: ReceiptQuery, timeoutMs?: number) {
                 const unavailable = () => Object.freeze({ kind: 'unavailable' as const, ...appInteractionUnavailable().issue });
                 if (!current()) return unavailable();
-                const result = await interaction.readReceipt(query, timeoutMs);
+                const result = await interaction.readReceipt(query, timeoutMs ?? owner.timeout);
                 if (!current()) return unavailable();
                 if (result.kind !== 'receipt') return result;
                 const { observationId, invocationId } = result.receipt;
@@ -197,6 +203,8 @@ export class Desktop implements IDesktop {
         return Object.freeze({ status: 'ready', app });
     }
 
+    createCandidateScope() { return createCandidateScope(); }
+
     adoptTurn(input: TurnSelection): AdoptTurnResult {
         const result = this.turns.adoptTurn(input);
         if (result.status === 'rejected') return result;
@@ -206,7 +214,9 @@ export class Desktop implements IDesktop {
             let requestedId: unknown;
             try { requestedId = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value; }
             catch { /* Core reports a malformed invocation. */ }
-            const invoked = await turn.invoke(appId, request, timeoutMs, signal);
+            const owner = original && this.appManager.getManagedApp(appId as AppID);
+            const timeout = timeoutMs ?? (owner && owner.appInstanceId === original?.instanceId ? owner.timeout : undefined);
+            const invoked = await turn.invoke(appId, request, timeout, signal);
             if (!original || invoked.kind === 'refused') return invoked;
             const invocationId = invoked.kind === 'receipt' ? invoked.receipt.invocationId : requestedId;
             if (typeof invocationId !== 'string') return invoked;
@@ -214,7 +224,7 @@ export class Desktop implements IDesktop {
             return Object.freeze({ ...invoked, locator });
         };
         const active: ActiveTurn = Object.freeze({ invoke, get isCurrent() { return turn.isCurrent; },
-            readConsoleInputs: turn.readConsoleInputs, inspectRef: turn.inspectRef, release: turn.release });
+            readPublicRefs: turn.readPublicRefs, inspectRef: turn.inspectRef, release: turn.release });
         this.managedTurns.set(active, turn);
         return Object.freeze({ ...result, turn: active });
     }

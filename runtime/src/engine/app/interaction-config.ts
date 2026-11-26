@@ -6,6 +6,10 @@ export const appInstallFields = {
     installationId: 'string', name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string',
     config: 'object', policy: 'object', ...appInteractionFields,
 } as const;
+export const pendingAppFields = {
+    ...appInteractionFields, installationId: 'string', localPath: 'string', command: 'array', backend: 'string',
+    name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string', config: 'object',
+} as const;
 
 function isRecord(value: unknown): boolean {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -50,7 +54,7 @@ function captureLaunchConfig(value: object, path: string): object {
 /** Validate and capture Host options before allocating or transferring ownership. */
 export function captureOptions<T extends object>(
     options: T | undefined,
-    fields: Readonly<Record<string, 'boolean' | 'string' | 'object' | 'function'>>,
+    fields: Readonly<Record<string, 'boolean' | 'string' | 'object' | 'function' | 'array'>>,
     path = 'options',
 ): T | undefined {
     if (options === undefined) return undefined;
@@ -65,13 +69,14 @@ export function captureOptions<T extends object>(
         const descriptor = descriptors[key]!;
         const expected = fields[key];
         if (!descriptor.enumerable || !('value' in descriptor) || (descriptor.value !== undefined &&
-            (expected === 'object' ? !isRecord(descriptor.value) : typeof descriptor.value !== expected))) {
+            (expected === 'object' ? !isRecord(descriptor.value)
+                : expected === 'array' ? !Array.isArray(descriptor.value) : typeof descriptor.value !== expected))) {
             if (key === 'toolsEnabled') throw invalidToolsEnabled();
             throw new AOTUIError('CONFIG_INVALID', { path: fieldPath, reason: `Expected an enumerable ${expected} data property` });
         }
         const value = descriptor.value;
         captured[key] = key === 'projectionLimits' ? captureLimits(value, fieldPath)
-            : key === 'config' && value !== undefined ? captureLaunchConfig(value, fieldPath) : value;
+            : (key === 'config' || key === 'command') && value !== undefined ? captureLaunchConfig(value, fieldPath) : value;
     }
     return captured as T;
 }

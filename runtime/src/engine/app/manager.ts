@@ -1,10 +1,8 @@
-import type { StateStorageBackend } from '@aotui/core/persistence';
 import type { AppID, DesktopID } from '@aotui/core';
 import type { AppDiscoveryInfo, CreateDesktopOptions, RunningApp } from '../../spi/runtime/kernel.interface.js';
 import { createAppId } from '../../spi/core/id-factory.js';
 import { closeError } from '../core/close-handle.js';
 import { ManagedApp } from './managed-app.js';
-import type { AppManifest } from './manifest.js';
 import { WorkerCapacity } from './worker-capacity.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
@@ -14,6 +12,8 @@ import { appInstallFields, captureOptions, capturePolicy, captureProjectionLimit
 import type { ProjectionLimits } from '@aotui/core';
 import { resolveAppModule } from './manifest.js';
 import type { UpdateSignal } from '../../spi/core/signals.js';
+import type { AppExecutionBackend } from '../../spi/runtime/execution-backend.js';
+import { localCommandBackend } from '../../adapters/local-command-backend.js';
 
 /**
  * 已安装的 App 信息
@@ -38,8 +38,9 @@ interface InstalledApp extends AppInteractionOptions {
     status: AppDiscoveryInfo['status'];
 
     /** [RFC-014] 懒加载: 模块路径 */
-    modulePath: string;
-    manifestPersistence?: AppManifest['persistenceSupport'];
+    readonly modulePath?: string;
+    readonly command?: readonly string[];
+    readonly backend?: AppExecutionBackend;
 
     /** [RFC-025] Reopen 时复用的启动配置 */
     config?: import('@aotui/core').AppLaunchConfig;
@@ -49,7 +50,6 @@ interface InstalledApp extends AppInteractionOptions {
 export interface AppManagerOptions {
     runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
     workerCapacity?: WorkerCapacity;
-    storageBackend?: StateStorageBackend;
     policyForApp?: CreateDesktopOptions['policyForApp'];
     onAppClosing?: () => void;
 }
@@ -62,7 +62,7 @@ interface IDesktopInternal {
     logSystem(message: string, level?: 'info' | 'warn' | 'error'): void;
 }
 
-type InstallOptions = Omit<PendingOptions, 'modulePath' | 'manifestPersistence' | 'name'> & { name?: string; policy?: AppInteractionPolicy };
+type InstallOptions = Omit<PendingOptions, 'modulePath' | 'name' | 'backend' | 'command'> & { name?: string; policy?: AppInteractionPolicy };
 type StartedApp = Pick<RunningApp, 'appId' | 'instanceId'>;
 type PendingOptions = AppInteractionOptions & {
         installationId?: string;
@@ -70,8 +70,9 @@ type PendingOptions = AppInteractionOptions & {
         description?: string;
         whatItIs?: string;
         whenToUse?: string;
-        modulePath: string;
-        manifestPersistence?: AppManifest['persistenceSupport'];
+        modulePath?: string;
+        command?: readonly string[];
+        backend?: string;
         config?: import('@aotui/core').AppLaunchConfig;
     };
 /** Owns the installation directory and live App objects for a Desktop. */
@@ -144,8 +145,8 @@ export class AppManager {
             this.capacity();
             const captured = captureOptions(options, appInstallFields);
             policy = capturePolicy(captured?.policy);
-            const { metadata, modulePath, persistenceSupport } = resolveAppModule(appModulePath, captured?.name);
-            meta = this.registration({ ...captured, name: metadata.app_name, modulePath, manifestPersistence: persistenceSupport,
+            const { metadata, modulePath } = resolveAppModule(appModulePath, captured?.name);
+            meta = this.registration({ ...captured, name: metadata.app_name, modulePath,
                 description: captured?.description ?? metadata.description,
                 whatItIs: captured?.whatItIs ?? metadata.whatItIs, whenToUse: captured?.whenToUse ?? metadata.whenToUse });
         } catch (error) { return Promise.reject(error); }
@@ -177,14 +178,11 @@ export class AppManager {
         }
         try {
             this.current(meta);
-            const config = {
-                ...meta.config,
-                AOTUI_APP_KEY: meta.config?.AOTUI_APP_KEY ?? meta.installationId,
-            };
             const app = new ManagedApp({ appId: id, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath,
-                config, manifestPersistence: meta.manifestPersistence,
+                installationId: meta.installationId, backend: meta.backend, command: meta.command,
+                ...(meta.config === undefined ? {} : { config: meta.config }),
                 runtimeConfig: this.options.runtimeConfig, workerCapacity: this.workerCapacity,
-                toolsEnabled: meta.toolsEnabled, projectionLimits: meta.projectionLimits, persistenceBackend: this.options.storageBackend, policy },
+                toolsEnabled: meta.toolsEnabled, projectionLimits: meta.projectionLimits, policy },
             () => {
                 if (this.workers.get(id) !== app) return;
                 const wasRunning = meta.status === 'running';
@@ -214,7 +212,10 @@ export class AppManager {
             const failure = Object.defineProperty(closeError('INSTALL_FAILED'), 'cause', { value: error });
             if (worker) {
                 const handle = worker.closeFailedStartup();
-                try { Object.defineProperty(failure, 'closeReport', { value: await handle.completion }); }
+                try {
+                    const { report } = await handle.wait({ timeoutMs: worker.timeout });
+                    Object.defineProperty(failure, 'closeReport', { value: report });
+                }
                 catch (cleanupError) { Object.defineProperty(failure, 'cleanupError', { value: cleanupError }); }
             } else this.releaseRun(meta, id);
             throw failure;
@@ -227,8 +228,15 @@ export class AppManager {
         const installationId = options.installationId ?? this.allocateInstallationId();
         if (!installationId.length || installationId !== installationId.trim()) throw closeError('INSTALL_FAILED');
         if (this.installedApps.has(installationId) || this.appTasks.has(installationId)) throw closeError('APP_ALREADY_EXISTS');
+        const registry = this.options.runtimeConfig?.executionBackends;
+        const backend = options.command !== undefined ? localCommandBackend
+            : options.backend !== undefined && registry && Object.hasOwn(registry, options.backend) ? registry[options.backend] : undefined;
+        if (options.backend !== undefined && !backend) {
+            throw Object.assign(new Error('Execution backend is unavailable: ' + options.backend),
+                { code: 'EXECUTION_BACKEND_UNAVAILABLE', path: 'options.backend' });
+        }
         return { installationId, name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
-            status: 'pending', modulePath: options.modulePath, manifestPersistence: options.manifestPersistence,
+            status: 'pending', modulePath: options.modulePath, command: options.command, backend,
             config: options.config,
             toolsEnabled, projectionLimits };
     }
@@ -283,10 +291,9 @@ export class AppManager {
         });
     }
     getManagedApp(id: AppID): ManagedApp | undefined { return this.workers.get(id); }
-    isRunningApp(appId: string, instanceId: string): boolean {
+    isCurrentApp(appId: string, instanceId: string): boolean {
         const id = appId as AppID, worker = this.workers.get(id);
-        return this.accepting && this.runs.get(id)?.status === 'running' && worker?.status === 'running' &&
-            worker.appInstanceId === instanceId && !worker?.isClosing;
+        return this.accepting && this.runs.get(id)?.status === 'running' && worker?.appInstanceId === instanceId && !worker.isClosing;
     }
     getAppInteraction(appId: string, expectedInstanceId: string): AppInteractionResult {
         const id = appId as AppID;

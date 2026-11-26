@@ -85,7 +85,7 @@ describe('App installation directory', () => {
             expect(startSpy).toHaveBeenCalledTimes(1);
             expect(launchConfig(manager, appId)).toMatchObject({
                 appId, name: 'lazy_app', appModulePath: '/path/to/module',
-                config: { projectPath: '/repo', AOTUI_APP_KEY: installationId },
+                config: { projectPath: '/repo' },
             });
             expect(manager.listApps()[0]).toMatchObject({ installationId, status: 'running', whatItIs: 'IDE', whenToUse: 'Use for code' });
 

@@ -5,6 +5,7 @@
 
 import type { WorkerConfig } from './domains/worker.config.js';
 import type { LoggerConfig } from './domains/logger.config.js';
+import type { AppExecutionBackend } from '../runtime/execution-backend.js';
 
 /**
  * 完整运行时配置（所有字段必填）
@@ -14,6 +15,7 @@ import type { LoggerConfig } from './domains/logger.config.js';
 export interface RuntimeConfig {
     readonly worker: WorkerConfig;
     readonly logger: LoggerConfig;
+    readonly executionBackends?: Readonly<Record<string, AppExecutionBackend>>;
 }
 
 /**
@@ -21,7 +23,7 @@ export interface RuntimeConfig {
  * 
  * 使用 DeepPartial 允许嵌套部分覆盖。
  */
-export type RuntimeConfigInput = DeepPartial<RuntimeConfig>;
+export type RuntimeConfigInput = DeepPartial<Omit<RuntimeConfig, 'executionBackends'>> & Pick<RuntimeConfig, 'executionBackends'>;
 
 /**
  * DeepPartial 工具类型

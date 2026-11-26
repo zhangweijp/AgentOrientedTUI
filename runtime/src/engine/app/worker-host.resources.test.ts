@@ -4,13 +4,8 @@ import { AppWorkerHost } from './worker-host.js';
 import { WorkerCapacity } from './worker-capacity.js';
 class ControlledWorker extends EventEmitter {
     threadId = 1;sent: any[] = [];termination: () => Promise<number> = () => Promise.resolve(0);terminations = 0;
-    pendingCloseResponse: any;
     postMessage(message: any) {
         this.sent.push(message);
-        if (message.type === 'STATE_STORAGE_RESPONSE' && this.pendingCloseResponse) {
-            const response = this.pendingCloseResponse;this.pendingCloseResponse = undefined;
-            queueMicrotask(() => this.emit('message', response));return;
-        }
         queueMicrotask(() => {
             const init = message.type === 'INIT';
             const initMessage = this.sent.find(item => item.type === 'INIT');
@@ -19,23 +14,11 @@ class ControlledWorker extends EventEmitter {
                 requestId: message.requestId, success: true };
             if (init) Object.assign(response, { appInstanceId: instanceId, protocol: message.protocol, toolsEnabled: message.toolsEnabled,
                 projectionLimits: message.projectionLimits,
-                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId },
-                persistence: { protocol: 'state-session-v2', version: 2, instanceId } });
+                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId } });
             if (['APP_STOP', 'APP_CLOSE'].includes(message.type)) Object.assign(response, {
                 appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
                     state: message.type === 'APP_CLOSE' ? 'completed' : 'stopped', issues: [] },
             });
-            if (message.type === 'APP_CLOSE') Object.assign(response, {
-                persistence: { protocol: 'state-session-v2', instanceId, ok: message.type === 'APP_CLOSE',
-                    unmount: message.type === 'APP_CLOSE' ? 'completed' : 'pending',
-                    flush: { status: 'completed', ok: true, entries: [] },
-                    ...(message.type === 'APP_CLOSE' ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) },
-            });
-            if (message.type === 'APP_CLOSE') {
-                this.pendingCloseResponse = response;
-                this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2, instanceId, sequence: 1, action: 'release' });
-                return;
-            }
             this.emit('message', response);
         });
     }

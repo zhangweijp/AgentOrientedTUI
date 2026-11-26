@@ -1,6 +1,5 @@
 import type { AppLifecycleAck } from '../../adapters/app-lifecycle-protocol.js';
 import type { AppCleanupReport } from '../runtime/app-lifecycle.interface.js';
-import type { StatePersistenceAck, StateStorageRequest, StateStorageResponse, ManagedPersistenceReport } from '../../adapters/storage/state-storage-protocol.js';
 /**
  * Worker Protocol - Message Definitions
  * 
@@ -21,7 +20,7 @@ import type { StatePersistenceAck, StateStorageRequest, StateStorageResponse, Ma
  */
 
 import type { WORKER_PROTOCOL, RequestID, AppID, DesktopID } from './types.js';
-import type { AppLaunchConfig, STATE_SESSION_PROTOCOL } from '@aotui/core';
+import type { AppLaunchConfig } from '@aotui/core';
 import type { JsonValue, ViewToolReceiver } from '@aotui/core';
 import type { SnapshotDraftEnvelope, SnapshotPrepareIssue } from '@aotui/core/producer';
 import type { ProjectionLimits } from '@aotui/core';
@@ -37,8 +36,6 @@ import type { UpdateSignal } from '../core/signals.js';
  */
 export interface InitMessage {
     type: 'INIT';
-    /** Absent for a bare module. Null means its manifest does not request storage. */
-    manifestPersistence?: typeof STATE_SESSION_PROTOCOL | null;
     timeoutMs: number;
     appLifecycle: AppLifecycleAck;
     projectionLimits: ProjectionLimits;
@@ -93,7 +90,6 @@ export type MainToWorkerMessage =
     | Readonly<{ type: 'FLUSH_PROJECTION'; requestId: RequestID; known?: SnapshotDraftEnvelope }>
     | ViewToolInvokeMessage
     | ViewCloseMessage
-    | StateStorageResponse
     | InitMessage
     | AppLifecycleMessage;
 
@@ -131,8 +127,6 @@ export interface ResponseBase {
  */
 export interface InitResponse extends ResponseBase {
     type: 'INIT_RESPONSE';
-    /** Sent only after the App requests managed persistence. */
-    persistence?: StatePersistenceAck;
     appLifecycle: AppLifecycleAck;
     projectionLimits: ProjectionLimits;
     protocol: typeof WORKER_PROTOCOL;
@@ -145,7 +139,6 @@ export interface InitResponse extends ResponseBase {
  */
 export interface LifecycleResponse extends ResponseBase {
     type: 'LIFECYCLE_RESPONSE';
-    persistence?: ManagedPersistenceReport;
     appCleanup?: AppCleanupReport;
     error?: WorkerError;
 }
@@ -190,7 +183,6 @@ export type ProjectionCurrentMessage = SnapshotDraftEnvelope & Readonly<{ type: 
  * Worker → 主线程消息联合类型
  */
 export type WorkerToMainMessage =
-    | StateStorageRequest
     | ViewToolInvokeResponse
     | InitResponse
     | LifecycleResponse

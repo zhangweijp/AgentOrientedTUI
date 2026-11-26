@@ -19,15 +19,22 @@ export class ManagedApp {
 
     get appId() { return this.host.appId; }
     get appInstanceId() { return this.host.appInstanceId; }
+    get timeout() { return this.host.timeout; }
     get status() { return this.host.getStatus(); }
     get isClosing() { return !!this.closeHandle; }
     get windowActions() { return !this.closeHandle && this.status === 'running' ? this.host : undefined; }
 
     getAppInteraction(expectedInstanceId: string) {
-        if (this.closeHandle || this.status !== 'running') return appInteractionUnavailable();
+        if (this.closeHandle) return appInteractionUnavailable();
         if (this.appInstanceId !== expectedInstanceId) return appInteractionUnavailable('APP_INSTANCE_MISMATCH');
         return this.host.getAppInteraction();
     }
+
+    prepareObservation(prepare: Parameters<AppWorkerHost['prepareObservation']>[0]) {
+        return this.host.prepareObservation(prepare);
+    }
+
+    preview() { return this.host.preview(); }
 
     async start(): Promise<void> {
         await this.host.start();
@@ -52,11 +59,11 @@ export class ManagedApp {
             if (closing) try { await closing; }
             catch (error) {
                 const code = (error as { code?: string })?.code;
-                this.issues.add(code === 'APP_CLOSE_DEADLINE_EXCEEDED' || code === 'PERSISTENCE_CLOSE_FAILED' || code === 'APP_UNMOUNT_FAILED'
+                this.issues.add(code === 'APP_CLOSE_DEADLINE_EXCEEDED' || code === 'APP_UNMOUNT_FAILED'
                     ? code : 'APP_CLOSE_FAILED');
             }
             try {
-                const resource = await (previous ? this.host.retryResourceRelease() : this.host.waitForResourceRelease());
+                const resource = await this.host.waitForReleaseAttempt();
                 if (!resource.resourcesReleased) this.issues.add('RESOURCE_RELEASE_FAILED');
             } catch { this.issues.add('RESOURCE_RELEASE_FAILED'); }
             this.settled = true;
@@ -72,7 +79,7 @@ export class ManagedApp {
         if (!previous) {
             closing = this.host.close();
             this.onClosing();
-        }
+        } else this.host.retryRelease();
         return this.closeHandle;
     }
 

@@ -16,9 +16,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
         try {
             const modules = join(temporary, 'node_modules');
             await mkdir(join(modules, '@aotui'), { recursive: true });
-            await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
             await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
-            await symlink(join(root, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
             await symlink(join(root, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
             await symlink(join(root, '../core'), join(modules, '@aotui/core'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
@@ -28,10 +26,8 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
             });
             const fixture = `
-                import { h } from 'preact';
                 import Type from 'typebox';
-                import { createTUIApp, defineViewType } from './sdk/src/index.ts';
-                import { StaticView } from './sdk/src/components/View.tsx';
+                import { createApp, createView, defineViewType } from './sdk/src/index.ts';
 
 
 
@@ -54,15 +50,18 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                     },
                 } });
 
-                function App() {
-                    return h('div', null, h(StaticView, { idPrefix: 'root', type: FileDetail, context: {} }, 'Tool receipts'));
-                }
-                export default createTUIApp({viewTypes:[FileDetail], app_name:'test_result',component:App});
+                export default createApp({ viewTypes: [FileDetail], app_name: 'test_result',
+                    initialize({ prepareProjection }) {
+                        const page = createView(FileDetail, { idPrefix: 'root', region: 'static',
+                            render: () => ({ body: 'Tool receipts', context: {} }) });
+                        prepareProjection({ views: [page] });
+                    },
+                });
             `;
             await build({
                 stdin: {
                     contents: fixture, resolveDir: resolve(root, '..'),
-                    sourcefile: 'p0-result-fixture.tsx', loader: 'tsx',
+                    sourcefile: 'p0-result-fixture.ts', loader: 'ts',
                 },
                 outfile: appFile, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',

@@ -1,9 +1,7 @@
 // Private execution fixture: echoed values are test witnesses, not a public App authoring example.
-import { h } from 'preact';
-import { useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 import Type from 'typebox';
-import { createTUIApp, DynamicView, useDataRef, useArrayRef, defineViewType, refParam } from '@aotui/sdk';
+import { createApp, createView, defineViewType, ref as publishRef, arrayRef, formatRef, refParam } from '@aotui/sdk';
 
 const SENTINEL = 'W03_B_SDK_PRIVATE_b6143_秘密';
 let calls = 0, handlerEntries = 0, guards = 0;
@@ -27,56 +25,67 @@ const FileType = defineViewType()({ multiplicity: 'multiple', name:'File', tools
         ...Array.from({ length: 20 }, (_, i) => ['界😀'.repeat(80) + i, Type.Number()])])),
 } });
 const labelFor = owner => owner === 'aa' ? 'alpha' : 'beta';
-function Marker({ owner, text }) {
-    const label = labelFor(owner);
-    const reference = useDataRef(label, { owner, text, secret: SENTINEL, nested: { items: [1, false, null] } }, { schema: Type.Object({}), scope: 'protected', refType: 'Data' });
-    const [array] = useArrayRef('array_' + label, [], { schema: Type.Array(Type.Object({})), scope: 'protected', itemType: 'Data' });
-    // Payload.type deliberately says File while actual metadata remains Data.
-    const metadata = useDataRef('metadata_' + label, { type: 'File', owner, revision: 1 }, { schema: Type.Object({}), scope: 'protected', refType: 'Data' });
-    return h('p', {}, [reference('Stable file'), array('Array'), metadata('Metadata')]);
-}
-function ForeignMarker() { return h('p', {}, useDataRef('private_beta', { owner: 'bb' }, { schema: Type.Object({}), scope: 'protected', refType: 'Data' })('Foreign')); }
-function Content({ owner, state }) {
-    return h('section', {}, [state.showRef ? h(Marker, { owner, text: state.text, key: 'ref' }) : null,
-        owner === 'bb' ? h(ForeignMarker, { key: 'foreign' }) : null, h('p', { key: 'revision' }, 'Revision ' + state.revision)]);
-}
-function Root() {
-    const initial = () => ({ text: 'A', showRef: true, enabled: true, revision: 1 });
-    const [state, set] = useState({ aa: initial(), bb: initial(), toolEnabled: true });
-    useLayoutEffect(() => {
+const schema = Type.Object({});
+const scalar = { schema, scope: 'protected', refType: 'Data' };
+const array = { schema: Type.Array(schema), scope: 'protected', itemType: 'Data' };
+
+export default createApp({
+    app_name: 'ref_sdk_fixture', viewTypes: [FileType],
+    initialize({ prepareProjection, registerCleanup }) {
+        const initial = () => ({ text: 'A', showRef: true, enabled: true, revision: 1 });
+        let state = { aa: initial(), bb: initial(), toolEnabled: true };
+        function execute(receiver, name, args) {
+            parentPort.postMessage({ type: 'TEST_HANDLER_ENTRY', name, receiver, entries: ++handlerEntries });
+            const owner = args.file.owner, current = state[owner];
+            if (!current || !current.enabled) { guards++; parentPort.postMessage({ type: 'TEST_APP_GUARD', owner, guards });
+                return { success: false, error: { code: 'VIEW_NOT_OPEN', message: 'The fixture object is unavailable.' } }; }
+            calls++;
+            if (name !== 'read') return { success: true };
+            parentPort.postMessage({ type: 'TEST_READ_HANDLER_ENTERED', owner, calls });
+            if (args.mode === 'throw') throw new Error(SENTINEL);
+            if (args.mode === 'reject') return Promise.reject({ get message() { throw new Error(SENTINEL); }, toString() { throw new Error(SENTINEL); } });
+            if (args.mode === 'false') return { success: false, error: { code: 'E_INVALID_ARGS', message: 'Business rejected' }, data: { calls } };
+            if (args.mode === 'non-json') return { success: true, data: { private: undefined } };
+            if (args.mode === 'invalid-result') return { success: 'invalid' };
+            if (args.mode === 'oversize') return { success: true, data: { text: 'x'.repeat(525000) } };
+            if (args.mode === 'barrier') { parentPort.postMessage({ type: 'TEST_HANDLER_ENTERED', calls });
+                return new Promise(resolve => { releaseHandler = () => resolve({ success: true, data: { calls } }); }); }
+            return { success: true, data: { owner, args, calls, revision: current.revision } };
+        }
+        const makeFile = owner => createView(FileType, { idPrefix: owner, region: 'dynamic', render() {
+            const current = state[owner], label = labelFor(owner);
+            const refs = [], body = [];
+            if (current.showRef) {
+                const value = publishRef(label, {
+                    owner, text: current.text, secret: SENTINEL, nested: { items: [1, false, null] },
+                }, scalar);
+                const items = arrayRef('array_' + label, [], array);
+                // Payload.type deliberately says File while metadata remains Data.
+                const metadata = publishRef('metadata_' + label, { type: 'File', owner, revision: 1 }, scalar);
+                refs.push(value, items, metadata);
+                body.push(formatRef('Stable file', value), formatRef('Array', items), formatRef('Metadata', metadata));
+            }
+            if (owner === 'bb') {
+                const foreign = publishRef('private_beta', { owner: 'bb' }, scalar);
+                refs.push(foreign);
+                body.push(formatRef('Foreign', foreign));
+            }
+            body.push('Revision ' + current.revision);
+            return { body: body.join('\n\n'), refs, context: { receiver: owner, execute, toolEnabled: state.toolEnabled } };
+        } });
+        const views = [makeFile('aa'), makeFile('bb')];
         const receive = message => {
             if (message.type !== 'TEST_COMMAND') return;
             const { command: type, viewId, data } = message;
-            if (type === 'configure') set(previous => ({ ...previous,
-                ...(typeof data.toolEnabled === 'boolean' ? { toolEnabled: data.toolEnabled } : {}),
-                [viewId]: { ...previous[viewId], ...data } }));
+            if (type === 'configure') {
+                state = { ...state, ...(typeof data.toolEnabled === 'boolean' ? { toolEnabled: data.toolEnabled } : {}),
+                    [viewId]: { ...state[viewId], ...data } };
+                prepareProjection({ views });
+            }
             if (type === 'release-handler') releaseHandler?.();
         };
         parentPort.on('message', receive);
-        return () => parentPort.off('message', receive);
-    }, []);
-    function execute(receiver, name, args) {
-        parentPort.postMessage({ type: 'TEST_HANDLER_ENTRY', name, receiver, entries: ++handlerEntries });
-        const owner = args.file.owner, current = state[owner];
-        if (!current || !current.enabled) { guards++; parentPort.postMessage({ type: 'TEST_APP_GUARD', owner, guards });
-            return { success: false, error: { code: 'VIEW_NOT_OPEN', message: 'The fixture object is unavailable.' } }; }
-        calls++;
-        if (name !== 'read') return { success: true };
-        parentPort.postMessage({ type: 'TEST_READ_HANDLER_ENTERED', owner, calls });
-        if (args.mode === 'throw') throw new Error(SENTINEL);
-        if (args.mode === 'reject') return Promise.reject({ get message() { throw new Error(SENTINEL); }, toString() { throw new Error(SENTINEL); } });
-        if (args.mode === 'false') return { success: false, error: { code: 'E_INVALID_ARGS', message: 'Business rejected' }, data: { calls } };
-        if (args.mode === 'non-json') return { success: true, data: { private: undefined } };
-        if (args.mode === 'invalid-result') return { success: 'invalid' };
-        if (args.mode === 'oversize') return { success: true, data: { text: 'x'.repeat(525000) } };
-        if (args.mode === 'barrier') { parentPort.postMessage({ type: 'TEST_HANDLER_ENTERED', calls });
-            return new Promise(resolve => { releaseHandler = () => resolve({ success: true, data: { calls } }); }); }
-        return { success: true, data: { owner, args, calls, revision: current.revision } };
-    }
-    const context = receiver => ({ receiver, execute, toolEnabled: state.toolEnabled });
-    return h('main', {}, [
-        h(DynamicView, {idPrefix: 'aa', type: FileType, key: 'aa', context: context('aa') }, h(Content, { owner: 'aa', state: state.aa })),
-        h(DynamicView, {idPrefix: 'bb', type: FileType, key: 'bb', context: context('bb') }, h(Content, { owner: 'bb', state: state.bb })),
-    ]);
-}
-export default createTUIApp({ app_name: 'ref_sdk_fixture', component: Root, viewTypes:[FileType] });
+        registerCleanup({ stop() { parentPort.off('message', receive); } });
+        prepareProjection({ views });
+    },
+});

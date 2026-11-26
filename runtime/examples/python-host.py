@@ -2,27 +2,67 @@
 
 import argparse
 import json
-import re
 import subprocess
+import warnings
+from concurrent.futures import Future
+from contextlib import contextmanager
 from pathlib import Path
+from queue import Queue
 from tempfile import TemporaryDirectory
-from xml.sax.saxutils import escape, quoteattr
+from threading import Lock, Thread
+
+
+class ProtocolError(RuntimeError):
+    def __init__(self, reply):
+        super().__init__(reply)
+        self.reply = reply
+        self.code = reply["error"]["code"]
 
 
 class RuntimeClient:
-    def __init__(self, executable):
+    def __init__(self, executable, *, protocol="aotui-stdio", major_version=1, required=(), optional=()):
+        required = tuple(required)
         self.process = subprocess.Popen([executable], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         text=True, encoding="utf-8")
         self.request_id = 0
         self.current_turn = None
+        self._lock = Lock()
+        self._pending = {}
+        self._events = Queue()
+        self._failure = None
+        self._closing = False
+        self._reader = Thread(target=self._read, daemon=True)
+        self._reader.start()
+        try:
+            hello = self.call("initialize", protocol=protocol, majorVersion=major_version,
+                              capabilities={"required": list(required), "optional": list(optional)})
+            if hello["protocol"] != protocol or hello["majorVersion"] != major_version:
+                raise RuntimeError(f"Unexpected Runtime handshake {hello!r}")
+            self.capabilities = frozenset(hello["capabilities"])
+            if not self.capabilities.issuperset(required):
+                raise RuntimeError(f"Runtime omitted required capabilities {set(required) - self.capabilities!r}")
+        except BaseException as error:
+            self.__exit__(type(error), error, error.__traceback__)
+            raise
 
     def __enter__(self):
         return self
 
     def __exit__(self, _exception_type, error, _traceback):
         try:
-            self.process.stdin.close()
-            status = self.process.wait(timeout=15)
+            with self._lock:
+                self._closing = True
+                self.process.stdin.close()
+            try:
+                status = self.process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
+                raise
             if status:
                 raise RuntimeError(f"Runtime exited with status {status}")
         except Exception as cleanup_error:
@@ -30,123 +70,155 @@ class RuntimeClient:
                 raise
             error.add_note(f"Runtime cleanup also failed: {cleanup_error}")
         finally:
+            self._reader.join()
             self.process.stdout.close()
 
     def call(self, method, **params):
-        self.request_id += 1
-        request_id = self.request_id
-        self.process.stdin.write(json.dumps({"id": request_id, "method": method, "params": params}) + "\n")
-        self.process.stdin.flush()
-        reply = json.loads(self.process.stdout.readline())
-        if reply["id"] != request_id or "error" in reply:
-            raise RuntimeError(reply)
-        result = reply["result"]
-        if method == "adoptTurn" and result["status"] == "adopted":
-            self.current_turn = result["turn"]
-        elif method in ("releaseTurn", "shutdown"):
-            self.current_turn = None
-        return result
+        return self.send(method, **params).result()
+
+    def send(self, method, **params):
+        future = Future()
+        future.set_running_or_notify_cancel()
+        with self._lock:
+            if self._failure is not None:
+                raise self._failure
+            if self._closing:
+                raise RuntimeError("Runtime connection is closing")
+            self.request_id += 1
+            request_id = self.request_id
+            line = json.dumps({"id": request_id, "method": method, "params": params}) + "\n"
+            self._pending[request_id] = method, future
+            try:
+                self.process.stdin.write(line)
+                self.process.stdin.flush()
+            except Exception:
+                self._pending.pop(request_id, None)
+                raise
+        return future
+
+    def next_event(self, timeout=None):
+        event = self._events.get(timeout=timeout)
+        if isinstance(event, Exception):
+            self._events.put(event)
+            raise event
+        return event
+
+    def _read(self):
+        failure = RuntimeError("Runtime connection closed")
+        try:
+            for line in self.process.stdout:
+                reply = json.loads(line)
+                if "event" in reply and "id" not in reply:
+                    self._events.put(reply)
+                    continue
+                request_id = reply["id"]
+                with self._lock:
+                    if type(request_id) is not int or request_id not in self._pending:
+                        raise RuntimeError(f"Unexpected Runtime reply {reply!r}")
+                    method, future = self._pending[request_id]
+                    if "error" not in reply:
+                        result = reply["result"]
+                        if method == "adoptTurn" and result["status"] == "adopted":
+                            self.current_turn = result["turn"]
+                        elif method in ("releaseTurn", "shutdown"):
+                            self.current_turn = None
+                    del self._pending[request_id]
+                if "error" in reply:
+                    future.set_exception(ProtocolError(reply))
+                else:
+                    future.set_result(result)
+        except Exception as error:
+            failure = error
+        finally:
+            with self._lock:
+                self._failure = failure
+                self.current_turn = None
+                pending, self._pending = self._pending, {}
+            for _, future in pending.values():
+                future.set_exception(failure)
+            self._events.put(failure)
 
 
 def view_key(view):
     return view["id"], view["viewInstanceId"]
 
 
-def collapsed_text(note):
-    return "Window collapsed." + (f"\n\nNote: {note}" if note else "")
+@contextmanager
+def candidate_scope(client):
+    scope_id = client.call("beginCandidateScope")["scopeId"]
+    try:
+        yield scope_id
+    except BaseException as error:
+        try:
+            issues = client.call("discardScope", scopeId=scope_id)["cleanupIssues"]
+            if issues:
+                error.add_note(f"Candidate cleanup also failed: {issues}")
+        except Exception as cleanup_error:
+            error.add_note(f"Candidate cleanup also failed: {cleanup_error}")
+        raise
+    else:
+        issues = client.call("discardScope", scopeId=scope_id)["cleanupIssues"]
+        if issues:
+            warnings.warn(f"Candidate cleanup reported: {issues}", stacklevel=2)
 
 
 def prepare_turn(client, app, *, budget_hints=()):
-    prepared = client.call("observe", app=app["app"])
-    if prepared["status"] != "prepared":
-        raise RuntimeError(prepared)
-    observation = prepared["observation"]
-    views = observation["views"]
-    folded = app.setdefault("folded", {})
-    mounts = {view_key(view) for view in views}
-    for key in list(folded):
-        if key is not None and key not in mounts:
-            del folded[key]
-    expanded = [] if None in folded else [view for view in views if view_key(view) not in folded]
-    complete = [view for view in expanded if view["id"] not in budget_hints]
-
-    def identities(selected):
-        return [{"viewId": view["id"], "viewInstanceId": view["viewInstanceId"]} for view in selected]
-
-    windows = {"receiverViews": identities(expanded), "refViews": identities(complete)}
-    messages = []
-    if None in folded:
-        content = escape(app["appId"] + " " + collapsed_text(folded[None]))
-        messages.append({"role": "user", "content": f"<desktop>\n{content}\n</desktop>"})
-    complete_ids = {view["id"] for view in complete}
-    for view in views if None not in folded else []:
-        attrs = {"view_id": view["id"], "view_type": view["type"],
-                 "app_id": app["appId"], "app_name": app["name"]}
-        opening = " ".join(f"{key}={quoteattr(value)}" for key, value in attrs.items())
-        key = view_key(view)
-        if key in folded:
-            body = collapsed_text(folded[key])
-        elif view["id"] not in complete_ids:
-            body = "Context budget: the body is omitted. Available tools may still operate on this View."
-        else:
-            body = view["content"]["value"]
-            refs = []
-            for ref in observation["refs"]:
-                if ref["viewId"] == view["id"] and ref["viewInstanceId"] == view["viewInstanceId"]:
-                    ref_id = ref["refId"]
-                    suffix = "." + ref_id if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", ref_id) else "[" + json.dumps(ref_id) + "]"
-                    label = ref["refType"] + ("[]" if ref.get("array") else "")
-                    refs.append(f"- {ref['scope']} $ref.{app['appId']}.{view['id']}{suffix} ({label})")
-            if refs:
-                body += "\n\nAvailable references\n" + "\n".join(refs)
-        messages.append({"role": "user", "content": f"<view {opening}>\n{escape(body)}\n</view>"})
-    controls = []
-    if any(ref["viewId"] in complete_ids for ref in observation["refs"]):
-        controls.append({"name": "system-inspect_ref", "description": "Inspect a visible Ref’s schema or its public value.",
-                      "schema": {"type": "object", "required": ["address", "mode"], "additionalProperties": False,
-                                 "properties": {"address": {"type": "string"}, "mode": {"type": "string", "enum": ["schema", "value"]}}}})
-    actions = (
-        ("system-collapse_app", "Collapse this App and optionally leave a note.", None not in folded),
-        ("system-expand_app", "Expand this App on the next turn.", None in folded),
-        ("system-collapse_view", "Collapse a View and optionally leave a note.", bool(expanded)),
-        ("system-expand_view", "Expand a collapsed View on the next turn.",
-         None not in folded and any(view_key(view) in folded for view in views)),
-        ("system-close_view", "Close a View that supports independent closure.",
-         None not in folded and any(view.get("canClose") for view in views)),
-    )
-    for name, description, available in actions:
-        if not available:
-            continue
-        required = ["app_id"]
-        if name.endswith("_view"):
-            required.append("view_id")
-        properties = {key: {"type": "string"} for key in required}
-        if name.startswith("system-collapse_"):
-            properties["note"] = {"type": "string"}
-        controls.append({"name": name, "description": description, "schema": {
-            "type": "object", "properties": properties, "required": required, "additionalProperties": False}})
-    # Hosts can measure or discard the candidate before adopting these exact selections.
-    selection = [{"candidate": prepared["candidate"], "windows": windows}]
-    try:
-        tools = client.call("projectNativeTools", apps=selection) + controls
-        adopted = client.call("adoptTurn", apps=selection)
+    with candidate_scope(client) as scope_id:
+        prepared = client.call("observe", app=app["app"], scopeId=scope_id)
+        if prepared["status"] != "prepared":
+            raise RuntimeError(prepared)
+        observation = prepared["observation"]
+        folded = app.setdefault("folded", {})
+        mounts = {view_key(view) for view in observation["views"]}
+        for key in list(folded):
+            if key is not None and key not in mounts:
+                del folded[key]
+        views = []
+        for view in observation["views"]:
+            choice = {"viewInstanceId": view["viewInstanceId"], "kind": "body"}
+            if view_key(view) in folded:
+                choice.update(kind="collapsed", note=folded[view_key(view)])
+            elif view["id"] in budget_hints:
+                choice.update(kind="hint")
+            views.append(choice)
+        item = {"candidate": prepared["candidate"], "views": views, "collapsed": None in folded}
+        if None in folded:
+            item["note"] = folded[None]
+        catalog = [entry["installationId"] for entry in client.call("listApps")
+                   if entry.get("appInstanceId") == app["instanceId"]]
+        app["installationId"] = catalog[0] if catalog else None
+        plan = {"apps": [item], "catalog": catalog,
+                "capabilities": ["open", "close", "collapse", "expand", "collapseView", "expandView", "closeView", "inspectRef"]}
+        presented = client.call("presentTurn", scopeId=scope_id, **plan)
+        if presented["issues"]:
+            raise RuntimeError(presented["issues"])
+        pages = [{"role": "user", "content": view["content"], "region": view["region"]} for view in presented["views"]]
+        messages = [{"role": "user", "content": presented["instruction"]},
+                    *[page for page in pages if page["region"] == "static"],
+                    {"role": "user", "content": presented["desktop"]},
+                    *[page for page in pages if page["region"] == "dynamic"]]
+        adopted = client.call("adoptTurn", scopeId=scope_id, presentation=presented["presentation"])
         if adopted["status"] != "adopted":
             raise RuntimeError(adopted)
-    except RuntimeError as failure:
-        try:
-            client.call("discardObservation", candidate=prepared["candidate"])
-        except RuntimeError as cleanup_error:
-            failure.add_note(f"Discarding the candidate also failed: {cleanup_error}")
-        raise
-    return adopted["turn"], observation, messages, tools
+        if adopted["cleanupIssues"]:
+            warnings.warn(f"Previous turn cleanup reported: {adopted['cleanupIssues']}", stacklevel=2)
+        return adopted["turn"], observation, messages, presented["tools"]
 
 
-def apply_window_tool(client, app, prepared, tool_name, *, app_id, view_id=None, note=""):
+def apply_window_tool(client, app, prepared, tool_name, *, app_id=None, installation_id=None, view_id=None, note=""):
     turn, observation, _, tools = prepared
     if turn != client.current_turn:
         raise RuntimeError({"error": {"code": "TURN_NOT_ACTIVE"}})
-    if app_id != app["appId"] or not any(tool["name"] == tool_name and "toolId" not in tool for tool in tools):
+    if not any(tool["name"] == tool_name and "toolId" not in tool for tool in tools):
+        raise ValueError("Choose a window action from this request.")
+    if tool_name == "system-open_app":
+        if not installation_id or installation_id != app.get("installationId"):
+            raise ValueError("Choose an installation from this request's desktop directory.")
+        return client.call("openApp", installationId=installation_id)
+    if app_id != app["appId"]:
         raise ValueError("Choose a window action and App from this request.")
+    if tool_name == "system-close_app":
+        return client.call("closeApp", app=app["app"])
     target = {"app": app["app"], "turn": turn}
     key = None
     live = client.call("getAppWindows", app=app["app"])
@@ -189,9 +261,7 @@ def invoke(client, app, prepared, tool_name, invocation, **args):
         return client.call("inspectRef", turn=turn, **args)
     if "toolId" not in tool:
         raise ValueError("Choose an App tool, or use the window action handler.")
-    view = {"viewId": args.pop("view_id")} if "view_id" in args else {}
-    receipt = client.call("invoke", turn=turn, app=app["app"], observationId=tool["observationId"],
-                          toolId=tool["toolId"], invocationId=invocation, input=args, **view)
+    receipt = client.call("invokeNative", turn=turn, name=tool_name, invocationId=invocation, input=args)
     if receipt["kind"] != "receipt" or receipt["receipt"]["outcome"]["status"] != "succeeded":
         raise RuntimeError(receipt)
     return receipt

@@ -1,7 +1,7 @@
 export interface WorkerConfig {
-    /** Worker RPC timeout and graceful close budget, 1000–300000 ms. */
+    /** Execution request timeout and App graceful close budget, 1000–300000 ms. */
     readonly timeoutMs: number;
-    /** Maximum simultaneous App Workers, including those waiting for exit. Positive Infinity is unlimited. */
+    /** Maximum simultaneous App executions across all backends, including those waiting for exit. */
     readonly maxWorkers: number;
 }
 
