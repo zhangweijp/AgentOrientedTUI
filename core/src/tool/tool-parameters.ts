@@ -259,7 +259,7 @@ function declarationIssue(error: unknown) {
   });
 }
 
-/** Compile a standalone TypeBox-exported value schema for captured Ref values. */
+/** Compile a standalone JSON Schema for captured Ref values. */
 export function compileValueSchema(input: unknown): Readonly<
   { ok: true; validate(value: JsonValue): ValueIssue | undefined } | { ok: false; issue: ReturnType<typeof declarationIssue> }
 > {

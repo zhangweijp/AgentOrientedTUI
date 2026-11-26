@@ -5,7 +5,6 @@ export {
     type TUIAppFactory,
 } from './app/app-factory.interface.js';
 export { APP_LIFECYCLE_PROTOCOL, type AppLifecycleCallbacks, type AppLifecyclePort } from './app/app-lifecycle.interface.js';
-export { STATE_SESSION_PROTOCOL, type AppStatePersistence, type StatePersistenceOptions } from './app/state-persistence.interface.js';
 export type { AppInstance, RuntimeContext } from './app/app-instance.interface.js';
 export type { AppContext } from './app/app-kernel.interface.js';
 export type { AppLaunchConfig } from './app/app-config.interface.js';
@@ -13,7 +12,7 @@ export type { AppID, DesktopID } from './app/identity.js';
 
 export {
     MARKDOWN_VIEW_FORMAT, SNAPSHOT_SCHEMA_VERSION, ViewMultiplicity, ViewRegion,
-    isInstanceName, isViewTypeName,
+    isInstanceName, isRefId, isViewTypeName,
 } from './snapshot/types.js';
 export type {
     AppIdentityRead, AppIdentityReader, AppSnapshot, CommitResult, HoldResult, JsonValue, PreparedAppSnapshotDraft,
@@ -45,13 +44,12 @@ export type {
 } from './invocation/observation-types.js';
 export type {
     AppInteraction, AppInteractionPolicy, AppInteractionSource, AppInvocation, AppPreviewResult, BusinessDetails,
-    CancellationSignal, ConsoleInputPath, ConsoleInputs, ExecutionBinding, ExecutionFact, ExecutionPhase,
+    CancellationSignal, ExecutionBinding, ExecutionFact, ExecutionPhase, PublicRefValue, ReadPublicRefsResult,
     ExecutionResolver, InstanceInteraction, InteractionLimitOverrides, InteractionLimits, InteractionStats,
     InvocationContext, InvocationJsonLimits, InvocationOutcome, InvocationReceipt, InvocationSource, InvokeResult, Issue as InteractionIssue,
     ObserveResult, ReceiptAccess, ReceiptMetadata, ReceiptQuery,
     ActiveTurn, AdoptTurnResult, ObservationCandidate, PrepareObservationResult, InspectRefMode, InspectRefResult, TurnSelection,
 } from './invocation/app-interaction-types.js';
-export type { AppFrameRef, AppFrameView, AppProjectionFrame, PreparedProjection, ProjectionCommitResult, ProjectionOptions, ProjectionSource } from './projection/coordinator.js';
+export type { AppFrameRef, AppFrameView, AppProjectionFrame, OpeningProjectionResult, PreparedProjection,
+    ProjectionCommitResult, ProjectionOptions, ProjectionSource } from './projection/coordinator.js';
 export type { AppFrameBinding, AppViewTypeDefinition, ViewInstance, ViewOwnedToolLimits, ViewOwnedToolsStats } from './tool/view-owned-tools.js';
-export type { StateValue, StateAddress, StateValueLimits, StateIssueCode, StateIssue, StateReadResult, StateMutationResult, StateReleaseResult, StateStorage, Rejected as StateRejected } from './persistence/state-storage.js';
-export type { StateSessionLimits, StateFlushEntry, StateFlushReport, StateDisposeReport } from './persistence/state-session.js';

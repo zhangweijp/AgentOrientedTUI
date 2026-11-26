@@ -1,9 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
 import { closeTimeout, createCloseHandle, recordAppClose, newCloseState, mergeCloseReport, addCloseFailure, snapshotClose, displayCloseId } from './close-handle.js';
-import { createMemoryStateStorage } from '../../adapters/storage/memory-state-storage.js';
-import { createAppStatePersistence } from '../../worker-runtime/state-persistence.js';
-import { failedMutation, unknownMutation } from '@aotui/core/persistence';
 
 function fixture() {
     let finish!: (value: RuntimeCloseReport) => void;
@@ -61,69 +58,31 @@ function appReport(input: any) {
     recordAppClose(state, input.host, { desktopId: 'd', appId: 'a' }, new Set(input.issues));
     return snapshotClose(state);
 }
-function envelope(lifecycle: any, extra: any = {}) {
+function envelope(extra: any = {}) {
     return { state: 'closing', ok: false, resourcesReleased: false, issues: [],
         host: { state: 'closing', worker: 'owned', resourcesReleased: false, issues: [],
-            interactions: { closed: true, retainedOperations: 0 },
-            storage: { support: 'managed', unsafe: false, actualIO: 0, pending: 0, opening: false, ownerRetained: true, uncertain: false, lifecycle } }, ...extra } as any;
+            interactions: { closed: true, retainedOperations: 0 } }, ...extra } as any;
 }
-it('omits the storage summary when the App never requested it', () => {
-    const input = envelope(undefined, { state: 'settled' });
-    input.host = { ...input.host, resourcesReleased: true, worker: 'exited', storage: undefined };
+it('records a clean App close without any persistence field', () => {
+    const input = envelope({ state: 'settled' });
+    input.host = { ...input.host, resourcesReleased: true, worker: 'exited' };
     const report = appReport(input);
     expect(report).toMatchObject({ ok: true, resourcesReleased: true, verification: 'managed',
         apps: { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 0 } });
     expect(report).not.toHaveProperty('persistence');
 });
-it.each(['normal', 'failed', 'unknown', 'unmount', 'both'])('C2-25 Q02 actual controller/memory %s report keeps App and storage failures separate', async mode => {
-    const backend = createMemoryStateStorage({ maxStoredKeys: 4, maxStoredBytes: 100000, maxRecordBytes: 10000, maxAddressBytes: 1024, maxActiveOwners: 2, maxClaimedNamespaces: 2 });
-    const opened = backend.open('i');if (opened.status !== 'opened') throw Error('fixture');
-    const unmountFailed = mode === 'unmount' || mode === 'both';
-    const storageFailed = mode === 'failed' || mode === 'both' || mode === 'unknown';
-    const storage = { ...opened.storage, ...(storageFailed ? { replace: async () => mode === 'unknown' ? unknownMutation() : failedMutation('IO_FAILED') } : {}) };
-    const managed = createAppStatePersistence({ instanceId: 'i', desktopId: 'd', appKey: 'a', storage, now: () => 1 });
-    const progress = envelope(managed.getReport()), before = appReport(progress);
-    expect(managed.getReport()).toBeUndefined();expect(before.hasFailures).toBe(false);
-    expect(before.persistence!.closeReceipts).toBe(0);expect(before.persistence!.confirmedFlushes).toBe(0);
-    const lifecycle = await managed.close(async () => {
-        await managed.port.save('k', 3).catch(() => {});
-        if (unmountFailed) throw Error('private unmount');
-    });
-    const final = envelope(lifecycle, { state: 'settled', resourcesReleased: true,
-        issues: storageFailed && !unmountFailed ? ['PERSISTENCE_CLOSE_FAILED'] : [] });
-    final.host = { ...final.host, state: 'settled', worker: 'exited', resourcesReleased: true,
-        storage: { ...final.host.storage, ownerRetained: false, release: { status: 'released' } } };
-    const report = appReport(final);expect(report.resourcesReleased).toBe(true);expect(report.ok).toBe(mode === 'normal');expect(backend.getStats().activeOwners).toBe(0);
-    expect(report.persistence!.unknownApps).toBe(mode === 'unknown' ? 1 : 0);expect(before.state).toBe('closing');
-    expect(report.persistence).toMatchObject({ confirmedFlushes: storageFailed ? 0 : 1, failedFlushes: storageFailed ? 1 : 0 });
-    expect(report.failures.some(x => x.stage === 'persistence')).toBe(storageFailed);
-    expect(report.failures.some(x => x.stage === 'apps')).toBe(unmountFailed);
-    expect(report.failures.some(x => x.codes.includes('APP_UNMOUNT_FAILED'))).toBe(unmountFailed);
-    if (mode === 'normal') {
-        const missing = appReport({ ...final, host: { ...final.host, storage: { ...final.host.storage, lifecycle: progress.host.storage.lifecycle } } });
-        expect(missing.hasFailures).toBe(true);expect(missing.persistence!.closeReceipts).toBe(0);expect(missing.persistence!.missingCloseReceipts).toBe(1);
-    }
-});
 it('keeps callback failure separate from released resources through Runtime aggregation', async () => {
-    const backend = createMemoryStateStorage({ maxStoredKeys: 4, maxStoredBytes: 100000, maxRecordBytes: 10000,
-        maxAddressBytes: 1024, maxActiveOwners: 2, maxClaimedNamespaces: 2 });
-    const opened = backend.open('i'); if (opened.status !== 'opened') throw Error('fixture');
-    const managed = createAppStatePersistence({ instanceId: 'i', desktopId: 'd', appKey: 'a', storage: opened.storage });
-    const lifecycle = await managed.close(() => {});
-    const input = envelope(lifecycle, { state: 'settled', resourcesReleased: true });
+    const input = envelope({ state: 'settled', resourcesReleased: true });
     input.host = { ...input.host, state: 'settled', worker: 'exited', resourcesReleased: true,
         appCleanup: { support: 'managed', report: { protocol: 'app-lifecycle-v2', instanceId: 'i',
-            state: 'failed', issues: ['APP_CLEANUP_FAILED'] } },
-        storage: { ...input.host.storage, ownerRetained: false, release: { status: 'released' } } };
+            state: 'failed', issues: ['APP_CLEANUP_FAILED'] } } };
     const child = appReport(input);
     expect(child).toMatchObject({ ok: false, hasFailures: true, resourcesReleased: true,
         apps: { settled: 1, notVerifiedReleased: 0 },
         appCleanup: { managedApps: 1, completedApps: 0, failedApps: 1 },
-        persistence: { confirmedFlushes: 1, failedFlushes: 0, unsavedKeys: 0 },
         resources: { retainedOwners: 0, pendingOperations: 0 },
     });
     expect(child.failures).toEqual([{ stage: 'apps', codes: ['APP_CLOSE_FAILED'], desktopId: 'd', appId: 'a' }]);
-    expect(backend.getStats().activeOwners).toBe(0);
 
     const state = newCloseState('runtime'); mergeCloseReport(state, child); state.state = 'settled';
     const report = snapshotClose(state);
@@ -134,7 +93,7 @@ it('keeps callback failure separate from released resources through Runtime aggr
 it('C2-25 bounded failure samples and Unicode display IDs preserve complete counts and pending resource facts', () => {
     const state = newCloseState('runtime'), id = '\u0001'.repeat(1000), raw = '🙂'.repeat(100);
     expect(displayCloseId(raw)).toBe('🙂'.repeat(64));expect(raw).toHaveLength(200);
-    const codes: RuntimeCloseReport['failures'][number]['codes'] = ['INSTALL_FAILED', 'APP_CLOSE_FAILED', 'APP_CLOSE_DEADLINE_EXCEEDED', 'RESOURCE_RELEASE_FAILED', 'WORKER_ERROR', 'WORKER_TERMINATION_FAILED', 'PERSISTENCE_CLOSE_FAILED', 'APP_UNMOUNT_FAILED'];
+    const codes: RuntimeCloseReport['failures'][number]['codes'] = ['INSTALL_FAILED', 'APP_CLOSE_FAILED', 'APP_CLOSE_DEADLINE_EXCEEDED', 'RESOURCE_RELEASE_FAILED', 'WORKER_ERROR', 'WORKER_TERMINATION_FAILED', 'WORKER_EXITED_UNEXPECTEDLY', 'APP_UNMOUNT_FAILED'];
     for (let i = 0; i < 100; i++) {
         const child = newCloseState('app');child.apps = { accepted: 1, settled: 0, pending: 1, notVerifiedReleased: 1 };child.resourcesReleased = false;child.resources.retainedOwners = 1;
         addCloseFailure(child, 'apps', [...codes, codes[0]], { desktopId: id + i, appId: id });mergeCloseReport(state, snapshotClose(child));

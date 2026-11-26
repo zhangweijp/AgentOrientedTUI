@@ -8,7 +8,8 @@ import { IDEError, boundedJSON, requireIDE } from './ide-errors.js';
 import type { FileInfo } from '../types.js';
 
 export interface HistoryData { version: 1; workspaces: Record<string, FileInfo[]> }
-export async function readBoundedText(file: string, limit = 256 * 1024): Promise<string> {
+export interface BoundedSnapshot { text: string; stamp: string }
+export async function readBoundedSnapshot(file: string, limit = 256 * 1024): Promise<BoundedSnapshot> {
     const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
         const before = await handle.stat({ bigint: true });
@@ -16,9 +17,15 @@ export async function readBoundedText(file: string, limit = 256 * 1024): Promise
         const buffer = Buffer.alloc(Number(before.size) + 1); let length = 0;
         while (length < buffer.length) { const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length); if (!bytesRead) break; length += bytesRead; }
         const after = await handle.stat({ bigint: true });
-        requireIDE(length === Number(before.size) && before.ino === after.ino && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs, 'PERSIST_SOURCE_CHANGED');
-        return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length));
+        requireIDE(after.isFile() && after.nlink === 1n && length === Number(before.size) && before.dev === after.dev && before.ino === after.ino && before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs, 'PERSIST_SOURCE_CHANGED');
+        return {
+            text: new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length)),
+            stamp: `${after.dev}:${after.ino}:${after.size}:${after.mtimeNs}:${after.ctimeNs}`,
+        };
     } finally { try { await handle.close(); } catch { throw new IDEError('PERSIST_CLOSE_UNCERTAIN', 'unknown'); } }
+}
+export async function readBoundedText(file: string, limit = 256 * 1024): Promise<string> {
+    return (await readBoundedSnapshot(file, limit)).text;
 }
 export function pathList(value: unknown, max: number): string[] {
     requireIDE(Array.isArray(value) && value.length <= max && value.every(item => typeof item === 'string' && path.isAbsolute(item) && !item.includes('\0') && Buffer.byteLength(item) <= 4096), 'PERSIST_PATHS_INVALID');

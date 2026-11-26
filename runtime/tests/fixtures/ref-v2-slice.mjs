@@ -1,8 +1,5 @@
-import FixtureType from 'typebox';
 import * as SDK from '@aotui/sdk';
 import { Type } from 'typebox';
-import { h } from 'preact';
-import { useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 
 let mode = 'normal', sequence = 0;
@@ -59,38 +56,53 @@ function makeTools() {
 }
 const File = makeTools();
 const Guide = SDK.defineViewType({ multiplicity: 'multiple', name:"Root"});
-function NewTools({ view, state }) {
-    const label = labelFor(view);
-    const file = SDK.useDataRef(label, { label: state.text, view, literal }, { schema: FixtureType.Object({}), scope: 'protected', refType: 'Data' });
-    // Complete effectiveArgs has root + payload + view scalar + list array + N entries: N + 4 nodes.
-    const big = SDK.useDataRef('capacity_' + label, { view, list: Array(Math.max(0, state.capacityNodes - 4)).fill(null) }, { schema: FixtureType.Object({}), scope: 'protected', refType: 'Data' });
-    const foreign = SDK.useDataRef('private_' + label, { view }, { schema: FixtureType.Object({}), scope: 'protected', refType: 'Data' });
-    return h('section', {}, [h('p', {}, `Private fixture object: ${view}`),
-        h('p', {}, [file('Original file value'), big('List value'), foreign('View-specific value')]),
-        h('p', {}, 'Private protocol tools: inspect and plain; availability is supplied by the committed Tool catalog.')]);
-}
-
-function Root() {
-    const [state, set] = useState({ text: 'A', revision: 1, rule: false, defaultValue: 2, enabled: true, show: true, showSecond: true, refType: '', capacityNodes: 8, tag: 0 });
-    useLayoutEffect(() => {
-        const receive = message => {
-            if (message.type !== 'TEST_COMMAND') return;
-            const { command: type, data } = message;
-            if (type === 'state') set(previous => ({ ...previous, ...data.patch, tag: data.tag }));
-            else if (type === 'mode') { mode = data.mode;parentPort.postMessage({ type: 'REF_V2_CONTROL_ACK', tag: data.tag }); }
-            else if (type === 'release') { held.get(data.id)?.();held.delete(data.id);parentPort.postMessage({ type: 'REF_V2_CONTROL_ACK', tag: data.tag }); }
-        };
-        parentPort.on('message', receive);return () => parentPort.off('message', receive);
-    }, []);
-    useLayoutEffect(() => { parentPort.postMessage({ type: 'REF_V2_COMMITTED', state, tag: state.tag }); }, [state]);
-    const key = JSON.stringify([state.rule,state.defaultValue,state.refType]);
-    const view = id => h(SDK.DynamicView, { key: id + key, idPrefix: id, type: File, context: { id, state } }, h(NewTools, { view: id, state }));
-    return h('main',{},[
-        h(SDK.StaticView, {key: 'root', idPrefix: 'root', type: Guide }, [h('h1', {}, 'Reference Inspector Application Instruction'),
-            h('h2', {}, 'What Reference Inspector is'), h('p', {}, 'Inspect displayed values from their original file views.'),
-            h('h2', {}, 'How to use Reference Inspector'), h('p', {}, 'Use a displayed reference with the inspect tool. Read its result for the original value.'),
-            h('h2', {}, 'Views of Reference Inspector'), state.show || state.showSecond ? h('section', {}, [h('h3', {}, 'File'), h('h4', {}, 'File Instruction'), h('p', {}, 'Displays original values and inspection tools.'), h('h4', {}, 'File Available Tools'), h('p', {}, 'inspect, capacity, open_ref, typed, plain')]) : null]),
-        state.show ? view('aa') : null, state.showSecond ? view('bb') : null,
-    ]);
-}
-export default SDK.createTUIApp({ app_name: 'ref_v2_fixture', component: Root, viewTypes:[Guide,File] });
+export default SDK.createApp({
+  app_name: 'ref_v2_fixture', viewTypes: [Guide, File],
+  initialize({ prepareProjection, registerCleanup }) {
+    let state = { text: 'A', revision: 1, rule: false, defaultValue: 2, enabled: true,
+      show: true, showSecond: true, refType: '', capacityNodes: 8, tag: 0 };
+    const root = SDK.createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({
+        body: '# Reference Inspector Application Instruction\n\nInspect displayed values from their original file views.' +
+            ((state.show || state.showSecond) ? '\n\n## File\nOriginal values and available tools: inspect, capacity, open_ref, typed and plain.' : ''),
+    }) });
+    const makeFile = id => SDK.createView(File, { idPrefix: id, region: 'dynamic', render() {
+      const label = labelFor(id);
+      const schema = Type.Object({});
+      const options = { schema, scope: 'protected', refType: 'Data' };
+      const file = SDK.ref(label, { label: state.text, view: id, literal }, options);
+      // The fixture sizes the complete decoded request by the published list's node count.
+      const big = SDK.ref('capacity_' + label, { view: id, list: Array(Math.max(0, state.capacityNodes - 4)).fill(null) }, options);
+      const foreign = SDK.ref('private_' + label, { view: id }, options);
+      return { refs: [file, big, foreign], context: { id, state }, body: [
+        'Private fixture object: ' + id, SDK.formatRef('Original file value', file),
+        SDK.formatRef('List value', big), SDK.formatRef('View-specific value', foreign),
+        'Private protocol tools: inspect and plain; availability is supplied by the committed Tool catalog.',
+      ].join('\n\n') };
+    } });
+    let first = makeFile('aa'), second = makeFile('bb');
+    const mountKey = () => JSON.stringify([state.rule, state.defaultValue, state.refType]);
+    function publish() { prepareProjection({ views: [root, ...(first ? [first] : []), ...(second ? [second] : [])] }); }
+    const receive = message => {
+      if (message.type !== 'TEST_COMMAND') return;
+      const { command: type, data } = message;
+      if (type === 'state') {
+        const key = mountKey();
+        state = { ...state, ...data.patch, tag: data.tag };
+        if (key !== mountKey()) { first = undefined; second = undefined; }
+        first = state.show ? first ?? makeFile('aa') : undefined;
+        second = state.showSecond ? second ?? makeFile('bb') : undefined;
+        try { publish(); } catch { /* Runtime reports fixture limits. */ }
+        parentPort.postMessage({ type: 'REF_V2_COMMITTED', state, tag: state.tag });
+      } else if (type === 'mode') {
+        mode = data.mode; parentPort.postMessage({ type: 'REF_V2_CONTROL_ACK', tag: data.tag });
+      } else if (type === 'release') {
+        held.get(data.id)?.(); held.delete(data.id);
+        parentPort.postMessage({ type: 'REF_V2_CONTROL_ACK', tag: data.tag });
+      }
+    };
+    parentPort.on('message', receive);
+    registerCleanup({ stop() { parentPort.off('message', receive); } });
+    publish();
+    parentPort.postMessage({ type: 'REF_V2_COMMITTED', state, tag: state.tag });
+  },
+});

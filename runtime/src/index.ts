@@ -32,14 +32,15 @@
 // Keep this list explicit so internal SPI/Engine additions do not become public
 // accidentally.
 // ============================================================================
-export { createRuntime, type RuntimeConfig, type RuntimeOptions } from './facades/facades.js';
+export { createRuntime, type RuntimeConfig } from './facades/facades.js';
+export { createCandidateScope } from './engine/core/candidate-scope.js';
 export { defineRuntimeConfig, type RuntimeConfigInput } from './spi/config/index.js';
 export type {
     AppInteractionPolicy,
     AppInvocation,
     CancellationSignal,
-    ConsoleInputs,
-    ConsoleInputPath,
+    PublicRefValue,
+    ReadPublicRefsResult,
     ObservationCandidate,
     PrepareObservationResult,
     InspectRefMode, InspectRefResult,
@@ -62,7 +63,6 @@ export type {
     AppContext,
     AppID,
     AppLaunchConfig,
-    AppStatePersistence,
     DesktopID,
     ErrorCode,
     ProjectionLimitOverrides,
@@ -71,10 +71,14 @@ export type {
     ToolResult,
 } from '@aotui/core';
 export type { UpdateSignal } from './spi/core/signals.js';
-export type { ActiveTurn, AdoptTurnResult, AppDiscoveryInfo, AppPolicyTarget, CreateDesktopOptions, IDesktop,
+export type { ActiveTurn, AdoptTurnResult, AppDiscoveryInfo, AppPolicyTarget, CandidateScope, CreateDesktopOptions, IDesktop,
     IKernel, InvokeResult, OpenAppOptions, ReceiptAccess, ReceiptLocator, RunningApp, RunningAppResult,
     RegisterPendingAppOptions } from './spi/runtime/kernel.interface.js';
 export type { AppInteractionOptions } from './spi/runtime/app-interaction.interface.js';
+export type {
+    AppExecutionBackend, AppExecutionEvent, AppExecutionHandle, AppExecutionIssue, AppExecutionLaunch,
+    AppExecutionProjection, AppExecutionRequest,
+} from './spi/runtime/execution-backend.js';
 export type {
     AppCloseHandle,
     AppCloseReport,

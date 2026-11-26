@@ -7,7 +7,7 @@
 <a id="sys-01"></a>
 ## SYS-01 · 跨语言 App 协议边界（以 Python 子进程双文件 App 纵切驱动）
 
-- **三维度状态**：问题证实度 `长期演进风险` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `长期演进风险` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已实施待复核`
 
 **已拍板结论（2026-11-25）**：选方案 A + 做法 1。保留现有 Node Worker 与 TS 实现，先用本地命令纵切接通**一个可执行、易读的 Python 双文件最小参考 App**（实际读写 `A.txt` / `B.txt`，暂不发布 Python SDK，`aoapp.json` 扩展暂缓），用同一套行为测试反推哪些字段值得向所有语言长期承诺。
 
@@ -50,7 +50,7 @@
 <a id="sys-02"></a>
 ## SYS-02 · 面向第三方沙箱的执行后端接口（Execution Backend SPI）
 
-- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已实施待复核`
 
 **已拍板结论（2026-11-25）**：选方案 A。随 `SYS-03`、`MOD-02` 与 `SYS-01` 抽离极简公开执行后端 SPI，由可信 Host 在 **Runtime 级统一配置、按安装项固定绑定**（首版 `openApp` 只接收安装 ID 与调用策略，不临时覆盖后端）。Runtime 负责名额、协议、收据与真实退出核验；文件和网络权限隔离由所选第三方沙箱落实，不自造沙箱也不在内核造纸面权限语言。
 
@@ -90,7 +90,7 @@
 <a id="sys-03"></a>
 ## SYS-03 · 小型状态持久化移出 Runtime 核心启动/关闭合同
 
-- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `内核存储已移出，IDE 与 Planning 的并发及异常退出恢复待修`
 
 **已拍板结论（2026-11-25）**：彻底将小型状态持久化移出 Core / SDK / Runtime 核心合同，**不背负 v1 旧数据迁移与新旧版本双写兼容**（当前尚无外部开发者，仅内部 Demo App）。App 对自己保存的数据、落盘确认和关闭失败反馈负全责；Runtime 仅负责停接调用、等待 App 清理（`appCleanup`）、确认所托管的执行环境退出，并如实汇报失败或未知结果。
 
@@ -125,7 +125,11 @@
 | `aotui-ide` 编辑文件成功但会话文件写入失败或损坏；写入进行中触发关闭 | 文件编辑收据保持 `diskCommitted: true`；页面提示 `SESSION_UPDATE_FAILED`；`close()` 明确失败并在通用 `AppCloseReport.appCleanup` 中暴露，Worker 正常退出释放。 |
 | `planning-app` 选中/清空计划后重启，写入失败与关闭 | 选中项随 `planning.sqlite` 正确持久化与恢复，清空状态保持 `null`，关闭时 DB 正常释放。 |
 
-*(注：本轮前期在临时 v1 库上已完成基线验证，证实了现行 `IDESession.close()` 静默吞掉保存失败的真实缺口；上述新方案待进入实施批次后统一实现并验证。)*
+### 验收证据与待修范围（2026-11-25）
+
+- **内核与驱动清理**：`@aotui/core`、`@aotui/sdk`、`@aotui/runtime` 生产代码及锁文件均零残留 `STATE_SESSION_PROTOCOL`、`persistenceSupport`、`storageBackend`、`@aotui/core/persistence`、`PERSISTENCE_CLOSE_FAILED`、`retryResourceRelease` 与 `better-sqlite3`（仅 `host` 自身配置锁保留 `better-sqlite3`）。包级回归：`core` 703/703、`sdk` 210/210、`runtime` 514/514、干净离线/隔离打包消费端 `scripts/release-local.mjs`（`core` / `author-plain` / `author-jsx` / `host` 全阶段）PASS。
+- **`aotui-ide`**：自管 [ide-session-store.ts](../../demo-apps/aotui-ide/src/core/ide-session-store.ts) 首次及更新均走临时文件 + `sync()` + `close()` + `rename()` 真原子写入，同路径并发写保护冲突报 `SESSION_IN_USE` / `SESSION_UPDATE_FAILED`；初轮 Jest 68/68 + 真实 Worker E2E 6 套件通过。**1A 待修与待签收范围**：1) `IDESessionStore.read()` 原分两步调用 `readBoundedText` 与 `fileStamp`，存在读旧内容配新版本印记的 TOCTOU 窗口，需改为单句柄原子读取 `{ text, stamp }`；2) [observed-file-actions.ts](../../demo-apps/aotui-ide/src/core/observed-file-actions.ts) `withLocks` 需补齐带租约/心跳的 Worker 异常退出锁回收（且不破坏外部/空 `.aotui-lock` 语义），1A 返修验证后待审阅方集中复核签收。
+- **`planning-app`**：沿用既有 `planning.sqlite` 默认路径（不消费 `AOTUI_DATA_DIR`）并新增 `desktop_state` 与排他锁文件 `withDbLock`（冲突报 `PLANNING_DB_BUSY`，磁盘变更先重加载再原子替换），补充 `create_plan`/`delete_plan` 第二步选区写盘失败的分步诚实收据；初轮 `planning-app` 23/23 + 真实 Host（`DesktopManager` 传入 `AOTUI_DATA_DIR` 打开预置旧库并重启保留计划、阶段、任务与选中项）1/1 通过。**1A 待修与待签收范围**：[db/index.ts](../../demo-apps/planning-app/src/db/index.ts) `withDbLock` 需迁移至异步并发/租约心跳与 Worker 异常退出锁回收，1A 返修验证后待审阅方集中复核签收。
 
 ---
 

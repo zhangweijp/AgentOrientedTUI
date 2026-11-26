@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { jsonSchema, ProviderToolSchemaError, type ProviderToolSchemaPolicy, type Tool } from '@aotui/agent-driver-v2';
-import { buildViewMessageMarkup, collapsedWindowText, escapeXmlText, DESKTOP_TOOL_NAMES as desktopToolNames,
-    DEFAULT_AOTUI_SYSTEM_INSTRUCTION, projectNativeToolNames, projectNativeToolSchema, type PresentedRef, type WindowPresentation } from '@aotui/runtime/adapters';
-import { isInstanceName, SnapshotDataError } from '@aotui/core';
+import { collapsedWindowText, escapeXmlText, DESKTOP_TOOL_NAMES as desktopToolNames, DEFAULT_AOTUI_SYSTEM_INSTRUCTION,
+    inspectRefSchema as inspectSchema, projectDesktop, routeNativeInvocation, type DesktopCapability, type NativeTool,
+    type PresentedAppWindows, type ViewPresentation, type WindowPresentation } from '@aotui/runtime/adapters';
+import { isInstanceName, type InteractionIssue } from '@aotui/core';
 import { loadAOTUIInstruction } from './load-aotui-instruction.js';
-import { formatAppStatus, formatTimestamp } from './presentation.js';
+import { formatTimestamp } from './presentation.js';
 import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolExecutionBudget, ToolResult } from '@aotui/agent-driver-v2';
 import type {
-    ActiveTurn, AppID, IDesktop, AppDiscoveryInfo, Observation, InvokeResult, AppInvocation, ObservationCandidate,
+    ActiveTurn, AppID, IDesktop, AppDiscoveryInfo, Observation, InvokeResult, ObservationCandidate,
     AppWindows, ObservationWindowSelection, ReceiptQuery, UpdateSignal, ViewWindowTarget,
 } from '@aotui/runtime';
 import { BUDGET_TOOL, budgetHint, budgetPage, fitModelWindows, type BudgetNotice, type RenderedWindows,
@@ -31,17 +32,12 @@ export interface SemanticAOTUIDrivenSourceOptions {
     /** Trusted Host override. The standard executor uses macOS Seatbelt. */
     consoleExecutor?: ConsoleExecutor;
     maxApps?: number;
+    /** Reports resource cleanup problems after a new turn has already been adopted. */
+    onCleanupIssues?: (issues: readonly InteractionIssue[]) => void;
 }
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const INSPECT_REF = desktopToolNames.inspectRef;
-const inspectSchema = {
-    type: 'object' as const, additionalProperties: false, required: ['address', 'mode'],
-    properties: {
-        address: { type: 'string' as const, description: 'Complete $ref.app_id.view_id.ref_id address, with an optional path.' },
-        mode: { type: 'string' as const, enum: ['schema', 'value'], description: 'Read the declared structure or a public value from this turn.' },
-    },
-};
 const unavailable = (toolName: string, toolCallId: string, code: string, message: string, outcomeStatus: 'rejected' | 'unknown' = 'rejected'): ToolResult =>
     ({ toolName, toolCallId, outcomeStatus, error: { code, message } });
 
@@ -82,27 +78,19 @@ async function inspect(turn: ActiveTurn, input: unknown, toolCallId: string): Pr
         : unavailable(INSPECT_REF, toolCallId, result.issue.code, result.issue.message);
 }
 
-interface ToolRoute { app: AppDiscoveryInfo; observationId: string; toolId: string; multiplicity: 'single' | 'multiple'; programInput: ProgramToolInput }
+interface ToolRoute { app: AppDiscoveryInfo; programInput: ProgramToolInput }
 type DisplayedApp = Omit<AppDiscoveryInfo, 'status'> & { status: AppDiscoveryInfo['status'] | 'collapsed' };
-interface DisplayedWindows extends AppWindows {
-    readonly expanded: boolean;
-    readonly views: readonly (AppWindows['views'][number] & { readonly expanded: boolean })[];
-}
+type DisplayedWindows = PresentedAppWindows;
 const displayedStatus = (app: AppDiscoveryInfo, windows?: DisplayedWindows): DisplayedApp['status'] =>
     app.status === 'running' && windows?.expanded === false ? 'collapsed' : app.status;
 interface AppIssue { code: string; message: string; path?: string }
-interface CapturedObservation { candidate: ObservationCandidate; observation: Observation; released: boolean }
-interface AppProjection {
-    app: AppDiscoveryInfo;
-    captured: CapturedObservation;
-    tools: ReadonlyMap<string, Observation['tools'][number]>;
-}
+interface AppProjection { app: AppDiscoveryInfo; candidate: ObservationCandidate; observation: Observation }
 
 interface ContextOwner { release(): void }
 type PresentationEntry = { displayed?: { digest: string; timestamp: number }; bodyBytes?: number; restoreBody?: true };
 type Expansion = { appId: AppID; instanceId: string; view?: ViewWindowTarget; bodies: ReadonlySet<string> };
 type BudgetReportScope = readonly { installationId: string; appId: AppID; instanceId: string;
-    views: ObservationWindowSelection['refViews'] }[];
+    views: ObservationWindowSelection['activeViews'] }[];
 type StoredReport = { report: WindowBudgetReport; scope: BudgetReportScope; key: string; until: number };
 type Control = (input: unknown, callId: string, current: () => ActiveTurn | undefined, budget?: ToolExecutionBudget) => Promise<ToolResult>;
 const windowKey = (appId: string, viewInstanceId: string) => JSON.stringify([appId, viewInstanceId]);
@@ -114,8 +102,7 @@ class AppProjectionError extends Error {
 function boundedText(text: string, limit: number): string {
     let safe = '';
     for (const character of text) {
-        const escaped = character === '&' ? '&amp;' : character === '<' ? '&lt;' : character === '>' ? '&gt;'
-            : /[\u0000-\u001f\u007f]/.test(character) ? ' ' : character;
+        const escaped = /[\u0000-\u001f\u007f]/.test(character) ? ' ' : character;
         if (safe.length + escaped.length > limit) break;
         safe += escaped;
     }
@@ -129,7 +116,7 @@ function boundedIssue(code: string, message: string, path?: string): AppIssue {
 }
 
 function formatAppIssue(issue: AppIssue): string {
-    return `${issue.code}: ${issue.message}${issue.path ? ` (at ${issue.path})` : ''}`;
+    return `${issue.code}: ${escapeXmlText(issue.message)}${issue.path ? ` (at ${escapeXmlText(issue.path)})` : ''}`;
 }
 
 function appIssueFrom(error: unknown): AppIssue {
@@ -145,10 +132,19 @@ function appIssueFrom(error: unknown): AppIssue {
         'This App projection is invalid; repair its View or Tool declarations, then refresh the context.');
 }
 
-function releaseCaptured(captured: CapturedObservation): void {
-    if (captured.released) return;
-    captured.released = true;
-    captured.candidate.discard();
+function cleanupFailure(issues: readonly InteractionIssue[], primary?: unknown): Error {
+    return Object.assign(new AggregateError(primary === undefined ? issues : [primary, ...issues],
+        'The prepared Desktop context reported cleanup problems.', { cause: primary ?? issues[0] }),
+        { code: issues[0]!.code, issues });
+}
+
+function releaseAfterFailure(owner: ContextOwner, primary: unknown): never {
+    try { owner.release(); }
+    catch (cleanup) {
+        if (cleanup instanceof Error && 'issues' in cleanup) throw cleanupFailure(cleanup.issues as InteractionIssue[], primary);
+        throw new AggregateError([primary, cleanup], 'Desktop preparation and cleanup both failed.', { cause: primary });
+    }
+    throw primary;
 }
 
 /**
@@ -242,29 +238,18 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
         return this.enabled && this.appsEnabled && !this.disposed && !this.disabledApps.has(installationId);
     }
 
-    private async invokeApp(turn: ActiveTurn, route: ToolRoute, name: string, args: unknown, id: string,
-        signal?: AbortSignal): Promise<ConsoleRoutedCall> {
+    private async invokeApp(turn: ActiveTurn, route: ToolRoute, nativeTools: readonly NativeTool[], name: string, input: unknown,
+        id: string, signal?: AbortSignal): Promise<ConsoleRoutedCall> {
         if (signal?.aborted) return { result: unavailable(name, id, 'INVOCATION_CANCELLED', 'Cancelled before dispatch.') };
         if (!this.allowed(route.app)) return { result: unavailable(name, id, 'APP_DISABLED', 'This application is disabled.') };
-        if (!object(args)) return { result: unavailable(name, id, 'INVOCATION_INVALID', 'Tool input must be an object.') };
-        const pending = (): PendingAppReceipt | undefined => {
-            const { appId, appInstanceId } = route.app;
-            if (appId && appInstanceId) return Object.freeze({ desktopId: this.desktop.id, appId, appInstanceId,
-                observationId: route.observationId, invocationId: id });
-        };
-        const fields = Object.getOwnPropertyDescriptors(args);
-        const receiver = Object.hasOwn(fields, 'view_id') ? fields.view_id : undefined;
-        const viewId = receiver?.enumerable && Object.hasOwn(receiver, 'value') ? receiver.value : undefined;
-        if (route.multiplicity === 'multiple' && (typeof viewId !== 'string' || !viewId) ||
-            route.multiplicity === 'single' && receiver !== undefined)
-            return { result: unavailable(name, id, 'TOOL_INVALID_ARGS', route.multiplicity === 'multiple'
-                ? 'Choose the receiving page with its string view_id ($.view_id).' : 'This single-instance tool takes no view_id ($.view_id).') };
-        delete fields.view_id;
-        const input = Object.defineProperties(Object.create(null), fields) as AppInvocation['input'];
+        const resolved = routeNativeInvocation(nativeTools, name, input, id);
+        if (resolved.status === 'rejected')
+            return { result: unavailable(name, id, resolved.issue.code, resolved.issue.message) };
+        const { appId, instanceId: appInstanceId, ...request } = resolved.invocation;
+        const pending = (): PendingAppReceipt => Object.freeze({ desktopId: this.desktop.id, appId: appId as AppID, appInstanceId,
+            observationId: request.observationId, invocationId: id });
         try {
-            const request: AppInvocation = { invocationId: id, observationId: route.observationId, toolId: route.toolId,
-                ...(typeof viewId === 'string' ? { viewId } : {}), input };
-            const invoked = await turn.invoke(route.app.appId!, request, undefined, signal);
+            const invoked = await turn.invoke(appId, request, undefined, signal);
             const locator = invoked.locator;
             return { result: semanticToolResult(name, id, invoked),
                 ...(invoked.kind === 'receipt' ? { receipt: invoked.receipt } : {}),
@@ -310,7 +295,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
         const generation = this.generation;
         const windowRevision = this.windowRevision;
         const attention = new Map(expansion ? [] : this.pendingAttention);
-        const observations: CapturedObservation[] = [];
+        const candidateScope = this.desktop.createCandidateScope();
         const consoleLifetime = new AbortController();
         let released = false;
         let adopted: DrivenSourceContext | undefined;
@@ -319,11 +304,11 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             if (released) return;
             released = true;
             consoleLifetime.abort();
-            turn?.release();
+            const issues = turn?.release() ?? [];
             turn = undefined;
-            for (const observed of observations) releaseCaptured(observed);
-            observations.length = 0;
+            const pending = candidateScope.discard();
             this.contexts.delete(owner);
+            if (issues.length || pending.length) throw cleanupFailure([...issues, ...pending]);
         } };
         this.contexts.add(owner);
         try {
@@ -337,53 +322,32 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             const previous = this.presentations;
             const presentationTime = Math.max(Date.now(), this.presentationTime);
             const issues = new Map<string, AppIssue>();
-            const preparedApps: Pick<AppProjection, 'app' | 'captured'>[] = [];
+            const projections: AppProjection[] = [];
             for (const app of apps) {
                 const { appId, name: appName, installationId } = app;
+                if (released || this.generation !== generation) break;
                 if (!appId || !app.appInstanceId || app.status !== 'running') continue;
                 if (expansion?.appId !== appId && this.windowNotes.get(app.appInstanceId)?.has('')) continue;
-                let candidate: ObservationCandidate | undefined;
                 try {
                     if (!isInstanceName(appName) || !isInstanceName(appId))
                         throw new AppProjectionError('AOTUI_APP_IDENTITY_INVALID',
                             'App names and IDs use ASCII letters, digits and underscores and must include a nondigit.');
-                    const observed = await this.runningApp(app).observe();
+                    const observed = await candidateScope.observe(this.runningApp(app));
                     if (observed.status !== 'prepared') {
                         const { code, message, path } = observed.issue;
                         throw new AppProjectionError(code, message, path);
                     }
-                    candidate = observed.candidate;
+                    const { candidate } = observed;
                     const { observation } = candidate;
-                    if (released || this.generation !== generation) {
-                        candidate.discard();
-                        continue;
-                    }
-
-                    if (observation.tools.some(tool => !object(tool.inputSchema)))
-                        throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
-                            'This App Tool has an invalid input schema. Declare a JSON Schema object and refresh the context.');
-                    const captured: CapturedObservation = { candidate, observation, released: false };
-                    if (!observation.views.length && !observation.tools.length) {
-                        releaseCaptured(captured);
-                        continue;
-                    }
-                    observations.push(captured);
-                    preparedApps.push({ app, captured });
+                    if (released || this.generation !== generation) continue;
+                    if (!observation.views.length && !observation.tools.length) continue;
+                    projections.push({ app, candidate, observation });
                 } catch (error) {
-                    candidate?.discard();
+                    if (error instanceof Error && 'issues' in error) throw error;
                     issues.set(installationId, appIssueFrom(error));
                 }
             }
 
-            const names = projectNativeToolNames(preparedApps.map(({ captured }) => captured.observation));
-            const projections: AppProjection[] = preparedApps.flatMap((app, index) => {
-                const projection = names[index]!;
-                if (projection.status === 'ready') return [{ ...app, tools: projection.tools }];
-                const { code, message, path } = projection.issue;
-                issues.set(app.app.installationId, boundedIssue(code, message, path));
-                releaseCaptured(app.captured);
-                return [];
-            });
             const catalog = new Map<string, DisplayedWindows>();
             for (const app of apps) {
                 if (!app.appId || !app.appInstanceId) continue;
@@ -409,7 +373,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 const window = catalog.get(expansion.appId);
                 const required = mount === undefined ? window?.views : window?.views.filter(view => view.viewInstanceId === mount);
                 if (!expanding || !window || issues.has(expanding.installationId) || (mount !== undefined && !required?.length) ||
-                    required?.some(view => !projection?.captured.observation.views.some(observed =>
+                    required?.some(view => !projection?.observation.views.some(observed =>
                         observed.id === view.viewId && observed.viewInstanceId === view.viewInstanceId)))
                     throw new AppProjectionError('WINDOW_EXPANSION_UNAVAILABLE', 'The expanded Window could not be observed.');
                 displayCatalog.set(expansion.appId, mount === undefined ? { ...window, expanded: true } : { ...window,
@@ -418,6 +382,8 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             const displayApp = (app: AppDiscoveryInfo): DisplayedApp =>
                 ({ ...app, status: displayedStatus(app, app.appId ? displayCatalog.get(app.appId) : undefined) });
             const displayed = apps.map(displayApp);
+            const catalogApps = new Map<string, AppDiscoveryInfo>(apps.flatMap(app => app.appId ? [[app.appId, app]] : []));
+            const candidates = new Map(projections.map(({ candidate }) => [candidate.observation.observationId, candidate]));
             const viewNotes = new Map<string, string>();
             for (const app of displayCatalog.values()) for (const view of app.views) {
                 if (!view.expanded) viewNotes.set(windowKey(app.appId, view.viewInstanceId),
@@ -437,12 +403,10 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             const locate = (report: WindowBudgetContent) => this.locateBudgetReport(report, scope, generation);
             const render = ({ hints, managementOnly }: WindowPresentation, notice?: BudgetNotice, includeReportTool = false): RenderedWindows => {
                 const messages: MessageWithTimestamp[] = [];
-                const tools: Record<string, Tool> = {};
+                const tools: Record<string, Tool> = Object.create(null);
                 const routes = new Map<string, ToolRoute>();
                 const windows: WindowCost[] = [];
                 const presentations = new Map<string, PresentationEntry>();
-                const selections = new Map<string, ObservationWindowSelection>();
-                const renderIssues = new Map(issues);
                 let nextTimestamp = presentationTime;
                 const timestamp = (id: string, content: string, bodyBytes?: number) => {
                     const digest = createHash('sha256').update(content).digest('hex');
@@ -453,121 +417,80 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 };
                 if (appsEnabled && this.options.includeInstruction !== false && !managementOnly)
                     messages.push({ role: 'user', content: this.instruction, timestamp: 1, region: 'static' });
-                const visibleApps = projections.flatMap(projection => {
-                    const { captured: { observation }, app, tools: declared } = projection;
-                    if (managementOnly || displayApp(app).status !== 'running') return [];
-                    const { source } = observation;
-                    const views = observation.views.filter(view => !viewNotes.has(windowKey(source.appId, view.viewInstanceId)));
-                    const receiverViews = views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-                    const refViews = receiverViews.filter(view => !hints.has(windowKey(source.appId, view.viewInstanceId)));
-                    selections.set(source.appId, { receiverViews, refViews });
-                    const bodies = new Set(refViews.map(view => view.viewInstanceId));
-                    const refs: PresentedRef[] = observation.refs.filter(ref => bodies.has(ref.viewInstanceId)).map(ref => ({ source, ref }));
-                    const live = [...declared].flatMap(([name, tool]) => {
-                        const receivers = receiverViews.filter((_, index) => views[index]!.type === tool.viewType &&
-                            (!tool.eligibleViewIds || tool.eligibleViewIds.includes(views[index]!.id)));
-                        return receivers.length ? [{ name, tool, receivers }] : [];
-                    });
-                    return [{ app, observation, refs, live }];
+                const capabilities = appsEnabled
+                    ? (Object.keys(desktopToolNames) as DesktopCapability[]).filter(key =>
+                        key !== 'readWindowBudget' || hasReports || !!notice || includeReportTool)
+                    : [];
+                const activity = managementOnly ? '' : '\n\n## System Logs\n' + (logs.length
+                    ? logs.map(log => `- [${formatTimestamp(log.timestamp)}] ${log.message}`).join('\n')
+                    : this.disabledApps.size ? '- Desktop-wide logs are hidden while application filtering is active.' : '- No recent activity.');
+                const budgetText = notice ? `\n\nContext budget: ${notice.full.estimated} estimated; ${notice.full.inputLimit} available. ` +
+                    `Use the window controls or ${BUDGET_TOOL} with report_id ${notice.reportId}.\n` : '';
+                const projected = projectDesktop({
+                    apps: projections.map(({ observation }) => ({
+                        observation,
+                        windows: new Map(observation.views.map(view => {
+                            const key = windowKey(observation.source.appId, view.viewInstanceId);
+                            const note = viewNotes.get(key);
+                            const choice: ViewPresentation = note !== undefined ? { kind: 'collapsed', note }
+                                : hints.has(key) ? { kind: 'hint', text: budgetHint(notice!.full) } : { kind: 'body' };
+                            return [view.viewInstanceId, choice];
+                        })),
+                    })),
+                    catalog: apps.map(app => {
+                        const windows = app.appId ? displayCatalog.get(app.appId) : undefined;
+                        const note = windows?.expanded === false ? this.windowNotes.get(windows.instanceId)?.get('') ?? '' : undefined;
+                        return { app, windows, note, issue: issues.get(app.installationId) };
+                    }),
+                    capabilities, includeInstruction: false, compact: managementOnly, strict: toolSchema?.strict,
+                    desktopSuffix: activity + budgetText,
+                    emptyCatalogText: installedApps.length ? '- No applications enabled for this context.' : '- No applications installed.',
+                    checkTool: (name, schema, source) => {
+                        const rejected = toolSchema?.check?.(schema);
+                        if (!rejected) return;
+                        const error = new ProviderToolSchemaError(toolSchema!.label, name, rejected.path, rejected.reason);
+                        if ((expansion && source?.appId === expansion.appId) || (!source && name !== INSPECT_REF)) throw error;
+                        return boundedIssue(error.code, error.message, error.path);
+                    },
                 });
-                // Schema support is evaluated using the same visible receiver and Ref sets that will be adopted.
-                let visibleRefs: readonly PresentedRef[];
-                for (;;) {
-                    routes.clear();
-                    for (const key of Object.keys(tools)) delete tools[key];
-                    const current = visibleApps.filter(({ app }) => !renderIssues.has(app.installationId));
-                    visibleRefs = current.flatMap(app => app.refs);
-                    let removed = false;
-                    for (const { app, observation, live } of current) for (const { name, tool, receivers } of live) {
-                        try {
-                            const input = projectNativeToolSchema(tool, observation.source, receivers, visibleRefs);
-                            const issue = toolSchema?.check?.(input);
-                            if (issue) throw new ProviderToolSchemaError(toolSchema!.label, name, issue.path, issue.reason);
-                            tools[name] = { description: tool.description + '\nApp ID ' + observation.source.appId +
-                                ', view_type ' + tool.viewType + ' (' + tool.multiplicity + ').', inputSchema: jsonSchema(input) };
-                            routes.set(name, { app, observationId: observation.observationId, toolId: tool.id,
-                                multiplicity: tool.multiplicity, programInput: programToolInput(input, tool.inputSchema) });
-                        } catch (error) {
-                            if (expansion?.appId === observation.source.appId) throw error;
-                            const issue = error instanceof ProviderToolSchemaError
-                                ? boundedIssue(error.code, error.message, error.path)
-                                : error instanceof SnapshotDataError
-                                    ? boundedIssue(error.code, name + ': ' + error.message, error.path) : appIssueFrom(error);
-                            renderIssues.set(app.installationId, issue);
-                            selections.delete(observation.source.appId);
-                            removed = true;
-                            break;
-                        }
-                    }
-                    if (!removed) break;
+                const visibleRefs = projected.refs;
+                if (expansion) {
+                    const failed = projected.issues.find(({ appId }) => appId === expansion.appId)?.issue;
+                    if (failed) throw new AppProjectionError(failed.code, failed.message, failed.path);
                 }
-                const inspectIssue = visibleRefs.length ? toolSchema?.check?.(inspectSchema) : undefined;
-                const canInspect = visibleRefs.length > 0 && !inspectIssue;
-                if (canInspect) tools[INSPECT_REF] = {
-                    description: 'Read a visible Ref’s declared schema or the original value of a public Ref.',
-                    inputSchema: jsonSchema(inspectSchema),
-                };
-                else if (inspectIssue) {
-                    const content = formatAppIssue(boundedIssue('MODEL_TOOL_SCHEMA_UNSUPPORTED',
-                        'The Ref inspection tool cannot be encoded. ' + inspectIssue.reason, inspectIssue.path));
+                for (const { issue } of projected.systemIssues) {
+                    const content = formatAppIssue(issue);
                     messages.push({ role: 'user', region: 'dynamic', content, timestamp: timestamp('ref-inspection-availability', content) });
                 }
-                for (const projection of projections) {
-                    const { observation } = projection.captured;
-                    const appId = observation.source.appId;
-                    const selected = selections.get(appId);
-                    if (!selected || managementOnly || displayApp(projection.app).status === 'collapsed') continue;
-                    const bodies = new Set(selected.refViews.map(view => view.viewInstanceId));
-                    for (const view of observation.views) {
-                        const key = windowKey(appId, view.viewInstanceId);
-                        const note = viewNotes.get(key);
-                        const body = bodies.has(view.viewInstanceId);
-                        const refs = body ? observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId) : [];
-                        const markup = buildViewMessageMarkup({ appId, appName: projection.app.name, viewId: view.id, viewType: view.type,
-                            markup: note !== undefined ? collapsedWindowText(note) : body ? view.content.value
-                                : budgetHint(Buffer.byteLength(view.content.value, 'utf8'), notice!.full), refs });
-                        const bytes = Buffer.byteLength(markup, 'utf8');
-                        windows.push({ key, app_id: appId, view_id: view.id,
-                            presentation: note !== undefined ? 'note' : body ? 'body' : 'hint', bytes });
-                        messages.push({ role: 'user', region: view.region,
-                            timestamp: timestamp(key, view.region + '\0' + markup, body ? bytes : undefined), content: markup });
-                    }
+                for (const tool of projected.tools) {
+                    tools[tool.name] = { description: tool.description, inputSchema: jsonSchema(tool.inputSchema) };
+                    if (tool.route) routes.set(tool.name, { app: catalogApps.get(tool.route.appId)!,
+                        programInput: programToolInput(tool.inputSchema, tool.route.businessSchema) });
+                }
+                for (const view of projected.views) {
+                    const key = windowKey(view.appId, view.viewInstanceId);
+                    const bytes = Buffer.byteLength(view.content, 'utf8');
+                    windows.push({ key, app_id: view.appId, view_id: view.viewId,
+                        presentation: view.kind === 'collapsed' ? 'note' : view.kind, bytes });
+                    messages.push({ role: 'user', region: view.region,
+                        timestamp: timestamp(key, view.region + '\0' + view.content, view.kind === 'body' ? bytes : undefined), content: view.content });
                 }
                 if (appsEnabled) {
-                    const entries = displayed.map((app, index) => {
-                        const window = app.appId ? displayCatalog.get(app.appId) : undefined;
-                        const note = app.status === 'collapsed' && window ? this.windowNotes.get(window.instanceId)?.get('') ?? '' : undefined;
-                        const noteMarkup = note !== undefined && !managementOnly ? escapeXmlText(collapsedWindowText(note)) : undefined;
-                        if (app.appId && noteMarkup) windows.push({ key: 'app:' + app.appInstanceId, app_id: app.appId,
-                            presentation: 'note', bytes: Buffer.byteLength(noteMarkup, 'utf8') });
-                        return [
-                            `${index + 1}. ${app.name}`, `    - installation_id: ${app.installationId}`, ...(app.appId ? [`    - app_id: ${app.appId}`] : []),
-                            `    - Status: ${formatAppStatus(app.status)}`, ...(noteMarkup ? ['    - ' + noteMarkup] : []),
-                            ...(!managementOnly ? [`    - What it is: ${app.whatItIs || app.description || 'Not provided'}`,
-                                `    - When to use: ${app.whenToUse || 'Not provided'}`] : []),
-                            ...(renderIssues.has(app.installationId) ? [`    - Semantic status: ${formatAppIssue(renderIssues.get(app.installationId)!)}`] : []),
-                            ...(app.status === 'running' ? (window?.views ?? []).map(view => {
-                                const collapsed = !view.expanded;
-                                return `    - view_id: ${view.viewId} [${collapsed ? 'collapsed; expand' : 'open; collapse'}${view.canClose ? ', close' : ''}]`;
-                            }) : []),
-                        ].join('\n');
-                    });
-                    const activity = managementOnly ? '' : '\n\n## System Logs\n' + (logs.length
-                        ? logs.map(log => `- [${formatTimestamp(log.timestamp)}] ${log.message}`).join('\n')
-                        : this.disabledApps.size ? '- Desktop-wide logs are hidden while application filtering is active.' : '- No recent activity.');
-                    const budgetText = notice ? `\n\nContext budget: ${notice.full.estimated} estimated; ${notice.full.inputLimit} available. ` +
-                        `Use the window controls or ${BUDGET_TOOL} with report_id ${notice.reportId}.\n` : '';
-                    const desktopMarkup = '<desktop>\n\n## Installed TUI Applications\n' +
-                        (entries.length ? entries.join('\n') : installedApps.length ? '- No applications enabled for this context.' : '- No applications installed.') +
-                        activity + budgetText + '\n\n</desktop>';
-                    messages.push({ role: 'user', region: 'dynamic', content: desktopMarkup, timestamp: timestamp('desktop', desktopMarkup) });
+                    if (!managementOnly) for (const app of displayed) {
+                        if (app.status !== 'collapsed' || !app.appId || !app.appInstanceId) continue;
+                        const note = collapsedWindowText(this.windowNotes.get(app.appInstanceId)?.get('') ?? '');
+                        windows.push({ key: 'app:' + app.appInstanceId, app_id: app.appId, presentation: 'note',
+                            bytes: Buffer.byteLength(escapeXmlText(note), 'utf8') });
+                    }
+                    const content = projected.desktop;
+                    messages.push({ role: 'user', region: 'dynamic', content, timestamp: timestamp('desktop', content) });
                 }
-                const control = appsEnabled ? this.controls(displayed, displayCatalog, tools,
-                    hasReports || !!notice || includeReportTool, toolSchema) : undefined;
+                const canInspect = Object.hasOwn(tools, INSPECT_REF);
+                const control = appsEnabled ? this.controls(displayed, displayCatalog, projected.tools, toolSchema) : undefined;
                 let consoleTool = managementOnly ? undefined : createConsoleTool(
                     [...[...routes].map(([name, route]) => ({ name, input: route.programInput })),
-                        ...(visibleRefs.length ? [{ name: INSPECT_REF, input: { schema: inspectSchema, refOnly: [] } }] : [])],
-                    visibleRefs, this.consoleExecutor, toolSchema?.strict === true);
+                        ...(canInspect ? [{ name: INSPECT_REF, input: { schema: inspectSchema, refOnly: [] } }] : [])],
+                    visibleRefs, this.consoleExecutor, toolSchema);
                 if (consoleTool) {
                     const issue = toolSchema?.check?.(consoleTool.schema);
                     if (issue) {
@@ -576,7 +499,11 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                             (toolSchema?.strict ? ' Use non-strict mode to enable run_code.' : ''), issue.path));
                         messages.push({ role: 'user', region: 'dynamic', content, timestamp: timestamp('console-availability', content) });
                         consoleTool = undefined;
-                    } else tools[RUN_CODE] = consoleTool.tool;
+                    } else {
+                        tools[RUN_CODE] = consoleTool.tool;
+                        const content = consoleTool.bindingsMessage;
+                        messages.push({ role: 'user', region: 'dynamic', content, timestamp: timestamp('console-bindings', content) });
+                    }
                 }
                 const toolsSettlingOnAbort = new Set(routes.keys());
                 if (consoleTool && this.consoleExecutor.settlesOnAbort) toolsSettlingOnAbort.add(RUN_CODE);
@@ -603,31 +530,36 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                             if (JSON.stringify(current) !== JSON.stringify(expected))
                                 throw Object.assign(new Error('A Window changed while preparing the model request.'), { code: 'SEMANTIC_WINDOW_CHANGED' });
                         }
-                        const selected = observations.flatMap(item => {
-                            const windows = selections.get(item.observation.source.appId);
-                            if (!windows || (!windows.receiverViews.length && !windows.refViews.length)) releaseCaptured(item);
-                            return !item.released && windows ? [{ candidate: item.candidate, windows }] : [];
-                        });
+                        const selected = projected.appSelections.map(({ observationId, windows }) =>
+                            ({ candidate: candidates.get(observationId)!, windows }));
                         const result = this.desktop.adoptTurn({ apps: selected });
                         if (result.status === 'rejected') {
-                            owner.release();
-                            throw Object.assign(new Error('The prepared context could not be adopted.'), {
+                            const error = Object.assign(new Error('The prepared context could not be adopted.'), {
                                 code: 'SEMANTIC_ADOPTION_FAILED', cause: result.issue,
                             });
+                            releaseAfterFailure(owner, error);
                         }
                         turn = result.turn;
-                        if (!turn.isCurrent || released || this.generation !== generation) {
-                            turn.release();
+                        const issues = [...result.cleanupIssues, ...candidateScope.discard()];
+                        if (!result.turn.isCurrent || released || this.generation !== generation) {
+                            if (issues.length) this.reportCleanupIssues(issues);
                             owner.release();
                             throw Object.assign(new Error('The App selection changed during adoption.'), { code: 'SEMANTIC_CONTEXT_RELEASED' });
                         }
-                        for (const prior of this.contexts) if (prior !== owner) prior.release();
+                        for (const prior of this.contexts) if (prior !== owner) {
+                            try { prior.release(); }
+                            catch (error) {
+                                if (error instanceof Error && 'issues' in error) issues.push(...error.issues as InteractionIssue[]);
+                                else throw error;
+                            }
+                        }
                         this.presentations = presentations;
                         this.presentationTime = nextTimestamp;
                         for (const [installationId, signal] of attention) {
                             if (this.pendingAttention.get(installationId) === signal) this.pendingAttention.delete(installationId);
                         }
                         adopted = context;
+                        if (issues.length) this.reportCleanupIssues(issues);
                     },
                     executeTool: async (name, args, callId, budget, signal) => {
                         if (released || this.disposed || !this.enabled) return name in tools ? unavailable(name, callId, 'SEMANTIC_CONTEXT_RELEASED', 'This observation was released; obtain a new context.') : undefined;
@@ -637,9 +569,9 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                         if (name === RUN_CODE && consoleTool) {
                             const cancellation = signal ? AbortSignal.any([signal, consoleLifetime.signal]) : consoleLifetime.signal;
                             return consoleTool.execute(args, callId, active, cancellation, async (name, input, childId, childSignal) => {
-                                if (name === INSPECT_REF && visibleRefs.length) return { result: await inspect(active, input, childId) };
+                                if (name === INSPECT_REF && canInspect) return { result: await inspect(active, input, childId) };
                                 const route = routes.get(name);
-                                return route ? this.invokeApp(active, route, name, input, childId, childSignal)
+                                return route ? this.invokeApp(active, route, projected.tools, name, input, childId, childSignal)
                                     : { result: unavailable(name, childId, 'TOOL_UNAVAILABLE', 'This Tool was not published in the original request.') };
                             }, (locator, result) => this.reportPendingReceipt(locator, result, locator.invocationId));
                         }
@@ -648,7 +580,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                         if (handler) return handler(args, callId, () => !released && active.isCurrent ? active : undefined, budget);
                         const route = routes.get(name);
                         if (!route) return undefined;
-                        const called = await this.invokeApp(active, route, name, args, callId, signal);
+                        const called = await this.invokeApp(active, route, projected.tools, name, args, callId, signal);
                         if (called.pending) this.reportPendingReceipt(called.pending, called.result);
                         return called.result;
                     },
@@ -658,7 +590,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             if (released || this.generation !== generation) { owner.release(); return { messages: [], tools: {} }; }
             const full = render({ hints: new Set(), managementOnly: false });
             return full.context;
-        } catch (error) { owner.release(); throw error; }
+        } catch (error) { releaseAfterFailure(owner, error); }
     }
 
     private budgetScopeCurrent(scope: BudgetReportScope): boolean {
@@ -723,44 +655,38 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
         this.windowRevision = Symbol();
     }
 
+    private reportCleanupIssues(issues: readonly InteractionIssue[]): void {
+        try {
+            if (this.options.onCleanupIssues) this.options.onCleanupIssues(issues);
+            else console.warn('Desktop candidate cleanup failed', issues.map(issue => issue.code));
+        } catch {
+            console.warn('Desktop candidate cleanup failed', issues.map(issue => issue.code));
+        }
+    }
+
     private controls(apps: readonly DisplayedApp[], catalog: ReadonlyMap<string, DisplayedWindows>,
-        tools: Record<string, Tool>, includeReportTool: boolean, toolSchema?: ProviderToolSchemaPolicy): Map<string, Control> {
+        tools: readonly NativeTool[], toolSchema?: ProviderToolSchemaPolicy): Map<string, Control> {
         const handlers = new Map<string, Control>();
         const operations = new Map<string, { target: string; result: Promise<ToolResult> }>();
-        const addRequiredTool = (name: string, description: string, schema: Parameters<typeof jsonSchema>[0]) => {
-            const issue = toolSchema?.check?.(schema);
-            if (issue) throw new ProviderToolSchemaError(toolSchema!.label, name, issue.path, issue.reason);
-            tools[name] = { description, inputSchema: jsonSchema(schema) };
-        };
-        const actions = [
-            { action: 'open', statuses: ['pending', 'closed'], description: 'Start an application using its installation_id from the Desktop.' },
-            { action: 'close', statuses: ['running', 'collapsed'], description: 'Close the current application selected by app_id.' },
-            { action: 'collapse', statuses: ['running'], description: 'Collapse an application. Keep an optional note in its place.' },
-            { action: 'expand', statuses: ['collapsed'], description: 'Expand a collapsed application when the model budget allows it.' },
-            { action: 'collapseView', statuses: ['running'], description: 'Collapse an open View and optionally leave a note.' },
-            { action: 'expandView', statuses: ['running'], description: 'Expand a collapsed View when the model budget allows it.' },
-            { action: 'closeView', statuses: ['running'], description: 'Ask an independently closable View to close, including when collapsed.' },
-        ] as const;
-        for (const { action, statuses, description } of actions) {
+        const actions = {
+            open: ['pending', 'closed'], close: ['running', 'collapsed'], collapse: ['running'], expand: ['collapsed'],
+            collapseView: ['running'], expandView: ['running'], closeView: ['running'],
+        } as const;
+        for (const action of Object.keys(actions) as (keyof typeof actions)[]) {
+            const name = desktopToolNames[action];
+            const tool = tools.find(tool => tool.name === name);
+            if (!tool) continue;
             const opening = action === 'open';
             const isView = action === 'collapseView' || action === 'expandView' || action === 'closeView';
             const notes = action === 'collapse' || action === 'collapseView';
             const expanding = action === 'expand' || action === 'expandView';
             const fieldName = opening ? 'installation_id' : 'app_id';
-            const required = isView ? [fieldName, 'view_id'] : [fieldName];
-            if (notes && toolSchema?.strict) required.push('note');
-            const allowsStatus = (status: DisplayedApp['status']) => (statuses as readonly DisplayedApp['status'][]).includes(status);
+            const required = tool.inputSchema.required as readonly string[];
+            const allowsStatus = (status: DisplayedApp['status']) => (actions[action] as readonly DisplayedApp['status'][]).includes(status);
             const targets = new Map(apps.filter(app => allowsStatus(app.status)).flatMap(app => {
                 const id = opening ? app.installationId : app.appId && app.appInstanceId ? app.appId : undefined;
                 return id ? [[id, app] as const] : [];
             }));
-            if (!opening && action !== 'close' && (!targets.size || (isView && ![...targets.keys()].some(id =>
-                catalog.get(id)?.views.some(view => action === 'closeView' ? view.canClose : view.expanded !== expanding))))) continue;
-            const name = desktopToolNames[action];
-            addRequiredTool(name, description, { type: 'object', properties: {
-                [fieldName]: { type: 'string' }, ...(isView ? { view_id: { type: 'string' } } : {}),
-                ...(notes ? { note: { type: 'string', description: 'Note to show in place of the content. Use an empty string for no note.' } } : {}),
-            }, required, additionalProperties: false });
             handlers.set(name, async (input, callId, current, budget) => {
                 const fields = object(input) ? Object.getOwnPropertyDescriptors(input) : undefined;
                 const value = (key: string): string | undefined => {
@@ -876,11 +802,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 return result;
             });
         }
-        if (includeReportTool) {
-            addRequiredTool(BUDGET_TOOL, 'Read one page of the window budget report for this conversation.', {
-                type: 'object', properties: { report_id: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
-                required: ['report_id', 'page'], additionalProperties: false,
-            });
+        if (tools.some(tool => tool.name === BUDGET_TOOL)) {
             handlers.set(BUDGET_TOOL, async (args, callId) => {
                 const report = object(args) && typeof args.report_id === 'string' ? this.reports.get(args.report_id) : undefined;
                 const page = object(args) ? args.page : undefined;

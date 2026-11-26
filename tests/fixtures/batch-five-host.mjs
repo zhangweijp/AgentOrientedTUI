@@ -6,7 +6,7 @@ import { Marked } from 'marked';
 import { createRuntime } from '@aotui/runtime';
 import { projectNativeToolSchema, buildPublicToolName, buildViewMessageMarkup, DEFAULT_AOTUI_SYSTEM_INSTRUCTION, escapeXmlText } from '@aotui/runtime/adapters';
 import { fixtureAppPath, appClient, fixtureProvider, journal, modelCall, watchUntil } from './batch-two-support.mjs';
-import { BACKSLASH_CODE, DIAGRAM, FILES, PLAIN_APP, PIPE_CODE, PREACT_APP, RAW_VIEWS, STOCK } from './dist/batch-five-content.js';
+import { BACKSLASH_CODE, DIAGRAM, FILES, PLAIN_APP, PIPE_CODE, STOCK_APP, RAW_VIEWS, STOCK } from './dist/batch-five-content.js';
 
 const [mode, folder, phase] = process.argv.slice(2);
 assert.ok(['product', 'independent'].includes(mode));
@@ -18,8 +18,8 @@ const desktop = await runtime.createDesktop();
 const marked = new Marked({ gfm: true });
 const facts = { mode, dataDirectory, requests: provider.requests, calls: [], passed: false };
 
-const change = (id, operation) => modelCall(id, PREACT_APP + '-change', { operation });
-const apply = (id, view, value = '$ref.stock_preact.left_1.value') => modelCall(id, PREACT_APP + '-apply', { view_id: view, value });
+const change = (id, operation) => modelCall(id, STOCK_APP + '-change', { operation });
+const apply = (id, view, value = '$ref.' + STOCK_APP + '.left_1.value') => modelCall(id, STOCK_APP + '-apply', { view_id: view, value });
 const ping = id => modelCall(id, PLAIN_APP + '-ping', {});
 const toolNames = request => request.tools.map(tool => tool.function.name);
 
@@ -30,7 +30,7 @@ function page(request, app, id) {
     const xml = entry.content;
     const node = new DOMParser().parseFromString(xml, 'text/xml').documentElement;
     assert.equal(node.localName, 'view');
-    assert.deepEqual([...node.getAttributeNames()].sort(), ['app_id', 'app_name', 'view_id', 'view_type']);
+    assert.deepEqual([...node.getAttributeNames()].sort(), ['app_id', 'app_name', 'region', 'view_id', 'view_type']);
     assert.equal(node.getAttribute('app_id'), app);
     assert.equal(node.getAttribute('app_name'), app);
     assert.equal(node.getAttribute('view_id'), id);
@@ -113,7 +113,7 @@ function independentHost(apps) {
                 const catalog = desktop.listApps().filter(item => item.appInstanceId);
                 const directory = [...catalog.map(item => `app_id ${item.appId}`), ...issues].map(escapeXmlText).join('\n');
                 const pages = observed.flatMap(({ app, observation }) => observation.views.map(view => ({ region: view.region,
-                    content: buildViewMessageMarkup({ appId: app.appId, appName: app.name, viewId: view.id, viewType: view.type,
+                    content: buildViewMessageMarkup({ appId: app.appId, appName: app.name, viewId: view.id, viewType: view.type, region: view.region,
                         markup: view.content.value, refs: observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId) }),
                 })));
                 const tools = observed.flatMap(({ observation }) => observation.tools.map(tool => {
@@ -193,24 +193,24 @@ async function inspect(client) {
     return result.observation;
 }
 
-async function scenario(host, preact, preactPath, plainPath) {
+async function scenario(host, inventory, inventoryPath, plainPath) {
     const initial = (await host.step('initial Markdown')).wire;
     const rawIds = Object.keys(RAW_VIEWS).map(key => [key, `${key}_1`]);
-    const raw = Object.fromEntries([PREACT_APP, PLAIN_APP].map(app => [app, Object.fromEntries(rawIds
+    const raw = Object.fromEntries([STOCK_APP, PLAIN_APP].map(app => [app, Object.fromEntries(rawIds
         .map(([key, id]) => [key, page(initial, app, id)]))]));
-    const filePage = page(initial, PREACT_APP, 'files_1');
+    const filePage = page(initial, STOCK_APP, 'files_1');
     const files = tableCells(filePage.body);
     facts.initial = { raw, expected: { raw: RAW_VIEWS, stock: STOCK, diagram: DIAGRAM },
-        stock: tableCells(page(initial, PREACT_APP, 'stock').body), files: { ...filePage, ...files },
-        diagram: [page(initial, PREACT_APP, 'diagram_1').body, page(initial, PLAIN_APP, 'diagram_1').body].map(diagram) };
+        stock: tableCells(page(initial, STOCK_APP, 'stock').body), files: { ...filePage, ...files },
+        diagram: [page(initial, STOCK_APP, 'diagram_1').body, page(initial, PLAIN_APP, 'diagram_1').body].map(diagram) };
     if (phase === 'baseline') return;
 
-    for (const app of [PREACT_APP, PLAIN_APP]) for (const [id, value] of Object.entries(RAW_VIEWS)) {
+    for (const app of [STOCK_APP, PLAIN_APP]) for (const [id, value] of Object.entries(RAW_VIEWS)) {
         assert.equal(raw[app][id].type, 'raw_markdown');
         assert.equal(raw[app][id].body, value, `${app} ${id}`);
         assert.doesNotMatch(raw[app][id].xml, /Available references/);
     }
-    assert.match(raw[PREACT_APP].split_raw.xml, /&amp;amp; &lt;literal&gt; 🧪/);
+    assert.match(raw[STOCK_APP].split_raw.xml, /&amp;amp; &lt;literal&gt; 🧪/);
     assert.match(raw[PLAIN_APP].raw.xml, /&#13;\n&#13;\n/);
     assert.deepEqual(facts.initial.stock.rows, STOCK);
     assert.deepEqual(facts.initial.stock.code, [PIPE_CODE, BACKSLASH_CODE]);
@@ -231,12 +231,12 @@ async function scenario(host, preact, preactPath, plainPath) {
     const marks = files.marks.map(row => row.map(cell => cell.map(([type, text, href]) => [type, text, href === null ? null : decodeURI(href)])));
     assert.deepEqual(marks, [[[], []], ...fileCases.map(([, , expected]) => [[], expected])]);
     assert.deepEqual(facts.initial.diagram, [{ lang: 'mermaid', text: DIAGRAM }, { lang: 'mermaid', text: DIAGRAM }]);
-    assert.match(page(initial, PREACT_APP, 'diagram_1').xml, /A --&gt; B/);
-    assert.match(page(initial, PREACT_APP, 'inline_flow_1').body, /Hello \*\*world\*\*!\nDone\.[\s\S]+First \*second\*\./);
+    assert.match(page(initial, STOCK_APP, 'diagram_1').xml, /A --&gt; B/);
+    assert.match(page(initial, STOCK_APP, 'inline_flow_1').body, /Hello \*\*world\*\*!\nDone\.[\s\S]+First \*second\*\./);
 
-    const first = await inspect(preact);
+    const first = await inspect(inventory);
     assert.equal((await host.step('make left read-only', [change('readonly', 'read_only')])).results[0].outcomeStatus, 'succeeded');
-    const readOnly = await inspect(preact);
+    const readOnly = await inspect(inventory);
     const itemViews = view => view.views.filter(view => view.type === 'item').map(({ id, viewInstanceId, content }) => ({ id, viewInstanceId, content }));
     assert.deepEqual(itemViews(readOnly), itemViews(first));
     assert.equal(new Set(itemViews(first).map(view => view.viewInstanceId)).size, 2);
@@ -244,13 +244,13 @@ async function scenario(host, preact, preactPath, plainPath) {
     assert.ok(readOnly.source.revision > first.source.revision);
     let newer;
     const selected = await host.step('use the shared tool after read-only', [apply('blocked-left', 'left_1'), apply('captured-ref', 'right_1')],
-        async () => { newer = await update(preactPath, preact, 'new_ref'); });
+        async () => { newer = await update(inventoryPath, inventory, 'new_ref'); });
     assert.ok(newer.source.revision > readOnly.source.revision);
     assert.deepEqual(itemViews(newer), itemViews(first));
     assert.deepEqual(readOnly.tools.find(tool => tool.name === 'apply').eligibleViewIds, ['right_1']);
-    for (const id of ['left_1', 'right_1']) assert.equal(page(selected.wire, PREACT_APP, id).xml, page(initial, PREACT_APP, id).xml);
-    assert.equal(toolNames(selected.wire).filter(name => name === PREACT_APP + '-apply').length, 1);
-    const schema = selected.wire.tools.find(tool => tool.function.name === PREACT_APP + '-apply').function.parameters;
+    for (const id of ['left_1', 'right_1']) assert.equal(page(selected.wire, STOCK_APP, id).xml, page(initial, STOCK_APP, id).xml);
+    assert.equal(toolNames(selected.wire).filter(name => name === STOCK_APP + '-apply').length, 1);
+    const schema = selected.wire.tools.find(tool => tool.function.name === STOCK_APP + '-apply').function.parameters;
     assert.equal(schema.properties.view_id.type, 'string');
     assert.equal(Object.hasOwn(schema.properties.view_id, 'enum'), false);
     assert.ok(schema.required.includes('view_id'));
@@ -265,31 +265,31 @@ async function scenario(host, preact, preactPath, plainPath) {
     const issue = { ...faulty.results[0].result.projection };
     assert.equal(issue.code, 'SNAPSHOT_INVALID');
     assert.equal(issue.path, '$.views[4].content');
-    assert.match(issue.message, /stock.*table 1.*row 2.*column 1.*[Mm]erged.*simple table or list/);
+    assert.match(issue.message, /Inventory data could not render a complete Markdown table/);
     assert.equal(faulty.results[1].outcomeStatus, 'rejected');
-    const diagnosis = await preact.preview();
+    const diagnosis = await inventory.preview();
     assert.deepEqual({ ...diagnosis.issue }, issue);
     const degraded = await host.step('use the healthy App while inventory is degraded', [ping('healthy-during-fault')]);
     assert.equal(degraded.wire.messages.some(message => typeof message.content === 'string' && message.content.startsWith('<view ') &&
-        message.content.split('\n', 1)[0].includes(` app_id="${PREACT_APP}"`)), false);
-    assert.ok(toolNames(degraded.wire).every(name => !name.startsWith(PREACT_APP + '-')));
+        message.content.split('\n', 1)[0].includes(` app_id="${STOCK_APP}"`)), false);
+    assert.ok(toolNames(degraded.wire).every(name => !name.startsWith(STOCK_APP + '-')));
     assert.ok(toolNames(degraded.wire).includes('system-close_app'));
     assert.ok(toolNames(degraded.wire).includes(PLAIN_APP + '-ping'));
     assert.deepEqual({ ...degraded.results[0].result }, { peer: 'healthy' });
     const notice = degraded.wire.messages.find(message => typeof message.content === 'string' && message.content.startsWith('<desktop>')).content;
-    assert.match(notice, /SNAPSHOT_INVALID.*stock.*table 1.*row 2.*column 1.*\$\.views\[4\]\.content/);
-    const repaired = await update(preactPath, preact, 'repair');
+    assert.match(notice, /SNAPSHOT_INVALID.*Inventory data.*\$\.views\[4\]\.content/);
+    const repaired = await update(inventoryPath, inventory, 'repair');
     assert.deepEqual(itemViews(repaired), itemViews(first));
     const restored = await host.step('show the repaired table');
-    const cells = tableCells(page(restored.wire, PREACT_APP, 'stock').body);
+    const cells = tableCells(page(restored.wire, STOCK_APP, 'stock').body);
     assert.deepEqual(cells.rows, STOCK.map((row, index) => index === 2 ? [row[0], '4'] : row));
-    assert.equal(page(restored.wire, PREACT_APP, 'files_1').xml, filePage.xml);
-    assert.ok(toolNames(restored.wire).includes(PREACT_APP + '-apply'));
+    assert.equal(page(restored.wire, STOCK_APP, 'files_1').xml, filePage.xml);
+    assert.ok(toolNames(restored.wire).includes(STOCK_APP + '-apply'));
 
     facts.calls = [selected, faulty, degraded].flatMap(turn => turn.results);
     facts.fault = { issue, diagnosis, notice, repaired: cells };
-    facts.effects = { writes: await journal(preactPath, 'writes'), stored: await readFile(join(preactPath, 'saved.txt'), 'utf8'),
-        diagnostics: await journal(preactPath, 'diagnostics'), handlers: await journal(preactPath, 'handler'), pings: await journal(plainPath, 'pings') };
+    facts.effects = { writes: await journal(inventoryPath, 'writes'), stored: await readFile(join(inventoryPath, 'saved.txt'), 'utf8'),
+        diagnostics: await journal(inventoryPath, 'diagnostics'), handlers: await journal(inventoryPath, 'handler'), pings: await journal(plainPath, 'pings') };
     assert.deepEqual(facts.effects, { writes: [{ operation: 'save_bad_table' }], stored: 'stored once', diagnostics: [issue],
         handlers: [{ id: 'right', value: 'left in original observation' }], pings: [{ peer: 'healthy' }] });
     facts.passed = true;
@@ -297,11 +297,11 @@ async function scenario(host, preact, preactPath, plainPath) {
 
 let host;
 try {
-    const preactPath = join(dataDirectory, 'preact'), plainPath = join(dataDirectory, 'plain');
-    const preact = await boot(PREACT_APP, 'batch-five-preact.js', preactPath);
+    const inventoryPath = join(dataDirectory, 'inventory'), plainPath = join(dataDirectory, 'plain');
+    const inventory = await boot(STOCK_APP, 'batch-five-inventory.js', inventoryPath);
     const plain = await boot(PLAIN_APP, 'batch-five-plain.js', plainPath);
-    host = mode === 'product' ? await productHost() : independentHost([preact, plain]);
-    await scenario(host, preact.client, preactPath, plainPath);
+    host = mode === 'product' ? await productHost() : independentHost([inventory, plain]);
+    await scenario(host, inventory.client, inventoryPath, plainPath);
 } finally {
     await host?.close?.();
     facts.shutdown = await runtime.beginClose().completion;

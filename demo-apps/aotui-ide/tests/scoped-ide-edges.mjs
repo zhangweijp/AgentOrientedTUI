@@ -10,8 +10,6 @@ import { ScopedLSP } from '../dist/core/scoped-lsp.js';
 import { readObservedFile, directoryIdentity } from '../dist/core/versioned-file-write.js';
 import { createFileWithParents, replaceObservedFile, renameObservedFile, deleteObservedFile } from '../dist/core/observed-file-actions.js';
 import { boundedJSON, closeDirectory, IDEError } from '../dist/core/ide-errors.js';
-import { createMemoryStateStorage } from '../../../runtime/dist/adapters/storage/memory-state-storage.js';
-import { createAppStatePersistence } from '../../../runtime/dist/worker-runtime/state-persistence.js';
 
 const working = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-ide-edges-')));
 const facts = { startedAt: new Date().toISOString(), working, cases: [], passed: false };
@@ -22,22 +20,29 @@ async function workspace(name) { const root = path.join(working, name); await fs
 const code = expected => error => { assert.equal(error.code ?? error.message.split(':')[0], expected); return true; };
 const rootSource = async root => ({ path: root, identity: await directoryIdentity(root), workspace: root, workspaceIdentity: await directoryIdentity(root) });
 async function session(root, options = {}) {
-    const id = 'edge' + ++sequence, namespace = JSON.stringify(['test', options.sessionKey ?? id]);
-    const backend = options.backend ?? createMemoryStateStorage({ maxStoredKeys: 128, maxStoredBytes: 8 * 1024 * 1024, maxRecordBytes: 262272, maxAddressBytes: 1024, maxActiveOwners: 8, maxClaimedNamespaces: 64 }, options.initial ?? []);
-    const opened = backend.open(id); assert.equal(opened.status, 'opened');
-    const managed = createAppStatePersistence({ instanceId: id, desktopId: 'test', appKey: id, storage: options.storage ? options.storage(opened.storage) : opened.storage });
-    const owner = new IDESession(options.port ? options.port(managed.port) : managed.port, { sessionKey: options.sessionKey ?? id,
-        historyPath: options.historyPath ?? path.join(working, id + '-history.json'), projectPath: root }, () => {});
+    const id = 'edge' + ++sequence, key = options.sessionKey ?? id;
+    const sessionPath = options.sessionPath ?? path.join(working, key + '-session.json');
+    if (options.initial !== undefined) {
+        await fs.mkdir(path.dirname(sessionPath), { recursive: true });
+        await fs.writeFile(sessionPath, typeof options.initial === 'string' ? options.initial : JSON.stringify(options.initial), 'utf8');
+    }
+    const owner = new IDESession({ sessionKey: key, sessionPath,
+        historyPath: options.historyPath ?? path.join(working, key + '-history.json'), projectPath: root }, () => {});
+    if (options.wrapRead) {
+        const orig = owner.sessionStore.read.bind(owner.sessionStore);
+        owner.sessionStore.read = () => options.wrapRead(orig);
+    }
     const call = (name, args, view = 'workspace') => owner.invoke(name, args, view);
-    const close = async () => { owner.stop(); return managed.close(() => owner.close()); };
-    return { owner, managed, backend, storage: opened.storage, namespace, call, close };
+    const close = async () => {
+        try { await owner.close(); return { ok: true, unmount: 'completed' }; }
+        catch { return { ok: false, unmount: 'failed' }; }
+    };
+    return { owner, sessionPath, call, close };
 }
-const sessionRecords = (sessionKey, values) => Object.entries(values).map(([key, value]) => ({
-    address: { namespace: JSON.stringify(['test', sessionKey]), key }, text: JSON.stringify({ version: 1, updatedAt: 1, value }),
-}));
+const sessionSnapshot = values => ({ version: 1, workspaceFolders: [], activeFiles: [], expandedDirs: [], ...values });
 async function savedValue(x, key) {
-    const receipt = await x.storage.read({ namespace: x.namespace, key }); assert.equal(receipt.status, 'found');
-    const parsed = JSON.parse(receipt.text); return Array.isArray(parsed) ? parsed : parsed.value;
+    const parsed = JSON.parse(await fs.readFile(x.sessionPath, 'utf8'));
+    return parsed[key];
 }
 
 try {
@@ -146,7 +151,7 @@ try {
         };
         let result; try { result = await x.owner.roots[0].creator({ relativePath: 'file', content: 'created' }); } finally { fs.open = open; }
         assert.equal(result.status, 'unknown'); assert.equal(closeCalls, 1); assert.equal(await fs.readFile(target, 'utf8'), 'created');
-        await assert.rejects(x.owner.close(), code('IDE_RESOURCE_CLEANUP_FAILED')); await x.managed.close(() => x.owner.close());
+        await assert.rejects(x.owner.close(), code('IDE_RESOURCE_CLEANUP_FAILED')); await x.close();
     });
     await run('independent language panels coexist while a replaced file rejects a late response', async () => {
         const root = await workspace('language-panels'), file = path.join(root, 'a.ts'); await fs.writeFile(file, 'const x = 1;');
@@ -236,16 +241,16 @@ try {
             assert.equal((await first.call('multi_open_dirs', { dirPaths: [nested] })).success, true); await first.close();
             await fs.rename(extra, extra + '-moved');
 
-            const restored = await session(root, { backend: first.backend, sessionKey }); owners.push(restored); await restored.owner.start();
+            const restored = await session(root, { sessionKey }); owners.push(restored); await restored.owner.start();
             assert.equal(restored.owner.ready, true); assert.deepEqual(restored.owner.roots.map(item => item.path), [root]);
             assert.deepEqual(restored.owner.unavailableRoots, [extra]); assert.equal(restored.owner.lsp.inspect().roots, 1);
             assert.ok(restored.owner.warnings.includes('RESTORED_WORKSPACE_UNAVAILABLE')); assert.ok(restored.owner.warnings.includes('RESTORED_FILE_UNAVAILABLE'));
             assert.deepEqual([...restored.owner.files.keys()], [file]); assert.ok(restored.owner.expanded.includes(nested)); assert.ok(!restored.owner.expanded.includes(extra));
             assert.equal((await restored.call('write_file', { filePath: file, content: 'after' })).success, true);
-            assert.equal(await fs.readFile(file, 'utf8'), 'after'); assert.equal((await restored.managed.port.flush()).ok, true);
+            assert.equal(await fs.readFile(file, 'utf8'), 'after'); await restored.owner.sessionStore.flush();
             assert.deepEqual(await savedValue(restored, 'workspaceFolders'), [root, extra]); await restored.close();
 
-            const again = await session(root, { backend: first.backend, sessionKey }); owners.push(again); await again.owner.start();
+            const again = await session(root, { sessionKey }); owners.push(again); await again.owner.start();
             assert.deepEqual(again.owner.unavailableRoots, [extra]); await assert.rejects(fs.stat(extra), { code: 'ENOENT' });
             await fs.rename(extra + '-moved', extra);
             assert.deepEqual(again.owner.unavailableRoots, [extra]); // Disk restoration alone does not admit it into this running App.
@@ -253,14 +258,14 @@ try {
             assert.deepEqual(reconnected.data, { added: 1, restored: 1 }); assert.deepEqual(again.owner.unavailableRoots, []);
             assert.equal(again.owner.lsp.inspect().roots, 2); assert.equal(again.owner.files.has(other), false);
             assert.ok(!again.owner.warnings.includes('RESTORED_WORKSPACE_UNAVAILABLE')); await again.close();
-            const final = await session(root, { backend: first.backend, sessionKey }); owners.push(final); await final.owner.start();
+            const final = await session(root, { sessionKey }); owners.push(final); await final.owner.start();
             assert.deepEqual(final.owner.roots.map(item => item.path), [root, extra]); assert.deepEqual(final.owner.unavailableRoots, []);
         } finally { for (const owner of owners) await owner.close(); }
     });
     await run('ENOENT and ENOTDIR restored entries can be explicitly removed without creating folders', async () => {
         const missing = path.join(working, 'unavailable-only'), parent = path.join(working, 'not-a-directory'); await fs.writeFile(parent, 'keep');
         const invalidParent = path.join(parent, 'child'), sessionKey = 'recovery-remove';
-        const x = await session(undefined, { sessionKey, initial: sessionRecords(sessionKey, { workspaceFolders: [missing + '/.', invalidParent] }) });
+        const x = await session(undefined, { sessionKey, initial: sessionSnapshot({ workspaceFolders: [missing + '/.', invalidParent] }) });
         try {
             await x.owner.start(); assert.equal(x.owner.ready, true); assert.deepEqual(x.owner.roots, []);
             assert.deepEqual(x.owner.unavailableRoots, [missing, invalidParent]); assert.equal(x.owner.lsp.inspect().roots, 0);
@@ -270,7 +275,7 @@ try {
             for (const folderPath of [missing + '/.', invalidParent]) assert.equal((await x.call('remove_folder_from_workspace', { folderPath })).data.removed, 1);
             assert.deepEqual(x.owner.unavailableRoots, []); assert.ok(!x.owner.warnings.includes('RESTORED_WORKSPACE_UNAVAILABLE'));
             assert.equal(await fs.readFile(parent, 'utf8'), 'keep'); await x.close();
-            const restarted = await session(undefined, { backend: x.backend, sessionKey });
+            const restarted = await session(undefined, { sessionKey });
             try { await restarted.owner.start(); assert.deepEqual(restarted.owner.roots, []); assert.deepEqual(restarted.owner.unavailableRoots, []); }
             finally { await restarted.close(); }
         } finally { await x.close(); }
@@ -278,7 +283,7 @@ try {
     await run('the 16 saved-root limit includes missing roots and permits reconnection or canonical deduplication', async () => {
         const root = await workspace('recovery-capacity'), alias = path.join(working, 'recovery-main-alias'); await fs.symlink(root, alias);
         const missing = Array.from({ length: 15 }, (_, index) => path.join(working, 'recovery-missing-' + index));
-        const sessionKey = 'recovery-capacity', initial = sessionRecords(sessionKey, { workspaceFolders: [root, ...missing] });
+        const sessionKey = 'recovery-capacity', initial = sessionSnapshot({ workspaceFolders: [root, ...missing] });
         // The explicit alias is a seventeenth spelling, but not a seventeenth root.
         const x = await session(alias, { sessionKey, initial });
         try {
@@ -291,7 +296,7 @@ try {
             await fs.symlink(root, missing[1]); assert.deepEqual((await x.call('add_folder_to_workspace', { folderPath: missing[1] })).data, { added: 0, restored: 1 });
             assert.equal(x.owner.roots.length + x.owner.unavailableRoots.length, 15);
             assert.equal((await x.call('add_folder_to_workspace', { folderPath: extra })).success, true);
-            assert.equal((await x.managed.port.flush()).ok, true);
+            await x.owner.sessionStore.flush();
             const saved = await savedValue(x, 'workspaceFolders'); assert.equal(saved.length, 16); assert.ok(!saved.includes(alias)); assert.ok(!saved.includes(missing[1]));
         } finally { await x.close(); }
     });
@@ -306,7 +311,7 @@ try {
             } finally { await explicit.close(); }
         }
         for (const fault of ['EACCES', 'EPERM', 'EIO', 'ELOOP', 'UNRECOGNIZED', 'cleanup']) {
-            const sessionKey = 'recovery-strict-' + fault, initial = sessionRecords(sessionKey, { workspaceFolders: [root, extra] });
+            const sessionKey = 'recovery-strict-' + fault, initial = JSON.stringify(sessionSnapshot({ workspaceFolders: [root, extra] }));
             const x = await session(root, { sessionKey, initial }), opendir = fs.opendir; let closed = 0;
             fs.opendir = async (directory, ...args) => {
                 if (String(directory) !== extra) return opendir(directory, ...args);
@@ -320,9 +325,9 @@ try {
                 assert.equal(x.owner.ready, false); assert.deepEqual(x.owner.unavailableRoots, []);
                 assert.equal(x.owner.error, fault === 'cleanup' ? 'IDE_DIRECTORY_CLOSE_UNCERTAIN'
                     : fault === 'UNRECOGNIZED' ? 'IDE_INITIALIZATION_FAILED' : 'IDE_IO_' + fault);
-                const saved = await x.storage.read({ namespace: x.namespace, key: 'workspaceFolders' }); assert.equal(saved.text, initial[0].text);
+                assert.equal(await fs.readFile(x.sessionPath, 'utf8'), initial);
                 if (fault === 'cleanup') { assert.equal(closed, 1); await assert.rejects(x.owner.close(), code('IDE_RESOURCE_CLEANUP_FAILED')); }
-            } finally { fs.opendir = opendir; await x.close(); }
+            } finally { fs.opendir = opendir; if (fault !== 'cleanup') await x.close(); }
         }
     });
     await run('invalid saved paths and corrupt JSON are not replaced with unavailable-root defaults', async () => {
@@ -330,12 +335,12 @@ try {
         for (const fault of ['workspaceFolders', 'activeFiles', 'expandedDirs', 'json']) {
             const sessionKey = 'recovery-invalid-' + fault, values = { workspaceFolders: [root, missing], activeFiles: [], expandedDirs: [] };
             if (fault !== 'json') values[fault] = ['relative/path'];
-            const initial = sessionRecords(sessionKey, values); if (fault === 'json') initial[0].text = '{broken';
+            const initial = fault === 'json' ? '{broken' : JSON.stringify(sessionSnapshot(values));
             const x = await session(root, { sessionKey, initial });
             try {
                 await assert.rejects(x.owner.start(), code('IDE_RECOVERY_FAILED')); assert.equal(x.owner.ready, false); assert.deepEqual(x.owner.unavailableRoots, []);
                 assert.equal(x.owner.error, 'IDE_RECOVERY_FAILED');
-                for (const record of initial) assert.equal((await x.storage.read(record.address)).text, record.text);
+                assert.equal(await fs.readFile(x.sessionPath, 'utf8'), initial);
             } finally { await x.close(); }
         }
     });
@@ -370,7 +375,7 @@ try {
         const bytes = JSON.stringify({ version: 1, workspaces: { [root]: entries }, metadata: { producer: 'fixture' } });
         await fs.writeFile(historyPath, bytes);
         const sessionKey = 'saved-session';
-        const initial = sessionRecords(sessionKey, { workspaceFolders: [root], activeFiles: [active], expandedDirs: [root] });
+        const initial = sessionSnapshot({ workspaceFolders: [root], activeFiles: [active], expandedDirs: [root] });
         const x = await session(undefined, { initial, sessionKey, historyPath });
         try {
             await x.owner.start();
@@ -386,14 +391,14 @@ try {
             assert.deepEqual(updated.workspaces[root].map(item => item.path), [active, recent]);
         } finally { assert.equal((await x.close()).ok, true); }
     });
-    await run('explicit read failure and stopping during startup release already admitted storage', async () => {
-        const root = await workspace('init'), x = await session(root, { port: port => ({ ...port, async load(key, ...args) { if (key === 'activeFiles') throw Object.assign(new Error('test read cap'), { code: 'CAPACITY_EXCEEDED' }); return port.load(key, ...args); } }) });
-        await assert.rejects(x.owner.start(), code('IDE_RECOVERY_FAILED')); const closed = await x.close(); assert.equal(closed.unmount, 'completed');
-        const entered = gate(), release = gate(), y = await session(root, { storage: base => ({ ...base, async read(address) { entered.resolve(); await release.promise; return base.read(address); } }) });
+    await run('explicit read failure and stopping during startup release cleanly', async () => {
+        const root = await workspace('init'), x = await session(root, { wrapRead: async () => { throw new IDEError('IDE_RECOVERY_FAILED'); } });
+        await assert.rejects(x.owner.start(), code('IDE_RECOVERY_FAILED')); await x.close();
+        const entered = gate(), release = gate(), y = await session(root, { wrapRead: async orig => { entered.resolve(); await release.promise; return orig(); } });
         const starting = y.owner.start(); void starting.catch(() => {}); await entered.promise;
         assert.equal(y.owner.ready, false); assert.equal(y.owner.error, null);
-        y.owner.stop(); const closing = y.managed.close(() => y.owner.close()); release.resolve(); await assert.rejects(starting, code('IDE_STOPPED'));
-        assert.equal((await closing).unmount, 'completed'); assert.equal(y.managed.getStats().pendingRequests, 0);
+        y.owner.stop(); const closing = y.close(); release.resolve(); await assert.rejects(starting, code('IDE_STOPPED'));
+        assert.equal((await closing).ok, true);
     });
     await run('search zero/error/root identity/result capacity and actual regex Worker deadline', async () => {
         const root = await workspace('search'), search = new ScopedSearch(), source = await rootSource(root);

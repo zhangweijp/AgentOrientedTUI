@@ -27,7 +27,7 @@ describe('Settings accessibility', () => {
         expect(onClose).toHaveBeenCalledOnce();
     });
 
-    it('focuses the first tab on open and keeps Tab and Shift+Tab within the dialog', async () => {
+    it('focuses the selected tab on open and keeps Tab and Shift+Tab within the dialog', async () => {
         const panel = (isOpen: boolean) => (
             <SettingsPanel isOpen={isOpen} initialTab="theme" onClose={vi.fn()} theme="dark" onThemeChange={vi.fn()} />
         );
@@ -36,7 +36,8 @@ describe('Settings accessibility', () => {
 
         const first = screen.getAllByRole('tab')[0];
         const last = screen.getByRole('radio', { name: 'Light theme' });
-        await waitFor(() => expect(first).toHaveFocus());
+        await waitFor(() => expect(screen.getByRole('tab', { name: 'Theme', selected: true })).toHaveFocus());
+        first.focus();
         fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
         expect(last).toHaveFocus();
         fireEvent.keyDown(last, { key: 'Tab' });

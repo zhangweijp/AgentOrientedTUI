@@ -8,7 +8,6 @@
     "main": "dist/index.js",
     "types": "dist/index.d.ts"
   },
-  "toolAuthoringProtocol": "view-type-tools-v7",
-  "appLifecycleSupport": "app-lifecycle-v2",
-  "persistenceSupport": "state-session-v2"
+  "toolAuthoringProtocol": "view-type-tools-v8",
+  "appLifecycleSupport": "app-lifecycle-v2"
 }

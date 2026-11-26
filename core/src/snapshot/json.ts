@@ -187,9 +187,14 @@ export function utf8Size(value: string): number {
 
 /** For diagnostics only. Equality and authorization compare canonical data, not this hash. */
 export function diagnosticDigest(bytes: Uint8Array): string {
-    let value = 0xcbf29ce484222325n;
-    for (const byte of bytes) {
-        value = BigInt.asUintN(64, (value ^ BigInt(byte)) * 0x100000001b3n);
+    let hi = 0xcbf29ce4;
+    let lo = 0x84222325;
+    for (let i = 0; i < bytes.length; i++) {
+        lo = (lo ^ bytes[i]!) >>> 0;
+        const t0 = (lo & 0xffff) * 0x1b3;
+        const t1 = (lo >>> 16) * 0x1b3 + (t0 >>> 16);
+        hi = (Math.imul(hi, 0x1b3) + (lo << 8) + (t1 >>> 16)) >>> 0;
+        lo = ((t1 << 16) | (t0 & 0xffff)) >>> 0;
     }
-    return 'fnv1a64:' + value.toString(16).padStart(16, '0');
+    return 'fnv1a64:' + hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0');
 }

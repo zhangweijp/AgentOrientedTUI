@@ -273,7 +273,7 @@ async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
             for (const view of result.views) {
                 if (!view.content) continue;
                 console.log(buildViewMessageMarkup({ appId, appName: app.name || appId,
-                    viewId: view.id, viewType: view.type,
+                    viewId: view.id, viewType: view.type, region: view.region,
                     markup: view.content.value }));
             }
         }

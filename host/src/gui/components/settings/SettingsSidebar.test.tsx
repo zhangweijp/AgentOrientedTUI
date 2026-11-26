@@ -27,7 +27,8 @@ describe('SettingsSidebar', () => {
 
             // Check that SVG icons are present (all tabs should have icons)
             const svgIcons = container.querySelectorAll('svg');
-            expect(svgIcons.length).toBe(4); // Model, Theme, MCP, Exit
+            expect(svgIcons).toHaveLength(screen.getAllByRole('tab').length);
+            expect(screen.getAllByRole('tab')).toHaveLength(8);
         });
 
         it('should render sidebar with correct styling', () => {
@@ -60,8 +61,8 @@ describe('SettingsSidebar', () => {
             );
 
             const modelButton = screen.getByText('Model').closest('button');
-            expect(modelButton).toHaveClass('bg-[var(--color-accent)/15]');
-            expect(modelButton).toHaveClass('text-[var(--color-accent)]');
+            expect(modelButton).toHaveClass('bg-[var(--mat-content-card-hover-bg)]');
+            expect(modelButton).toHaveAttribute('aria-selected', 'true');
         });
 
         it('should highlight Theme tab when activeTab is "theme"', () => {
@@ -71,8 +72,8 @@ describe('SettingsSidebar', () => {
             );
 
             const themeButton = screen.getByText('Theme').closest('button');
-            expect(themeButton).toHaveClass('bg-[var(--color-accent)/15]');
-            expect(themeButton).toHaveClass('text-[var(--color-accent)]');
+            expect(themeButton).toHaveClass('bg-[var(--mat-content-card-hover-bg)]');
+            expect(themeButton).toHaveAttribute('aria-selected', 'true');
         });
 
         it('should not highlight Model tab when activeTab is "theme"', () => {
@@ -80,7 +81,7 @@ describe('SettingsSidebar', () => {
             render(<SettingsSidebar activeTab="theme" onTabChange={onTabChange} />);
 
             const modelButton = screen.getByText('Model').closest('button');
-            expect(modelButton).not.toHaveClass('bg-[var(--color-accent)/15]');
+            expect(modelButton).not.toHaveClass('bg-[var(--mat-content-card-hover-bg)]');
             expect(modelButton).toHaveClass('bg-transparent');
         });
 
@@ -89,7 +90,7 @@ describe('SettingsSidebar', () => {
             render(<SettingsSidebar activeTab="model" onTabChange={onTabChange} />);
 
             const themeButton = screen.getByText('Theme').closest('button');
-            expect(themeButton).not.toHaveClass('bg-[var(--color-accent)/15]');
+            expect(themeButton).not.toHaveClass('bg-[var(--mat-content-card-hover-bg)]');
             expect(themeButton).toHaveClass('bg-transparent');
         });
 
@@ -169,16 +170,16 @@ describe('SettingsSidebar', () => {
             expect(themeButton).toHaveClass('duration-300');
         });
 
-        it('should apply uppercase and tracking to tab labels', () => {
+        it('should emphasize the selected tab label', () => {
             const onTabChange = vi.fn();
             render(<SettingsSidebar activeTab="model" onTabChange={onTabChange} />);
 
             const modelLabel = screen.getByText('Model');
             const themeLabel = screen.getByText('Theme');
 
-            expect(modelLabel).toHaveClass('uppercase');
-            expect(modelLabel).toHaveClass('font-medium');
-            expect(themeLabel).toHaveClass('uppercase');
+            expect(modelLabel).toHaveClass('font-semibold');
+            expect(modelLabel).toHaveClass('text-[var(--color-text-primary)]');
+            expect(themeLabel).toHaveClass('text-[var(--color-text-secondary)]');
             expect(themeLabel).toHaveClass('font-medium');
         });
 
@@ -187,7 +188,7 @@ describe('SettingsSidebar', () => {
             render(<SettingsSidebar activeTab="model" onTabChange={onTabChange} />);
 
             const themeButton = screen.getByText('Theme').closest('button');
-            expect(themeButton?.className).toContain('hover:bg-[var(--mat-lg-clear-bg)]');
+            expect(themeButton?.className).toContain('hover:bg-[var(--mat-content-card-hover-bg)]');
             expect(themeButton?.className).toContain('hover:text-[var(--color-text-primary)]');
         });
     });

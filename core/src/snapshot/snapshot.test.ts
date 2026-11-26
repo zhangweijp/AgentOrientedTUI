@@ -7,7 +7,7 @@ import { compileToolParameters } from '../tool/tool-parameters.js';
 import type { PreparedAppSnapshotDraft, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
 const identity = { appId: 'task_app', instanceId: 'instance_a' };
-const KEY = refKey('workspace', 'mount_1', 'tasks[0]');
+const KEY = refKey('workspace', 'mount_1', 'tasks');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);
 const taskSchema = (() => {
     const compiled = compileToolParameters({ type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false });
@@ -33,11 +33,11 @@ function draft(
             type: 'Workspace',
             name: 'Tasks',
             region: 'dynamic',
-            content: { format: 'markdown-v1', value: '[Stable task](tasks[0])' },
+            content: { format: 'markdown-v1', value: '[Stable task](tasks)' },
         }],
         refs: {
             [KEY]: { valueSchema: { type: 'object' }, scope: 'protected',
-                id: 'tasks[0]', ownerViewId: 'workspace', ownerViewInstanceId: 'mount_1',
+                id: 'tasks', ownerViewId: 'workspace', ownerViewInstanceId: 'mount_1',
                 refType: 'Task',
                 target: { kind: 'snapshot-value', payload: { id, status: 'pending' } },
             },
@@ -70,7 +70,7 @@ function published(core: SnapshotCore, next: PreparedAppSnapshotDraft) {
 function sourceRef(core: SnapshotCore, snapId: string) {
     return core.store.resolveRef({
         snapshotId: snapId, appId: 'task_app', instanceId: 'instance_a',
-        viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks[0]',
+        viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks',
     });
 }
 
@@ -201,7 +201,7 @@ describe('M1 pure Core — schema & safe value contract', () => {
         ['unsupported schemaVersion', { schemaVersion: 2 }, '$.schemaVersion', 'SNAPSHOT_INVALID'],
         ['duplicate View ID', { views: [draft().views[0], draft().views[0]] }, '$.views[1].id', 'SNAPSHOT_INVALID'],
         ['Ref owner missing', { refs: { [KEY]: { ...draft().refs[KEY], ownerViewId: 'ghost' } } }, '$.refs', 'SNAPSHOT_INVALID'],
-        ['Ref index wrong', { refs: { 'tasks[0]': draft().refs[KEY] } }, '$.refs', 'SNAPSHOT_INVALID'],
+        ['Ref key wrong', { refs: { 'tasks[0]': draft().refs[KEY] } }, '$.refs', 'SNAPSHOT_INVALID'],
         ['Tool schema invalid', { tools: { [TOOL]: { ...draft().tools[TOOL], inputSchema: { type: 'string' } } } }, '$.tools', 'SNAPSHOT_INVALID'],
         ['Tool identity mismatched', { tools: { [TOOL]: { ...draft().tools[TOOL], viewType: 'FileDetail' } } }, '$.views[0].toolBindings', 'SNAPSHOT_INVALID'],
         ['ordinary Tool carries a business target', { tools: { [TOOL]: { ...draft().tools[TOOL], target: { filePath: 'a.txt' } } } }, '$.tools', 'SNAPSHOT_INVALID'],
@@ -402,7 +402,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
     it('resolves two same-named Ref IDs only by exact View identity, never suffix search', () => {
         const core = createSnapshotCore(identity);
         const first = draft(1, 1);
-        const secondKey = refKey('detail', 'mount_2', 'tasks[0]');
+        const secondKey = refKey('detail', 'mount_2', 'tasks');
         const changed = draft(1, 1, 'entity-a', {
             views: [...first.views, {
                 toolBindings: [], id: 'detail', viewInstanceId: 'mount_2', type: 'FileDetail',
@@ -412,7 +412,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
             refs: {
                 ...first.refs,
                 [secondKey]: { valueSchema: { type: 'object' }, scope: 'protected',
-                    id: 'tasks[0]', ownerViewId: 'detail', ownerViewInstanceId: 'mount_2',
+                    id: 'tasks', ownerViewId: 'detail', ownerViewInstanceId: 'mount_2',
                     refType: 'Task', target: { kind: 'snapshot-value', payload: { id: 'entity-b' } },
                 },
             },
@@ -421,7 +421,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         const firstRef = sourceRef(core, snap.id);
         const secondRef = core.store.resolveRef({
             snapshotId: snap.id, appId: 'task_app', instanceId: 'instance_a',
-            viewId: 'detail', viewInstanceId: 'mount_2', refId: 'tasks[0]',
+            viewId: 'detail', viewInstanceId: 'mount_2', refId: 'tasks',
         });
         expect(firstRef.status).toBe('resolved');
         expect(secondRef.status).toBe('resolved');
@@ -431,14 +431,14 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         }
         expect(core.store.resolveRef({
             snapshotId: snap.id, appId: 'task_app', instanceId: 'instance_a',
-            viewId: 'unrelated', viewInstanceId: 'other', refId: 'tasks[0]',
+            viewId: 'unrelated', viewInstanceId: 'other', refId: 'tasks',
         }).status).toBe('rejected');
     });
 
     it('treats View close/reopen with same ID as a new generation', () => {
         const core = createSnapshotCore(identity);
         const old = published(core, draft());
-        const newKey = refKey('workspace', 'mount_2', 'tasks[0]');
+        const newKey = refKey('workspace', 'mount_2', 'tasks');
         const source = draft(2, 2, 'entity-b');
         const newer = published(core, {
             ...source,
@@ -479,7 +479,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
 function sourceRefWithGeneration(core: SnapshotCore, snapshotId: string, viewInstanceId: string) {
     return core.store.resolveRef({
         snapshotId, appId: 'task_app', instanceId: 'instance_a',
-        viewId: 'workspace', viewInstanceId, refId: 'tasks[0]',
+        viewId: 'workspace', viewInstanceId, refId: 'tasks',
     });
 }
 
@@ -522,7 +522,7 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
         expect(replacement.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         expect(original.store.resolveRef({
             snapshotId: old.id, appId: 'task_app', instanceId: 'instance_b',
-            viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks[0]',
+            viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks',
         })).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
 
         expect(replacement.committer.accept(draft(100))).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });

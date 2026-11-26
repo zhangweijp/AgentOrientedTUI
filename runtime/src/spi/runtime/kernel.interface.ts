@@ -13,11 +13,15 @@ import type { ActiveTurn as CoreTurn, AppInteractionPolicy, AppInvocation, AppPr
     ReceiptAccess as CoreReceiptAccess, ReceiptQuery, TurnSelection } from '@aotui/core';
 import type { AppWindowTarget, AppWindows, ViewCloseResult, ViewWindowTarget } from './windows.js';
 
-export interface RegisterPendingAppOptions extends AppInteractionOptions {
+type PendingAppMetadata = Readonly<{ name: string; description?: string; whatItIs?: string; whenToUse?: string }>;
+export type RegisterPendingAppOptions = AppInteractionOptions & {
     installationId: string;
-    localPath: string;
     config?: import('@aotui/core').AppLaunchConfig;
-}
+} & (
+    | Readonly<{ localPath: string; backend?: string; command?: never; name?: never }>
+    | (PendingAppMetadata & Readonly<{ command: readonly string[]; backend?: never; localPath?: never }>)
+    | (PendingAppMetadata & Readonly<{ backend: string; command?: never; localPath?: never }>)
+);
 
 export interface AppPolicyTarget {
     readonly desktopId: DesktopID;
@@ -40,6 +44,13 @@ export interface RunningApp {
     beginClose(): AppCloseHandle;
 }
 
+export type CandidateScope = {
+    observe(app: Pick<RunningApp, 'observe'>): Promise<PrepareObservationResult>;
+    discard(): readonly InteractionIssue[];
+} & (typeof Symbol extends { readonly dispose: infer Key extends symbol }
+    ? { [K in Key]: () => void }
+    : unknown);
+
 export type RunningAppResult = Readonly<{ status: 'ready'; app: RunningApp }> |
     Readonly<{ status: 'rejected'; issue: InteractionIssue }>;
 
@@ -59,7 +70,7 @@ export type AdoptTurnResult = Readonly<{ status: 'adopted'; turn: ActiveTurn; cl
 export interface AppDiscoveryInfo {
     readonly installationId: string;
     readonly appId?: AppID;
-    /** Runtime-owned identity of the current Worker execution, absent when no execution is active. */
+    /** Runtime-owned identity of the current App execution, absent when no instance is open. */
     readonly appInstanceId?: string;
     readonly name: string;
     readonly status: 'pending' | 'running' | 'closed';
@@ -70,6 +81,7 @@ export interface AppDiscoveryInfo {
 
 export interface IDesktop {
     getRunningApp(appId: string, expectedInstanceId: string): RunningAppResult;
+    createCandidateScope(): CandidateScope;
     adoptTurn(input: TurnSelection): AdoptTurnResult;
     readReceipt(locator: ReceiptLocator, timeoutMs?: number): Promise<ReceiptAccess>;
     beginClose(): DesktopCloseHandle;

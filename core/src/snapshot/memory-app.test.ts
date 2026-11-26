@@ -39,7 +39,7 @@ class MemoryTaskApp {
         const labels: string[] = [];
         for (const [index, id] of this.order.entries()) {
             const task = this.items.get(id)!;
-            const refId = 'pending[' + index + ']';
+            const refId = 'pending_' + index;
             refs[refKey('task_list', 'mount_1', refId)] = { valueSchema: { type: 'object' }, scope: 'protected',
                 id: refId, ownerViewId: 'task_list', ownerViewInstanceId: 'mount_1',
                 refType: 'Task',
@@ -78,7 +78,7 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
         const held = core.store.acquire(originalId); if (held.status !== 'acquired') throw Error('holder');
         const old = core.store.resolveRef({
             snapshotId: originalId, appId: app.appId, instanceId: app.instanceId,
-            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending[0]',
+            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending_0',
         });
         expect(old.status).toBe('resolved');
         if (old.status !== 'resolved') throw Error('Expected historical Ref');
@@ -95,7 +95,7 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
 
         const stillOld = core.store.resolveRef({
             snapshotId: originalId, appId: app.appId, instanceId: app.instanceId,
-            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending[0]',
+            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending_0',
         });
         expect(stillOld.status).toBe('resolved');
         expect(stillOld).toMatchObject({ target: { kind: 'snapshot-value', payload: { id: 'a', revision: 1 } } });

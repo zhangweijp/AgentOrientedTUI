@@ -5,6 +5,6 @@
   "entry": {
     "main": "./dist/index.js"
   },
-  "toolAuthoringProtocol": "view-type-tools-v7",
+  "toolAuthoringProtocol": "view-type-tools-v8",
   "appLifecycleSupport": "app-lifecycle-v2"
 }

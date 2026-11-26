@@ -61,6 +61,8 @@ export function initializationError(input: unknown, appId: string, phase: Phase)
         (!Object.hasOwn(diagnostic, 'stack') || typeof diagnostic.stack === 'string' && diagnostic.stack.length <= limits.stack) &&
         (!Object.hasOwn(diagnostic, 'truncated') || diagnostic.truncated === true)) {
         Object.defineProperty(error, 'cause', { value: diagnostic });
+        if (typeof diagnostic.path === 'string')
+            Object.defineProperty(error, 'path', { value: diagnostic.path, enumerable: true });
     }
     return error as Error & { readonly code: string };
 }

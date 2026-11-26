@@ -30,7 +30,7 @@ export async function artifactDetails(archive, installed, runtimeParent) {
     const manifest = JSON.parse(await readFile(join(installed, 'aoapp.json'), 'utf8'));
     assert.equal(manifest.app_name, appName);
     const module = join(installed, manifest.entry.main);
-    const sdk = import.meta.resolve('@aotui/sdk/app', pathToFileURL(module).href);
+    const sdk = import.meta.resolve('@aotui/sdk', pathToFileURL(module).href);
     const appCore = import.meta.resolve('@aotui/core', sdk);
     const runtimeCore = import.meta.resolve('@aotui/core', runtimeParent);
     assert.notEqual(appCore, runtimeCore, 'a separately installed author Core');

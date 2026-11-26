@@ -34,6 +34,24 @@ export function validateModelConfig(config: LLMConfig): void {
     if (typeof config.model !== 'string' || !config.model.trim()) {
         throw new Error('A nonempty model ID is required.');
     }
+    const tools = config.provider.openaiResponsesTools;
+    if (tools !== undefined) {
+        const { baseURL } = resolveProviderEndpoint(id, config.provider.baseURL);
+        if (id !== 'openai' || (baseURL && !isOpenAIResponsesEndpoint(baseURL))) {
+            throw new Error('openaiResponsesTools requires the OpenAI Responses endpoint.');
+        }
+        if (tools?.search !== 'hosted' && tools?.search !== 'client') {
+            throw new Error('openaiResponsesTools.search must be hosted or client.');
+        }
+        for (const names of [tools.additionalTools, tools.deferredTools]) {
+            if (names !== undefined && (!Array.isArray(names) || names.some(name => typeof name !== 'string' || !name.trim()))) {
+                throw new Error('OpenAI Responses tool selections must be arrays of tool names.');
+            }
+        }
+        if (tools.additionalTools?.some(name => tools.deferredTools?.includes(name))) {
+            throw new Error('An OpenAI Responses tool cannot be both additional and deferred.');
+        }
+    }
 }
 
 export function createLanguageModel(config: LLMConfig): Extract<LanguageModel, { specificationVersion: 'v3' }> {

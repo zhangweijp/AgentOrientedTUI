@@ -1,20 +1,19 @@
-import Type from 'typebox';
 import { compileToolParameters, isInstanceName, isViewTypeName, type ViewMultiplicity, type ViewRegion } from '@aotui/core';
-import type { JsonValue } from '@aotui/core';
-import { VIEW_TYPE_TOOL_PROTOCOL, type AppFrameBinding, type AppFrameView, type ToolResult } from '@aotui/core';
-import { exportTypeBoxSchema, schemaDeclarationError } from './typebox-schema.js';
+import { VIEW_TYPE_TOOL_PROTOCOL, type AppFrameBinding, type AppFrameView, type JsonValue, type ToolResult } from '@aotui/core';
+import { exportToolSchema, schemaDeclarationError } from './schema-export.js';
+import type { AuthorSchema, JsonSchemaObject, SchemaInput, StandardJSONSchemaV1 } from './schema-types.js';
 
-export type JsonSchemaObject = Readonly<Record<string, JsonValue>>;
-const emptyInputSchema = Type.Object({}, { additionalProperties: false });
-type ObjectSchema = Type.TSchema & {
+export type { JsonSchemaObject } from './schema-types.js';
+const emptyInputSchema = { type: 'object', properties: {}, additionalProperties: false } as const;
+type ToolSchema = StandardJSONSchemaV1 | {
     readonly type: 'object';
-    readonly properties: Type.TProperties & { readonly view_id?: never };
+    readonly properties: Readonly<Record<string, unknown>> & { readonly view_id?: never };
 };
-type InputSchema<Schema> = [Extract<Schema, ObjectSchema>] extends [never]
-    ? typeof emptyInputSchema : Extract<Schema, ObjectSchema>;
+type InputSchema<Schema> = [Extract<Schema, ToolSchema>] extends [never]
+    ? typeof emptyInputSchema : Extract<Schema, ToolSchema>;
 type ToolDeclaration = {
     readonly description: string;
-    readonly inputSchema?: ObjectSchema;
+    readonly inputSchema?: ToolSchema;
 };
 type ToolDeclarations = Readonly<Record<string, ToolDeclaration>>;
 // An omitted schema leaves an unknown entry during inference without widening the other tools.
@@ -23,8 +22,8 @@ type ContextInvocation<Input, Context> = { readonly input: Input; readonly conte
 export type ContextToolDeclarations<Context, Schemas extends ToolSchemas> = {
     readonly [Key in keyof Schemas]: {
         readonly description: string;
-        readonly inputSchema?: Schemas[Key] & ObjectSchema;
-        readonly execute: (call: ContextInvocation<DeepReadonly<Type.Static<InputSchema<NoInfer<Schemas[Key]>>>>, Context>) => ToolResult | Promise<ToolResult>;
+        readonly inputSchema?: Schemas[Key] & ToolSchema;
+        readonly execute: (call: ContextInvocation<DeepReadonly<SchemaInput<InputSchema<NoInfer<Schemas[Key]>>>>, Context>) => ToolResult | Promise<ToolResult>;
         readonly enabled?: (context: Context) => boolean;
     };
 };
@@ -33,7 +32,7 @@ export type ContextToolMetadata<Schemas extends ToolSchemas> = {
 };
 declare const schemaType: unique symbol;
 declare const contextType: unique symbol;
-type ToolDefinition<Schema extends ObjectSchema> = {
+type ToolDefinition<Schema extends ToolSchema> = {
     readonly description: string;
     readonly inputSchema: JsonSchemaObject;
     readonly [schemaType]: Schema;
@@ -54,12 +53,12 @@ export interface ContextualViewType<Tools extends ToolDeclarations, Context exte
     readonly [contextType]: Context;
 }
 
-export type DeepReadonly<Value> = Value extends readonly unknown[]
+export type DeepReadonly<Value> = [JsonValue] extends [Value] ? Value : Value extends readonly unknown[]
     ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }
     : Value extends object ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> } : Value;
 
 export type ArgsOf<Definition> = Definition extends ToolDefinition<infer Schema>
-    ? DeepReadonly<Type.Static<Schema>> : never;
+    ? DeepReadonly<SchemaInput<Schema>> : never;
 
 export type ViewContextProps<Definition extends ViewType> = Definition extends { readonly [contextType]: infer Context }
     ? { readonly context: Context }
@@ -67,7 +66,6 @@ export type ViewContextProps<Definition extends ViewType> = Definition extends {
 
 const viewTypeWitness = Symbol.for('@aotui/sdk/view-type');
 const contextToolsWitness = Symbol.for('@aotui/sdk/view-type/context-tools');
-export const preactViewDefinition = Symbol.for('@aotui/sdk/preact-view-definition');
 const descriptorSymbols = [viewTypeWitness, contextToolsWitness];
 const definedTypes = new WeakMap<object, ViewType>();
 const typeFields = new Set(['name', 'multiplicity', 'region', 'tools']);
@@ -99,12 +97,20 @@ function dataProperties(value: unknown, label: string, code: string, allowed?: R
     return result;
 }
 
+export interface RefParameter<Schema extends AuthorSchema> {
+    readonly 'x-aotui-ref-kind': string;
+    readonly 'x-aotui-ref-value': Schema;
+    readonly '~unsafe': SchemaInput<Schema>;
+}
+
 /** Declare an explicit Ref parameter. The handler receives its resolved read-only business value. */
-export function refParam<Schema extends Type.TSchema>(refType: string, valueSchema: Schema): Type.TUnsafe<Type.Static<Schema>> {
-    return Type.Unsafe<Type.Static<Schema>>({
+export function refParam<const Schema extends AuthorSchema>(refType: string, valueSchema: Schema): RefParameter<Schema> {
+    const declaration = {
         'x-aotui-ref-kind': refType,
         'x-aotui-ref-value': valueSchema,
-    });
+    };
+    // Retain the structural type witness when composing with TypeBox 1.4.
+    return Object.defineProperty(declaration, '~unsafe', { value: null, configurable: true, writable: true }) as RefParameter<Schema>;
 }
 
 export type ViewTypeDeclaration<M extends ViewMultiplicity, R extends ViewRegion | undefined> = {
@@ -137,14 +143,14 @@ export function defineViewType(declaration?: unknown): unknown {
 
 function captureType(declaration: unknown, source: 'empty' | 'context' | 'descriptor'): ViewType {
     const code = 'TOOL_DEFINITION_INVALID';
-    const fromTypeBox = source !== 'descriptor';
-    const fields = dataProperties(declaration, 'ViewType', code, typeFields, fromTypeBox ? undefined : descriptorSymbols);
+    const authored = source !== 'descriptor';
+    const fields = dataProperties(declaration, 'ViewType', code, typeFields, authored ? undefined : descriptorSymbols);
     const name = fields.get('name');
     const multiplicity = fields.get('multiplicity'), region = fields.get('region');
     if (!isViewTypeName(name)) fail(code, 'ViewType.name must use ASCII letters, digits or underscores and contain an ASCII letter', 'ViewType.name');
     if (multiplicity !== 'single' && multiplicity !== 'multiple') fail(code, 'ViewType.multiplicity must be single or multiple', name + '.multiplicity');
     if (region !== undefined && region !== 'static' && region !== 'dynamic') fail(code, 'ViewType.region must be static or dynamic', name + '.region');
-    const contextStamp = fromTypeBox ? undefined : Object.getOwnPropertyDescriptor(declaration, contextToolsWitness);
+    const contextStamp = authored ? undefined : Object.getOwnPropertyDescriptor(declaration, contextToolsWitness);
     if (contextStamp && (contextStamp.enumerable || !('value' in contextStamp)))
         fail(code, name + ' has invalid context tools');
     const imported = contextStamp && dataProperties(contextStamp.value, name + ' context tools', code);
@@ -174,8 +180,8 @@ function captureType(declaration: unknown, source: 'empty' | 'context' | 'descri
                 ...(enabled === undefined ? {} : { enabled: enabled as NonNullable<ContextTool['enabled']> }),
             });
         }
-        const schema = fromTypeBox && !tool.has('inputSchema') ? emptyInputSchema : tool.get('inputSchema');
-        const compiled = compileToolParameters(fromTypeBox ? exportTypeBoxSchema(schema) : schema);
+        const schema = authored && !tool.has('inputSchema') ? emptyInputSchema : tool.get('inputSchema');
+        const compiled = compileToolParameters(authored ? exportToolSchema(schema) : schema);
         if (!compiled.ok) throw schemaDeclarationError(compiled.issue);
         tools[key] = Object.freeze({ description, inputSchema: compiled.contract.schema });
     }
@@ -189,13 +195,6 @@ function captureType(declaration: unknown, source: 'empty' | 'context' | 'descri
 }
 
 function readViewType(type: ViewType): ViewType {
-    if (typeof type === 'function') {
-        const definition = Object.getOwnPropertyDescriptor(type, preactViewDefinition);
-        if (!definition || definition.enumerable || !('value' in definition) ||
-            typeof definition.value !== 'object' || definition.value === null)
-            fail('VIEW_TYPE_INVALID', 'Use an SDK ViewType or its declared component');
-        type = definition.value;
-    }
     const own = type && definedTypes.get(type);
     if (own) return own;
     // An App can import a descriptor produced by another copy of this SDK.

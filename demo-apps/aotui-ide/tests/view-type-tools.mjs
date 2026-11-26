@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createApp, createView } from '@aotui/sdk/app';
+import { createApp, createView } from '@aotui/sdk';
 import { WorkspaceType, FileDetailType, SearchResultType, WorkspaceCreateType } from '../dist/tui/ide-tool-contracts.js';
 
 async function prepareTools(type, viewId, context) {
@@ -68,7 +68,7 @@ async function main() {
   for (const definition of [WorkspaceType, FileDetailType, SearchResultType]) {
     assert.ok(Object.keys(definition.tools).length > 0);
   }
-  const bindings = await prepareTools(WorkspaceType, 'workspace', owner);
+  const bindings = await prepareTools(WorkspaceType, 'workspace', { owner, state: owner });
   const opened = await prepareFileTools(owner, '/work/open.ts', 'fd_actual_17');
   const rename = await prepareFileTools(owner, '/work/rename.ts', 'fd_actual_23', false);
   assert.equal(opened.read_loaded_diagnostics.enabled, true);

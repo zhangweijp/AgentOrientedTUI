@@ -10,8 +10,9 @@ function deferred() {
 }
 
 async function main() {
-  const session = new IDESession({}, {
+  const session = new IDESession({
     sessionKey: 'workspace-create-close-test',
+    sessionPath: path.join(os.tmpdir(), 'aotui-workspace-create-close-session.json'),
     historyPath: path.join(os.tmpdir(), 'aotui-workspace-create-close-test.jsonl'),
   }, () => {});
   session.ready = true;

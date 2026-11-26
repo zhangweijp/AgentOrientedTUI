@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import { AOTUIError, readAppManifest, type AppID, type AppLaunchConfig, type IDesktop } from '@aotui/runtime';
 import { Config } from '../config/config.js';
@@ -200,11 +201,15 @@ export class AppCatalog {
     }
 
     async installAll(desktop: IDesktop, options?: AppInstallOptions): Promise<AppInstallResult[]> {
-        const config = options?.dynamicConfig;
-        if (Object.hasOwn(config ?? {}, 'AOTUI_APP_NAME')) {
+        const suppliedConfig = options?.dynamicConfig;
+        if (Object.hasOwn(suppliedConfig ?? {}, 'AOTUI_APP_NAME')) {
             throw new AOTUIError('CONFIG_INVALID', {
-                reason: 'Use AOTUI_APP_KEY for a Host-owned state namespace; registration uses the generated app_name',
+                reason: 'AOTUI_APP_NAME is reserved for Host-assigned App identities and cannot be overridden in launchConfig.',
             });
+        }
+        const config = { ...suppliedConfig };
+        if (config.AOTUI_DATA_DIR === undefined) {
+            config.AOTUI_DATA_DIR = process.env.AOTUI_DATA_DIR || path.join(os.homedir(), '.aotui', 'data');
         }
         const results: AppInstallResult[] = [];
         for await (const item of this.entries(options)) {

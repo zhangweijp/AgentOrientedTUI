@@ -4,8 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": [
-      "ES2022",
-      "DOM"
+      "ES2022"
     ],
     "outDir": "./dist",
     "rootDir": "./src",
@@ -17,8 +16,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "preact",
     "types": [
       "node"
     ]

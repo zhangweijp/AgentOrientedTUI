@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -51,29 +52,63 @@ function timeDigestPath(run, verify) {
     return summarize(timings);
 }
 
-function countDigestWork(run, verify) {
-    // The FNV loop calls asUintN once per byte.
-    const truncate = BigInt.asUintN, encode = TextEncoder.prototype.encode;
-    const canonicalEncodes = [];
-    let fnvBytes = 0;
-    BigInt.asUintN = (bits, value) => { fnvBytes++; return truncate(bits, value); };
-    TextEncoder.prototype.encode = function (value) {
-        const result = encode.call(this, value);
-        if (value?.startsWith('{"refs":{},"schemaVersion":')) canonicalEncodes.push(result.byteLength);
-        return result;
+async function countDigestPaths() {
+    const stats = { calls: 0, bytes: 0 };
+    const hook = registerHooks({
+        resolve(specifier, context, next) {
+            const resolved = next(specifier, context);
+            if (context.parentURL?.includes('?digestCount=1') && !context.parentURL.endsWith('/snapshot/json.js?digestCount=1') &&
+                (resolved.url.endsWith('/snapshot/store.js') || resolved.url.endsWith('/snapshot/json.js'))) {
+                return { ...resolved, url: resolved.url + '?digestCount=1' };
+            }
+            return resolved;
+        },
+        load(url, context, next) {
+            if (url.endsWith('/snapshot/json.js?digestCount=1')) {
+                return {
+                    format: 'module',
+                    shortCircuit: true,
+                    source: `export * from './json.js';
+import { diagnosticDigest as _diagnosticDigest } from './json.js';
+export function diagnosticDigest(bytes) {
+    globalThis.__aotuiDigestCount?.(bytes.byteLength);
+    return _diagnosticDigest(bytes);
+}`,
+                };
+            }
+            return next(url, context);
+        },
+    });
+    globalThis.__aotuiDigestCount = byteLength => {
+        stats.calls++;
+        stats.bytes += byteLength;
     };
-    try { verify(run()); }
-    finally { BigInt.asUintN = truncate; TextEncoder.prototype.encode = encode; }
-    assert.ok(canonicalEncodes.length > 0);
-    const digestCalls = fnvBytes / canonicalEncodes[0];
-    assert.ok(Number.isInteger(digestCalls));
-    return { canonicalEncodes, fnvBytes, digestCalls };
+    try {
+        return await digestPaths((run, verify) => {
+            const encode = TextEncoder.prototype.encode;
+            const canonicalEncodes = [];
+            stats.calls = 0;
+            stats.bytes = 0;
+            TextEncoder.prototype.encode = function (value) {
+                const result = encode.call(this, value);
+                if (value?.startsWith('{"refs":{},"schemaVersion":')) canonicalEncodes.push(result.byteLength);
+                return result;
+            };
+            try { verify(run()); }
+            finally { TextEncoder.prototype.encode = encode; }
+            assert.ok(canonicalEncodes.length > 0);
+            return { canonicalEncodes, digestBytes: stats.bytes, digestCalls: stats.calls };
+        }, '?digestCount=1');
+    } finally {
+        delete globalThis.__aotuiDigestCount;
+        hook.deregister();
+    }
 }
 
-async function digestPaths(measure) {
+async function digestPaths(measure, importSuffix = '') {
     const [{ hostedObservationCapacityIssue, createSnapshotCore }, { SemanticProjectionCoordinator }] = await Promise.all([
-        import(emitted(corePackage, 'host.js')),
-        import(emitted(corePackage, 'producer.js')),
+        import(emitted(corePackage, 'host.js') + importSuffix),
+        import(emitted(corePackage, 'producer.js') + importSuffix),
     ]);
     return [64, 512, 2048].map(kib => {
         const bodyBytes = kib * 1024;
@@ -309,8 +344,8 @@ if (mode === 'digest') {
     results.digestWarmup = { calls: 384, bytesPerCall: seed.byteLength };
     for (let i = 0; i < results.digestWarmup.calls; i++) diagnosticDigest(seed);
     const timings = await digestPaths(timeDigestPath);
-    // Patching an intrinsic can change V8's optimization of later samples.
-    const work = await digestPaths(countDigestWork);
+    // Patching an intrinsic or registering module hooks can affect V8 timing, so measure work in a separate pass.
+    const work = await countDigestPaths();
     results.digest = timings.map(({ prepare, published, unchanged, ...profile }, index) => ({
         ...profile,
         prepare: { ms: prepare, work: work[index].prepare },

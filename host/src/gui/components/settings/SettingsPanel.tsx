@@ -53,7 +53,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     initialTab,
 }) => {
     // State - default to 'agent' tab (first in sidebar)
-    const [activeTab, setActiveTab] = useState<SettingsTabKey>('agent');
+    const [activeTab, setActiveTab] = useState<SettingsTabKey>(initialTab ?? 'agent');
 
     // Update activeTab when panel opens or initialTab changes
     useEffect(() => {
@@ -64,7 +64,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
     // Refs for focus trap
     const panelRef = useRef<HTMLDivElement>(null);
-    const exitButtonRef = useRef<HTMLButtonElement>(null);
 
     // Screen reader announcements
     const { announce } = useScreenReaderAnnouncement();
@@ -124,6 +123,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             const firstElement = focusableElements[0];
             const lastElement = focusableElements[focusableElements.length - 1];
 
+            if (!panelRef.current?.contains(document.activeElement)) {
+                event.preventDefault();
+                (event.shiftKey ? lastElement : firstElement).focus();
+                return;
+            }
+
             if (event.shiftKey) {
                 // Shift + Tab
                 if (document.activeElement === firstElement) {
@@ -143,20 +148,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         return () => document.removeEventListener('keydown', handleTabKey);
     }, [isOpen]);
 
-    /**
-     * Focus first element when panel opens
-     */
     useEffect(() => {
-        if (isOpen) {
-            // Small delay to ensure animation starts
-            setTimeout(() => {
-                const firstFocusable = panelRef.current?.querySelector<HTMLElement>(
-                    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-                );
-                firstFocusable?.focus();
-            }, 100);
-        }
-    }, [isOpen]);
+        if (!isOpen) return;
+        const previousFocus = document.activeElement;
+        panelRef.current?.querySelector<HTMLElement>(`#${initialTab ?? 'agent'}-tab`)?.focus();
+        return () => { if (previousFocus instanceof HTMLElement) previousFocus.focus(); };
+    }, [isOpen, initialTab]);
 
     /**
      * Prevent body scroll when modal is open
@@ -209,9 +206,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         onTabChange={setActiveTab}
                     />
                     <button
-                        ref={exitButtonRef}
                         onClick={onClose}
-                        className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full text-[13px] font-medium transition-all duration-200 md:mt-auto bg-[var(--color-danger)]/10 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20 border border-transparent active:scale-95 motion-reduce:active:scale-100"
+                        className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full text-[13px] font-medium transition-all duration-200 md:mt-auto bg-[var(--color-danger)]/10 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20 border border-transparent active:scale-95 motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
                         aria-label="Exit settings panel"
                     >
                         <IconExit className="w-4 h-4" />
@@ -230,6 +226,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <SettingsErrorBoundary>
                         <div
                             key={activeTab}
+                            role="tabpanel"
+                            id={`${activeTab}-tab-panel`}
+                            aria-labelledby={`${activeTab}-tab`}
                             className="transition-opacity duration-200 ease-in-out min-h-0 flex-1 overflow-y-auto"
                         >
                             {activeTab === 'model' && <ModelTab />}

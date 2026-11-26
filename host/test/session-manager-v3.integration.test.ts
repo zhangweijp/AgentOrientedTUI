@@ -130,7 +130,7 @@ describe('SessionManager V3 Integration', () => {
         // Clean up
         if (sessionManager) {
             await sessionManager.cleanup();
-            await mockKernel.shutdown();
+            await mockKernel.beginClose().completion;
         }
     });
 

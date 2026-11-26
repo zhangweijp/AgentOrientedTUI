@@ -44,7 +44,7 @@ function scope(x: any, visible = ['aa_1', 'bb_1']) {
             return { invocationId: 'i-' + (++tag), observationId: o.observationId, toolId: tool.id, viewId: view, input }; },
         async invoke(request: AppInvocation) {
             const id = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value;
-            const result = await turn.invoke(x.host.appId, request);
+            const result = await turn.invoke(x.host.appId, request, x.host.timeout);
             invocations.push({ invocationId: id, result });
             return result;
         },
@@ -68,8 +68,7 @@ async function control(x: any, type: string, data: any = {}) {
 }
 async function change(x: any, patch: any, predicate: (draft: any) => boolean) {
     await control(x, 'state', { patch });
-    const opened = x.host.getAppInteraction();
-    expect((await opened.interaction.preview()).status).toBe('previewed');
+    expect((await x.host.preview()).status).toBe('previewed');
     expect(predicate(x.snapshot())).toBe(true);
 }
 function assertReceiverReplacement(x: any, before: any) {
@@ -117,7 +116,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
         Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
         const modules = join(temporary, 'node_modules');
         await mkdir(join(modules, '@aotui'), { recursive: true });
-        for (const [owner, name] of [['.', 'preact'], ['../sdk', 'linkedom'], ['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', name), join(modules, name), 'dir');
+        for (const [owner, name] of [['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', name), join(modules, name), 'dir');
         await symlink(join(sdk, 'node_modules/typebox'), join(modules, 'typebox'), 'dir');
         await symlink(runtime, join(modules, '@aotui/runtime'), 'dir');
         await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
@@ -279,7 +278,11 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
     });
     it('R17 a Worker exit while the handler is held is unknown with no automatic retry', async () => {
         const x = await start();await control(x, 'mode', { mode: 'hold' });const s = scope(x), o = await s.observe(), request = s.request(o), running = s.invoke(request);await wait(x, m => m.type === 'REF_V2_HANDLER_ENTER');await x.worker.terminate();
-        expect(await running).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });expect(x.posts()).toHaveLength(1);expect(x.entries()).toHaveLength(1);x.host.terminate();expect(await x.host.waitForResourceRelease()).toMatchObject({ worker: 'exited', resourcesReleased: true });
+        const unknown = await running;
+        expect(unknown).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'unknown', outcome: { status: 'unknown' } } });
+        const { observationId, invocationId } = request;
+        expect(await s.client.readReceipt({ observationId, invocationId })).toEqual(unknown);
+        expect(x.posts()).toHaveLength(1);expect(x.entries()).toHaveLength(1);x.host.terminate();expect(await x.host.waitForResourceRelease()).toMatchObject({ worker: 'exited', resourcesReleased: true });
     });
     it.each(['inspect', 'capacity', 'plain'])('R18 actual %s response loss closes new dispatch', async name => {
         const x = await start();x.host.timeout = FAULT_HOST_TIMEOUT_MS;

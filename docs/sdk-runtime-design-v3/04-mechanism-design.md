@@ -27,12 +27,14 @@
 
 ### 锁定两步对照实验设计与裁决口径
 
+2026-11-26 已完成本机对照。OpenAI、Claude 和 DeepSeek 的本地端点各接收四次重放，逐字段核对后，两组请求只在目标整数参数能否填 Ref 地址这一处有差异。使用真实 Worker 时，策略 1 能通过一个地址传递整组邮箱。策略 2 在普通跨 App 授权下需先查看再转抄。在受限枚举、错类型数组和字面转义的用例中，同时核对了收据和最终文件。三家线上实验按项目负责人决定暂缓，缓存、费用和真实模型选错率待测。默认继续使用策略 1。[本机对照入口](../../tests/fixtures/verify-v3-provider-modes.mjs)
+
 1. **第一步 · 隔离缓存重放（单测“改一处 Schema 付多少钱”）**：
    - 直接开关 App B 页面会同时改动 View、`<desktop>` 目录、`system-inspect_ref` 与 `run_code` 说明（[semantic-aotui-driven-source.ts](../../agent-driver-adapter/src/semantic-aotui-driven-source.ts#L483)、[console-tool.ts](../../agent-driver-adapter/src/console/console-tool.ts#L44)），无法归因。
    - 改为从真实投影取出 App A 的两版工具声明，用同一份足够长的请求回放：固定模型版本、端点、Strict 设置、消息、工具名与顺序，**只替换 App A 的目标参数 Schema**；每组先预热确认原样重放有缓存命中，再多次配对比较“维持原声明”与“切换声明”。
    - 在 OpenAI、Claude Messages（确认实际携带 `cache_control`）、DeepSeek 上各自与自身基线对比，保存实际发出的工具声明与原始 `usage`（区分缓存读取、写入与普通输入）。
 2. **第二步 · 双 App 真实任务评测**：
-   - 题型覆盖 `integer`、`enum` 及必测的 **`string[]`（明确拆为“整组直传”、“混合单项”与“错型数组拒绝”三题）**，在多轮开关页场景下用三种策略跑同一组任务。
+   - 题型覆盖 `integer`、`enum`（含**同 App 获准 `protected` 字符串 Ref 场景下的 `enum`/`const` 约束保留对照**，核对各 Provider 模式能否既呈现合法选项与受限 Ref 提示、又不放行非法字面值如 `"turbo"`）及必测的 **`string[]`（明确拆为“整组直传”、“混合单项”与“错型数组拒绝”三题）**，在多轮开关页场景下用三种策略跑同一组任务。
    - 分别记录：模型能否提交地址、Runtime 是否接受、首次调用与最终落盘内容是否正确、额外工具调用次数、每成功任务总费用与耗时；策略 2 必须单独区分“一次 Native 直传整组邮箱”与“先 `inspect_ref` 读值再手填完成”；Provider 预检拒绝（如字符串 `const`）单记为 Host 兼容性问题，不混入模型误调率。
 3. **最终裁决顺序**：**先看能否正确直传，再看每个成功任务总费用与误调率**。若策略 2 省了缓存却迫使整组邮箱多绕一步，须将能力取舍单列评审；若策略 3 保住直传且总费用更低、误调率可接受，策略 3 可胜出；若差异落在重复实验波动范围内，保持策略 1。
 
@@ -41,7 +43,7 @@
 <a id="mec-02"></a>
 ## MEC-02 · 开页容量拒绝时的作者恢复体验（Preact `revert` 负担）
 
-- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已实施待复核`
 
 **已拍板结论（2026-11-25）**：选方案 A。随 `CON-01` 彻底移除 Preact 双回调 `revert`、`restore` 恢复核对分支、`retainViews` 与 `readPreparedProjection()`；纯 TS 的 `prepareOpeningProjection` 将预期容量拒绝改为 `{ status: 'rejected', issue }` 返回值，按“当前健康 + 至少含一个新页面实例”判定（允许同次提交换页）；以 `readViewId(handle)` 替代按显示名反查的 `readPreparedViewId(viewType, name)`。
 
@@ -64,6 +66,9 @@
 3. **零 `undo()` 官方示例范式（跨视图候选状态一致）**：
    - 因 `prepareOpeningProjection()` 在调用内同步执行每页 `render()`（[createApp.ts](../../sdk/src/app-factory/createApp.ts#L69)），若目录页读旧 `openFiles`、详情页传新文件 B，会造成同一帧里 B 已打开而目录仍写着“只打开 A”。
    - 官方示例明确示范：**目录页与详情页均从同一份候选状态渲染，确认 `status === 'prepared'` 后再将该候选状态落定为 App 正式状态**；拒绝时目录与旧页同步保住，彻底零 `undo()`。磁盘写入、子进程启动等业务副作用仍由 App 安排；`prepared` 仅代表本 App 投影准备成功，整次模型请求 Token 预算由 Host 另算。
+4. **普通请求驱动型 App（无后台定时器）的故障恢复边界**：
+   - **明确否决“投影出错后自动沿用上一健康帧继续接收旧工具调用”**：业务写入（如已写入 `b.txt`）确认成功后若新帧渲染失败，旧帧仍显示修改前正文甚至已关闭页，继续放行旧按钮会让模型基于过期画面重复改写。
+   - **自愈与兜底边界**：文件只写一次并保留真实成功收据；App 可在**当次调用内**根据真实状态重新生成可显示的降级页面（例如缩短预览）提交恢复，下一轮观察采用后业务工具恢复；若确实无法重建有效帧，Host 展示故障并允许正常关闭与重开，上一份健康快照仅作诊断参考，不授予继续执行资格。
 
 ### 验收标准（待实现后验证）
 
@@ -73,6 +78,7 @@
 | 非容量错误与故障态优先 | 首次投影超限、单纯改大旧页、重复 ID、非法 Schema、关闭后提交，以及 App 已处于故障态时试开超容页，均走抛错/故障路径，不返回 `rejected` 掩盖故障。 |
 | `readViewId(handle)` 精准查询 | 同显示名的两个 `index.ts` 分别返回各自精确 `view_id`（如 `fd_1` / `fd_2`）；未提交、被拒、已卸载或跨实例句柄返回 `undefined`。 |
 | 跨视图一致的零 `undo()` 示例 | 打开 B 成功的同一帧内，详情出现 B 且目录同步列出 A、B；B 被拒时目录仍只列 A 且 A 页继续可用。 |
+| 无后台定时器 App 的自愈与故障关闭 | 业务写入成功（只写一次、保留收据）但原候选渲染失败时：1) App 在当次调用重建降级帧并经下一轮采用后恢复工具；2) 确实无法重建时旧快照不继续接受工具调用，Host 展示故障并正常关闭重开。 |
 
 *(注：本轮两份现行 Core 测试共 25 项通过，并在真实 Worker 中验证了底层增页、换页与编号不空耗基线；新联合返回值、句柄查询、故障态优先及零 `undo()` 示例待实施阶段验收。)*
 
@@ -81,7 +87,7 @@
 <a id="mec-03"></a>
 ## MEC-03 · 有实际变更的大页面更新开销测量与增量必要性评估
 
-- **三维度状态**：问题证实度 `代码与基准已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `完整帧 已确认不改 / diagnosticDigest 已选定待验证`
+- **三维度状态**：问题证实度 `代码与基准已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `完整帧 已确认不改 / diagnosticDigest 已验证`
 
 **已拍板结论（2026-11-25）**：选方案 A + 做法 2，拆为两条结论落盘：
 1. **完整帧原子提交**：记为 **`已确认不改`**。一次提交把同一版的页面正文、Ref 与可用工具整体交给 Host；不引入跨线程/跨进程的增量补丁协议（否则每种语言都须维护基线版本与漏帧恢复，本地 Worker 实测收益远撑不起这份复杂度）。
@@ -106,22 +112,22 @@
 - **结论支撑**：
   1. 即便在 200 个 Ref 负载下，完整帧本地 Worker 往返也仅 **0.59 ms**（常规 10×20 KiB / 10×48 KiB 仅 **0.11–0.13 ms**），充分证明本地 Worker 无需增量协议。
   2. 在近 500 KiB 负载下，仅替换 `diagnosticDigest` 即可把整轮中位耗时降低约 **6.8 ms**（`21.85 → 15.02 ms`）。
-  3. 200 个 Ref 场景下剩余的约 **42 ms** 属 Core 内部局部 CPU 开销，留待高密度 Ref 成为真实应用负担时再分别剖析 Schema 编译、校验与对象遍历，不提前做复杂化优化。
+  3. 200 个 Ref 场景下剩余的约 **42 ms** 属 Core 内部局部 CPU 开销。复核确认 `41.99 ms` 测的是整轮、`0.59 ms` 测的是完整帧往返，均未单独量出 `compileValueSchema` 占比，且跨 Worker 反序列化每次生成新对象、`WeakMap` 按身份缓存未必命中；因此不预设缓存直接上线，留待高密度 Ref 成真实负担时再先剖析 Schema 编译/校验/遍历各自耗时，调高默认容量上限则属独立产品决策，不由此触发。
 
 ### `diagnosticDigest` 落地细则与验收标准（待实施阶段验收）
 - **算法与位一致性**：在 [json.ts](../../core/src/snapshot/json.ts#L189-L195) 用无 `BigInt` 分配的两个 32 位整数完成原 64 位 FNV-1a 计算，保持 `fnv1a64:...` 输出与原实现逐位一致（临时副本已通过 **66,068 组字节输入**逐位一致性核对及现有 3 个快照测试文件共 **56 项**测试，含 [validator.metadata-boundary.test.ts](../../core/src/snapshot/validator.metadata-boundary.test.ts#L24-L27) 固定摘要断言）。
 - **同步修正仓库基准计数**：现有 [snapshot-processing.mjs](../../runtime/scripts/snapshot-processing.mjs#L54) 通过拦截 `BigInt.asUintN` 推算摘要调用次数；替换算法后三档负载虽均发布了新摘要，旧脚本却全部误报为 `0`。正式落地时必须同步改准该基准脚本的计数方式，确保后续维护者能明确区分“算得更快”和“少算了一次”。
-- **验收标准**：
-  1. 现有快照单测与位一致性测试全通（`contentDigest` 十六进制输出逐位不变）；
-  2. [snapshot-processing.mjs](../../runtime/scripts/snapshot-processing.mjs) 准确报告摘要调用次数（不再误报 `0`）并体现提速；
-  3. 完整帧原子提交合同及 `PROJECTION_CURRENT` 路径无行为变更。
+- **验收结果（2026-11-25，已验证）**：
+  1. [diagnostic-digest.test.ts](../../core/src/snapshot/diagnostic-digest.test.ts) 与全部快照单测通过（覆盖空数组、边界字节、UTF-8、长度 0..512 及 4000 组伪随机样本与 `BigInt` 参考实现逐位一致，以及 [validator.metadata-boundary.test.ts](../../core/src/snapshot/validator.metadata-boundary.test.ts) 固定摘要断言）；
+  2. `node runtime/scripts/snapshot-processing.mjs core runtime sdk digest 20`（改用 `node:module` `registerHooks` 非计时拦截统计）三档（64 / 512 / 2048 KiB）均准确报告 `prepare: 0` / `published: 1` / `unchanged: 0`，且处理字节数严格等于规范化内容字节数（65734 / 524930 / 2099582）；
+  3. **正式实现无计数钩子真实 Worker A/B 对照（Node v24.15.0，无 `better-sqlite3`，交错 3 轮×10 次共 30 样本，测 `edit → observe → adopt` ms）**：`10×48 KiB + 20 Refs` p50/p95 从 **26.276 / 29.153 ms** 降至 **17.440 / 19.154 ms**；`10×20 KiB + 20 Refs` 从 **16.031 / 18.245 ms** 降至 **12.103 / 13.713 ms**；`10×20 KiB + 200 Refs` 从 **67.643 / 79.153 ms** 降至 **63.111 / 70.864 ms**。完整帧原子提交合同及 `PROJECTION_CURRENT` 路径保持零行为变更。
 
 ---
 
 <a id="mec-04"></a>
 ## MEC-04 · 未采用候选的防泄漏机制与 Host 易用包装
 
-- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已实施待复核`
 
 **已拍板结论（2026-11-25）**：选方案 A。TS 侧提供可跨预算阶段持有的 `desktop.createCandidateScope()` 以及符合 `ES2022` 消费者兼容要求的 `[Symbol.dispose]()`；`aotui-stdio` 侧提供带显式 `scopeId` 的 `beginCandidateScope` / `discardScope`。不引入固定时间 TTL 淘汰。
 
@@ -160,7 +166,7 @@
 <a id="mec-05"></a>
 ## MEC-05 · 协议分层演进与外部兼容承诺（不强行合一版本号）
 
-- **三维度状态**：问题证实度 `长期演进风险` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `长期演进风险` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `外部 v1 已实施待复核，内部版本维持各自演进`
 
 **已拍板结论（2026-11-25）**：选方案 A。不把不同寿命的格式强行合一；清晰切分“内部随发边界”与“两份独立的外部公共协议（第三方 App 协议与外部 Host `aotui-stdio` 协议）”，JS/TS 工厂与 `aoapp.json` 在外部 `v1` 定稿前继续同批配套交付。对第三方 `v1` 的核心承诺是：**只要新版 Runtime 仍声明支持 `v1`，只用 `v1` 基础能力的旧 App 与旧 Host 无需重编或重生成清单即可原样运行**，且须由真正冻结的旧夹具实跑通过后才宣布对应 `v1` 承诺。
 
@@ -188,7 +194,7 @@
 | 验收门槛 | 验收要求 |
 | --- | --- |
 | App 侧公共协议门槛 | 跑通 `SYS-01` Python 双文件 App 全部验收（页面/Ref 资格、等待超时与最终未知、关闭排空），外部作者无需复刻 JS 复合键拼写。 |
-| Host 侧 `stdio` 协议门槛 | 落地 `MOD-01` 与 `MEC-04`，由独立 Python Host 验证 XML 呈现、可调用页面（`activeViews`）与批次候选清理。 |
+| Host 侧 `stdio` 协议门槛 | 落地 `MOD-01` 与 `MEC-04`，由独立 Python Host 验证 XML 呈现、可调用页面（`activeViews`）、统一 `view_id` 拆包、批次候选清理、空闲接收 `requestAttention()` 异步提醒，以及慢调用不阻塞跨 App 撤权且请求 `id` 准确归位。 |
 | 真正冻结的跨版本夹具互通 | 独立保存首个 `v1` 的冻结参考 App、冻结参考 Host、Schema 与 XML 测试向量副本；后续升级**只替换 Runtime** 直接运行旧夹具，并同步覆盖主版本错误（透传 `PROTOCOL_UNSUPPORTED`）、可选能力缺失（降级基线正常运行）与必需能力缺失（握手期明确拒绝）。 |
 
 ---
@@ -204,10 +210,11 @@
 - **SDK 与 Runtime Core 继续守住同一条规则**：Agent 曾经看过某个工具，与它此刻是否有权对哪一页使用该工具，是两件独立事实。Host 基于本轮候选页面生成请求、核算预算，在请求发送前采用同一份候选（[agent-driver-v2.ts](../../agent-driver-v2/src/core/agent-driver-v2.ts#L645)）；实际执行仍必须经过 `ActiveTurn` 与执行端页面实例复查（[view-owned-tools.ts](../../core/src/tool/view-owned-tools.ts#L125)）。
 - 供应商侧如何延迟声明、按需展开或缓存工具，完全归 **Driver / Adapter 层**承接，不回流污染 App 业务契约与 Core 授权裁决。
 
-### 本地协议拦截基线（已证实的 Driver / Console 缺口）
-- **Claude 编码与响应重建**：当前 Claude 编码器能发出真正的 `tool_reference`，但把同名 JSON 放进普通 App 收据时发出去仅是一段文本（[agent-driver-v2.ts](../../agent-driver-v2/src/core/agent-driver-v2.ts#L815)）；向当前 Driver 喂入模拟的 Claude 服务端搜索响应后，Driver 把“服务端搜索”和 `edit_file` 都还原成普通工具调用，并在历史里丢失了搜索结果块（[llm-client.ts](../../agent-driver-v2/src/core/llm-client.ts#L336)）。
-- **OpenAI 编码**：当前已安装的 OpenAI 编码器未把测试指定的 `defer_loading` 与 `tool_search` 实际发到线上请求。
-- **`run_code` 工具面抖动与 Strict 预检**：当前 `run_code`（[console-tool.ts](../../agent-driver-adapter/src/console/console-tool.ts#L43)）在开页前后参数 Schema 虽不变，但 **`description` 文字会随页面变化**；且其 `imports.maxItems` 过不了仓库对 Claude Strict 和 DeepSeek Strict 的本地预检。
+### Batch 4 改动前的本机实测
+
+- Claude 编码器能发送原生 `tool_reference`。普通 App 收据中的同名 JSON 会被编码为文本。改动前，Driver 还会把服务端搜索当作本地工具再执行一次，并在下一轮丢失搜索结果。
+- 原 OpenAI 编码器发往本机替身的请求缺少实验指定的 `defer_loading` 和 `tool_search` 字段。
+- `run_code` 的参数格式保持固定，说明文字随页面变化。原来写在请求中的 `imports.maxItems` 会被 Claude strict 和 DeepSeek strict 的本地预检拒绝。
 
 ### 四组对照实验设计与关键修正
 
@@ -225,6 +232,12 @@
 4. **组 B 第一道验收门槛（Driver 往返完整）**：在正式评测前，必须验证连续两轮真实请求与历史回放的编解码全部完整，且**服务端已经执行过的搜索绝不会被 Host 再执行一次**。
 
 ### 统一裁决题与四项记分指标（待线上实测）
+
+2026-11-26，本机有 23 组对照、192 笔 HTTP 请求。传统读取、动态原生工具、固定分发工具和 Console 在相同的短题和长题上都写出了预期文件。产品话题连续九轮的 `run_code` 完整定义保持一个版本。当前可用的工具和 Ref 随当轮消息更新。三种严格模式都实测了 256 项导入成功、257 项在执行前被拒。[文件与 Ref 对照](../../tests/fixtures/verify-v3-provider-modes.mjs) · [Strict 验收](../../tests/fixtures/batch-three-strict.mjs)
+
+组 B 另用实际产品和独立安装验证。Claude 搜索成功或失败都在下一轮按原位置和编号呈现，服务端已做的搜索由宿主重做零次。OpenAI Responses 两种搜索方式都通过。工具的参数定义变化时，旧定义留在旧回复之前，新定义在本轮加入。后台开页后可发现新工具，旧挂载的调用新增写入为零。DeepSeek 当前 Chat 端点参加组 A、C。[Claude 产品验收](../../host/test/claude-tool-search.e2e.ts) · [OpenAI 搜索](../../tests/fixtures/verify-openai-responses-tools.mjs) · [同名定义变化](../../tests/fixtures/verify-openai-responses-tool-revisions.mjs)
+
+OpenAI、Claude 与 DeepSeek 的线上接受、缓存、任务耗时、费用及真实模型误调率均按项目负责人决定暂缓。默认工具呈现维持动态 Native。
 - **标准双文件裁决题**：打开 `A.txt` → 打开 `B.txt`（两页共用同一把 `edit`）→ 关闭 `A` 后编辑 `B` 成功、对 `A` 的旧调用被拒 → 关闭 `B` 后最后一个 `edit` 退出 → 重开同名文件并发送绑定旧实例的调用，核对磁盘字节未被修改 → **另加一次后台开页**覆盖无 `tool_result` 的路径。
 - **控制变量与四项记分**：
   - 各模型固定同一套 Ref 投影策略（与 `MEC-01` 解耦）和相同上下文预算，分别记录缓存读写、客户端额外往返与服务端搜索次数。

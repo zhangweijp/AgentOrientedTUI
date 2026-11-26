@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import Type from 'typebox';
-import { createApp, createView, defineViewType, formatRef, ref, type ToolResult } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, formatRef, ref, type ToolResult } from '@aotui/sdk';
 
 const Workspace = defineViewType<{ open(): ToolResult }>()({
     name: 'workspace', multiplicity: 'single', region: 'static',

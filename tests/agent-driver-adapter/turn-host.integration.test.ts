@@ -7,15 +7,15 @@ import { createRuntime, type ActiveTurn, type AppID, type AppInvocation, type ID
 import { projectCompleteViews } from '@aotui/core/host';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2, type MessageWithTimestamp } from '@aotui/agent-driver-v2';
-import { fixtureProvider, modelCall, watchUntil } from '../fixtures/batch-two-support.mjs';
+import { fixtureProvider, journal, modelCall, watchUntil } from '../fixtures/batch-two-support.mjs';
 
 const localPath = process.env.AOTUI_TURN_FILE_APP ?? fileURLToPath(new URL('../../runtime/examples/files/', import.meta.url));
 const installationId = 'files';
 const appId = 'turn_files';
 const succeed = { kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'succeeded' } } };
 
-async function workspace() {
-    const folder = await mkdtemp(join(tmpdir(), 'aotui-turn-files-'));
+async function workspace(root = tmpdir()) {
+    const folder = await mkdtemp(join(root, 'aotui-turn-files-'));
     await Promise.all([writeFile(join(folder, 'a.txt'), 'Alpha'), writeFile(join(folder, 'b.txt'), 'Bravo')]);
     return folder;
 }
@@ -90,7 +90,7 @@ it('uses only the selected file mount, keeps the observed value on disk conflict
         const pendingFolded = await prepare(opened);
         const shown = pendingFolded.observation.views.filter(view => view.id !== a.id)
             .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-        const folded = adopt(desktop, pendingFolded, { receiverViews: shown, refViews: shown });
+        const folded = adopt(desktop, pendingFolded, { activeViews: shown });
         expect(() => desktop.revokeWindowAccess(both.turn, target(b))).toThrow(expect.objectContaining({ code: 'TURN_NOT_ACTIVE' }));
         expect(await folded.turn.inspectRef(address(a), 'value')).toMatchObject({ status: 'rejected' });
         expect(await folded.call('edit', 'expanded-with-old-turn', editInput(a, 'Still no write'))).toMatchObject({ kind: 'receipt', receipt: {
@@ -100,20 +100,21 @@ it('uses only the selected file mount, keeps the observed value on disk conflict
 
         const pending = await prepare(opened);
         const all = pending.observation.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-        const budget = adopt(desktop, pending, { receiverViews: all, refViews: all.filter(view => view.viewId !== a.id) });
+        const budget = adopt(desktop, pending, { activeViews: all.filter(view => view.viewId !== a.id) });
         expect(await budget.turn.inspectRef(address(a), 'value')).toMatchObject({ status: 'rejected' });
-        expect(await budget.call('edit', 'budget-body-hidden', { view_id: a.id, expected: 'External', text: 'Alpha matched' })).toMatchObject(succeed);
+        expect(await budget.call('edit', 'budget-body-hidden', { view_id: a.id, expected: 'External', text: 'Alpha matched' })).toMatchObject({ receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' } } });
         expect(await opened.readReceipt({ observationId: both.observation.observationId, invocationId: 'edit-b' })).toEqual(changed);
 
         expect(await budget.call('set_writable', 'disable', { name: 'b.txt', writable: false })).toMatchObject(succeed);
         expect(await budget.call('set_writable', 'enable', { name: 'b.txt', writable: true })).toMatchObject(succeed);
         expect(await budget.call('edit', 'finishing-with-stale-activation', { view_id: b.id, expected: 'Bravo folded', text: 'Stale' }))
             .toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_SOURCE_STALE' } } });
-        expect((await desktop.closeView(target(a), budget.turn)).status).toBe('closed');
-        expect(await budget.call('open_file', 'reopen-a', { name: 'a.txt' })).toMatchObject(succeed);
-        expect(await budget.call('edit', 'referring-to-closed-mount', { view_id: a.id, expected: 'Alpha matched', text: 'Stale' }))
+        const restored = adopt(desktop, await prepare(opened));
+        expect((await desktop.closeView(target(a), restored.turn)).status).toBe('closed');
+        expect(await restored.call('open_file', 'reopen-a', { name: 'a.txt' })).toMatchObject(succeed);
+        expect(await restored.call('edit', 'referring-to-closed-mount', { view_id: a.id, expected: 'External', text: 'Stale' }))
             .toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched', outcome: { code: 'VIEW_INSTANCE_REVOKED' } } });
-        expect(await readFile(join(folder, 'a.txt'), 'utf8')).toBe('Alpha matched');
+        expect(await readFile(join(folder, 'a.txt'), 'utf8')).toBe('External');
         expect(await readFile(join(folder, 'b.txt'), 'utf8')).toBe('Bravo folded');
 
         expect((await opened.beginClose().completion).ok).toBe(true);
@@ -176,7 +177,7 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         return request!.body;
     }
     try {
-        await desktop.registerPendingApp({ installationId, localPath, config: { folder } });
+        await desktop.registerPendingApp({ installationId, localPath, config: { folder, traceProjection: true } });
         const started = await step('open-app', [modelCall('open', 'system-open_app', { installation_id: installationId })]);
         expect(started.tools.map((tool: any) => tool.function.name)).toEqual(expect.arrayContaining(['system-open_app', 'system-close_app']));
         const opens = await step('open-files', [modelCall('open-a', appId + '-open_file', { name: 'a.txt' }),
@@ -257,6 +258,8 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         expect(aRestored.tools.filter((tool: any) => tool.function.name === appId + '-edit')).toHaveLength(1);
         const foldedFiles = await disk();
         expect(foldedFiles).toEqual({ 'a.txt': 'Alpha', 'b.txt': 'Bravo after fold' });
+        const writes = await journal(folder, 'edits');
+        expect(writes).toEqual([{ name: 'b.txt', text: 'Bravo updated' }, { name: 'b.txt', text: 'Bravo after fold' }]);
         const handle = desktop.getRunningApp(run.appId!, run.appInstanceId!);
         if (handle.status !== 'ready') throw Error(handle.issue.code);
         const recovered = await handle.app.readReceipt({ observationId: receipt.observationId, invocationId: receipt.invocationId });
@@ -264,7 +267,7 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         const shutdown = await runtime.beginClose().completion;
         expect(shutdown).toMatchObject({ ok: true, resourcesReleased: true, workers: { report: { total: 0 } } });
         if (process.env.AOTUI_TURN_PRODUCT_EVIDENCE) await writeFile(process.env.AOTUI_TURN_PRODUCT_EVIDENCE, JSON.stringify({
-            requests: provider.requests, history, files, foldedFiles, receipts, refChecks, recovered, shutdown,
+            requests: provider.requests, history, files, foldedFiles, writes, receipts, refChecks, recovered, shutdown,
         }, null, 2));
     } finally {
         await driver.dispose();
@@ -315,7 +318,7 @@ it('settles a file write once when the following observation fails, then sees th
 }, 15_000);
 
 it('binds each counter instance policy before startup and reads the timed-out call through both public entry points', async () => {
-    const folder = await workspace();
+    const folder = await workspace(fileURLToPath(new URL('.', import.meta.url)));
     const module = join(folder, 'counter.mjs');
     const entered = join(folder, 'entered');
     const resume = join(folder, 'resume');
@@ -335,7 +338,7 @@ it('binds each counter instance policy before startup and reads the timed-out ca
         await writeFile(module, `
             import { writeFileSync, existsSync, appendFileSync } from 'node:fs';
             import { setTimeout as wait } from 'node:timers/promises';
-            import { createApp, createView, defineViewType } from ${JSON.stringify(new URL('../../sdk/dist/app.js', import.meta.url).href)};
+            import { createApp, createView, defineViewType } from '@aotui/sdk';
             const Counter = defineViewType()({ name: 'Counter', multiplicity: 'single', region: 'dynamic', tools: {
                 add: { description: 'Add one', execute({ context }) { return context.add(); } },
             } });
@@ -354,7 +357,7 @@ it('binds each counter instance policy before startup and reads the timed-out ca
             } });
         `);
         await writeFile(join(folder, 'aoapp.json'), JSON.stringify({ app_name: 'turn_counter', version: '0.1.0',
-            entry: { main: './counter.mjs' }, toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2' }));
+            entry: { main: './counter.mjs' }, toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2' }));
         await desktop.registerPendingApp({ installationId: 'counter', localPath: folder });
         await expect(desktop.openApp('counter')).rejects.toMatchObject({ code: 'APP_INTERACTION_POLICY_CREATION_FAILED', cause: setupFailure });
         await expect(readFile(entered + '.init', 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });

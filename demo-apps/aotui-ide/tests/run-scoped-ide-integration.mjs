@@ -12,6 +12,7 @@ const cases = [
   ['tests/scoped-ide.e2e.mjs', 'IDE_FACTS'],
   ['tests/scoped-ide-edges.mjs', 'EDGE_FACTS'],
   ['tests/scoped-ide-close.e2e.mjs', 'CLOSE_FACTS'],
+  ['tests/scoped-ide-session-close.e2e.mjs', 'SESSION_CLOSE_FACTS'],
   ['tests/scoped-ide-capacity.mjs', 'CAPACITY_FACTS'],
 ];
 

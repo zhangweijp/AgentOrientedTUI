@@ -17,9 +17,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
         try {
             const modules = join(temporary, 'node_modules');
             await mkdir(join(modules, '@aotui'), { recursive: true });
-            await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
             await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
-            await symlink(join(root, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
             await symlink(join(root, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
             await symlink(join(root, '../core'), join(modules, '@aotui/core'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
@@ -32,18 +30,8 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
             const fixture = `
                 import { writeFileSync } from 'node:fs';
         import { parentPort } from 'node:worker_threads';
-                import { h } from 'preact';
-                import { useState } from 'preact/hooks';
                 import Type from 'typebox';
-                import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
-                import { DynamicView } from './sdk/src/components/View.tsx';
-                import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
-
-                function Detail() {
-                    return h('section',{},[
-                        h('p',{},'Stable FileDetail'),
-                    ]);
-                }
+                import { createApp, createView, defineViewType } from './sdk/src/index.ts';
 
                 const inputSchema = Type.Object({}, { additionalProperties: false });
                 const execute = async () => ({ success: true, data: { file: 'App.tsx' } });
@@ -54,53 +42,42 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                         enabled: context => context.enabled,
                     },
                 } });
-                let enable, attempt;
-                function App() {
-                    const [enabled, setEnabled] = useState(false);
-                    const [, setRender] = useState(0);
-                    attempt = () => setRender(value => value + 1);
-                    enable = () => setEnabled(true);
-                    return h(DynamicView, { idPrefix: 'fd_0', type: FileDetail, context: { enabled } }, h(Detail));
-                }
-                const factory = createTUIApp({
-                    app_name:'m4_epoch_race',
-                    component:App, viewTypes:[FileDetail],
+                export default createApp({ app_name: 'm4_epoch_race', viewTypes: [FileDetail],
+                    initialize({ prepareProjection, registerCleanup }) {
+                        let enabled = false, attempt = false;
+                        const page = createView(FileDetail, { idPrefix: 'fd_0', region: 'dynamic', render() {
+                            if (attempt) {
+                                attempt = false;
+                                let submitted = false;
+                                try { prepareProjection({ views: [] }); submitted = true; }
+                                catch { /* The outer frame must still fail atomically. */ }
+                                writeFileSync(${JSON.stringify(raceTracePath)}, JSON.stringify({
+                                    viewType: 'FileDetail', submitted,
+                                }));
+                            }
+                            return { body: 'Stable FileDetail', context: { enabled } };
+                        } });
+                        const publish = () => prepareProjection({ views: [page] });
+                        const receive = message => {
+                            if (message.type !== 'TEST_COMMAND') return;
+                            if (message.command === 'attempt') {
+                                attempt = true;
+                                try { publish(); } catch { /* The Host observes the prepare failure. */ }
+                            } else if (message.command === 'repair') {
+                                enabled = true;
+                                publish();
+                            }
+                        };
+                        parentPort.on('message', receive);
+                        registerCleanup({ stop() { parentPort.off('message', receive); } });
+                        publish();
+                    },
                 });
-                const initialize = factory.initialize.bind(factory);
-                factory.initialize = async ctx => {
-                    const initialized = await initialize(ctx);
-                    const view = document.querySelector('[data-aotui-view="FileDetail"]');
-                    if (!view) throw new Error('Mounted FileDetail View was not found');
-                    const getAttribute = view.getAttribute.bind(view);
-                    let mutated = false;
-                    view.getAttribute = ((name: string) => {
-                        const value = getAttribute(name);
-                        if (!mutated && name === 'data-aotui-view' && value) {
-                            mutated = true;
-                            let submitted = false;
-                            try {
-                                ctx.publishFrame(() => ({ views: [] }));
-                                submitted = true;
-                            } catch { /* swallowed deliberately; the batch must still fail */ }
-                            writeFileSync(${JSON.stringify(raceTracePath)}, JSON.stringify({
-                                viewType: value, submitted,
-                            }));
-                        }
-                        return value;
-                    }) as typeof view.getAttribute;
-                    parentPort.on('message', message => {
-                        if (message.type !== 'TEST_COMMAND') return;
-                        if (message.command === 'attempt') attempt();
-                        if (message.command === 'repair') enable();
-                    });
-                    return initialized;
-                };
-                export default factory;
             `;
             await build({
                 stdin: {
                     contents: fixture, resolveDir: resolve(root, '..'),
-                    sourcefile: 'm4-producer-race.tsx', loader: 'tsx',
+                    sourcefile: 'm4-producer-race.ts', loader: 'ts',
                 },
                 outfile: appScript, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20',
@@ -124,9 +101,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
             const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
             expect(trace).toMatchObject({ viewType: 'FileDetail', submitted: false });
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
-            const opened = host.getAppInteraction();
-            if (opened.status !== 'ready') throw Error(opened.issue.code);
-            expect((await opened.interaction.preview()).status).toBe('previewed');
+            expect((await host.preview()).status).toBe('previewed');
             await vi.waitFor(() => {
                 expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastToolCount: 2 });
             });

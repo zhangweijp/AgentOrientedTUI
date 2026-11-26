@@ -31,13 +31,14 @@ export interface AppInvocation {
   /** Business argument slots. Ref addresses are resolved before application code runs. */
   readonly input:JsonObject;
 }
-export interface ConsoleInputPath {
+export interface PublicRefValue {
   readonly appId: string;
   readonly viewId: string;
   readonly refId: string;
   readonly path: RefPath;
+  readonly value: JsonValue;
 }
-export type ConsoleInputs = Readonly<{ status: 'ready'; refs: JsonObject; paths: readonly ConsoleInputPath[] }> |
+export type ReadPublicRefsResult = Readonly<{ status: 'ready'; refs: readonly PublicRefValue[] }> |
   Readonly<{ status: 'rejected'; issue: Issue }>;
 export interface ObservationCandidate {
   readonly observation: Observation;
@@ -56,7 +57,7 @@ export type InspectRefResult = Readonly<{ status: 'ready'; schema: JsonValue }> 
 export interface ActiveTurn {
   readonly isCurrent: boolean;
   invoke(appId: string, request: AppInvocation, timeoutMs?: number, signal?: CancellationSignal): Promise<InvokeResult>;
-  readConsoleInputs(imports?: readonly string[]): Promise<ConsoleInputs>;
+  readPublicRefs(addresses?: readonly string[]): Promise<ReadPublicRefsResult>;
   inspectRef(address: string, mode: InspectRefMode): Promise<InspectRefResult>;
   release(): readonly Issue[];
 }

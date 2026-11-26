@@ -10,8 +10,6 @@ import { AppCatalog, type AppCatalogEntry, type AppCatalogFailure, type AppConfi
     type InstallAppOptions, type InstallAppResult } from '../app-distribution/app-catalog.js';
 import { resolveCatalog, resolveCatalogOptionsFromConfig, type ResolvedCatalog } from '../app-distribution/catalog-resolver.js';
 import { searchCatalog, type CatalogSearchResult } from '../app-distribution/catalog.js';
-import path from 'path';
-import os from 'os';
 import { rethrowAfterDesktopClose } from './desktop-close.js';
 
 export type { DesktopID, InstallAppOptions, InstallAppResult };
@@ -77,16 +75,12 @@ export class DesktopManager {
      * @param config - Optional: runtime config to inject into apps (e.g. projectPath)
      */
     async createDesktop(desktopId?: DesktopID, config?: AppLaunchConfig): Promise<DesktopInfo> {
-        const runtimeDataDir = process.env.AOTUI_DATA_DIR
-            || path.join(os.homedir(), '.aotui', 'data');
-
         const desktop = await this.kernel.createDesktop(desktopId);
         try {
             if (desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
-            const { AOTUI_DATA_DIR = runtimeDataDir, ...launchConfig } = { ...config };
             const results = await this.appCatalog.installAll(desktop, {
                 entries: this.appEntries,
-                dynamicConfig: { ...launchConfig, AOTUI_DATA_DIR },
+                dynamicConfig: config,
             });
             for (const result of results) {
                 if (result.status === 'failed') this.reportAppFailure(result);

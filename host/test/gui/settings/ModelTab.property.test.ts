@@ -1,288 +1,70 @@
-/**
- * ModelTab Component - Property-Based Tests
- * 
- * Property-based tests for ModelTab component using fast-check
- */
-
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import * as fc from 'fast-check';
-import { llmConfigService } from '../../../src/core/llm-config-service.js';
-import type { LLMConfigRecord } from '../../../src/types/llm-config.js';
-import { initDatabase, getDb } from '../../../src/db/index.js';
-import * as llmConfigDb from '../../../src/db/llm-config-db.js';
+import { LLMConfigService } from '../../../src/core/llm-config-service.js';
+import { initDatabase } from '../../../src/db/index.js';
+import type { LLMConfigInput } from '../../../src/types/llm-config.js';
+import type { ModelRegistry } from '../../../src/services/model-registry.js';
 
-/**
- * Arbitrary generator for LLMConfigRecord
- */
-function arbitraryLLMConfig(overrides?: Partial<LLMConfigRecord>): fc.Arbitrary<LLMConfigRecord> {
-    return fc.record({
-        id: fc.integer({ min: 1, max: 10000 }),
-        name: fc.string({ minLength: 3, maxLength: 50 }),
-        model: fc.string({ minLength: 1, maxLength: 100 }),
-        providerId: fc.option(fc.string({ minLength: 1 }), { nil: undefined }),
-        baseUrl: fc.option(fc.webUrl({ validSchemes: ['https'] }), { nil: undefined }),
-        apiKey: fc.option(fc.string({ minLength: 10 }), { nil: undefined }),
-        temperature: fc.double({ min: 0, max: 1 }),
+const service = new LLMConfigService({ getModels: async () => [] } as unknown as ModelRegistry);
+const configuration = fc.record({
+    name: fc.string({ minLength: 1, maxLength: 50 }),
+    model: fc.uuid(),
+    temperature: fc.double({ min: 0, max: 1, noNaN: true }),
+});
+const create = (input: Pick<LLMConfigInput, 'name' | 'model' | 'temperature'>) => service.createConfig({
+    ...input, providerId: 'openai', baseUrl: 'https://fixture.invalid/v1', skipValidation: true,
+});
 
-        isActive: fc.boolean(),
-        createdAt: fc.integer({ min: 1000000000000, max: 9999999999999 }),
-        updatedAt: fc.integer({ min: 1000000000000, max: 9999999999999 }),
-    }).map(config => ({ ...config, ...overrides }));
-}
+describe('Model configuration deletion through the settings service', () => {
+    beforeAll(() => initDatabase(':memory:'));
 
-/**
- * Arbitrary generator for active LLMConfigRecord
- */
-function arbitraryActiveLLMConfig(): fc.Arbitrary<LLMConfigRecord> {
-    return arbitraryLLMConfig({ isActive: true });
-}
-
-/**
- * Arbitrary generator for inactive LLMConfigRecord
- */
-function arbitraryInactiveLLMConfig(): fc.Arbitrary<LLMConfigRecord> {
-    return arbitraryLLMConfig({ isActive: false });
-}
-
-describe('ModelTab - Property-Based Tests', () => {
-    // Initialize database before all tests
-    beforeAll(async () => {
-        await initDatabase(':memory:');
-    });
-
-    // Clean up database before and after each test
-    beforeEach(() => {
-        const db = getDb();
-        // Clear all configs
-        const configs = llmConfigDb.getAllLLMConfigs(db);
-        for (const config of configs) {
+    it('deletes an active configuration and clears the active selection', async () => {
+        await fc.assert(fc.asyncProperty(configuration, async input => {
+            const config = await create(input);
             try {
-                llmConfigDb.deleteLLMConfig(db, config.id);
-            } catch {
-                // Ignore errors for active configs
+                service.setActiveConfig(config.id);
+                expect(service.getActiveLLMConfigRecord()?.id).toBe(config.id);
+                service.deleteConfig(config.id);
+                expect(service.getConfig(config.id)).toBeNull();
+                expect(service.getActiveLLMConfigRecord()).toBeNull();
+            } finally {
+                service.deleteConfig(config.id);
             }
-        }
+        }));
     });
 
-    afterEach(() => {
-        const db = getDb();
-        // Clear all configs
-        const configs = llmConfigDb.getAllLLMConfigs(db);
-        for (const config of configs) {
+    it('deletes an inactive configuration without changing the active selection', async () => {
+        await fc.assert(fc.asyncProperty(configuration, configuration, async (activeInput, inactiveInput) => {
+            const active = await create(activeInput);
+            const inactive = await create(inactiveInput);
             try {
-                llmConfigDb.deleteLLMConfig(db, config.id);
-            } catch {
-                // Ignore errors for active configs
+                service.setActiveConfig(active.id);
+                expect(service.getConfig(inactive.id)?.isActive).toBe(false);
+                service.deleteConfig(inactive.id);
+                expect(service.getConfig(inactive.id)).toBeNull();
+                expect(service.getActiveLLMConfigRecord()?.id).toBe(active.id);
+            } finally {
+                service.deleteConfig(inactive.id);
+                service.deleteConfig(active.id);
             }
-        }
+        }));
     });
 
-    /**
-     * Feature: settings-panel, Property 2: Configuration Deletion Safety
-     * Validates: Requirements 4.6
-     * 
-     * For any active configuration, attempting to delete it should fail with an error
-     */
-    it('active configuration cannot be deleted', () => {
-        fc.assert(
-            fc.property(
-                arbitraryActiveLLMConfig(),
-                (activeConfigData) => {
-                    // Create an active configuration
-                    const createdConfig = llmConfigService.createConfig({
-                        name: activeConfigData.name,
-                        model: activeConfigData.model,
-                        providerId: activeConfigData.providerId,
-                        baseUrl: activeConfigData.baseUrl,
-                        apiKey: activeConfigData.apiKey,
-                        temperature: activeConfigData.temperature,
-
-                    });
-
-                    // Set it as active
-                    llmConfigService.setActiveConfig(createdConfig.id);
-
-                    // Verify it's active
-                    const activeConfig = llmConfigService.getActiveLLMConfigRecord();
-                    expect(activeConfig?.id).toBe(createdConfig.id);
-
-                    // Attempt to delete the active configuration
-                    let deletionFailed = false;
-                    let errorMessage = '';
-
-                    try {
-                        llmConfigService.deleteConfig(createdConfig.id);
-                    } catch (err) {
-                        deletionFailed = true;
-                        errorMessage = err instanceof Error ? err.message : String(err);
-                    }
-
-                    // Verify deletion failed
-                    const stillExists = llmConfigService.getConfig(createdConfig.id);
-
-                    // Clean up: Create another config and set it as active, then delete the original
-                    if (stillExists) {
-                        const tempConfig = llmConfigService.createConfig({
-                            name: 'Temp Config',
-                            model: 'temp-model',
-                            providerId: 'temp',
-                            temperature: 0.7,
-
-                        });
-                        llmConfigService.setActiveConfig(tempConfig.id);
-                        llmConfigService.deleteConfig(createdConfig.id);
-                        llmConfigService.deleteConfig(tempConfig.id);
-                    }
-
-                    // Return property result
-                    return (
-                        deletionFailed &&
-                        errorMessage.toLowerCase().includes('active') &&
-                        stillExists !== null
-                    );
-                }
-            ),
-            { numRuns: 100 }
-        );
-    });
-
-    /**
-     * For any inactive configuration, deletion should succeed
-     */
-    it('inactive configuration can be deleted', () => {
-        fc.assert(
-            fc.property(
-                arbitraryActiveLLMConfig(),
-                arbitraryInactiveLLMConfig(),
-                (activeConfigData, inactiveConfigData) => {
-                    // Create an active configuration
-                    const activeConfig = llmConfigService.createConfig({
-                        name: activeConfigData.name,
-                        model: activeConfigData.model,
-                        providerId: activeConfigData.providerId,
-                        baseUrl: activeConfigData.baseUrl,
-                        apiKey: activeConfigData.apiKey,
-                        temperature: activeConfigData.temperature,
-
-                    });
-
-                    // Set it as active
-                    llmConfigService.setActiveConfig(activeConfig.id);
-
-                    // Create an inactive configuration
-                    const inactiveConfig = llmConfigService.createConfig({
-                        name: inactiveConfigData.name,
-                        model: inactiveConfigData.model,
-                        providerId: inactiveConfigData.providerId,
-                        baseUrl: inactiveConfigData.baseUrl,
-                        apiKey: inactiveConfigData.apiKey,
-                        temperature: inactiveConfigData.temperature,
-
-                    });
-
-                    // Verify it's inactive
-                    const config = llmConfigService.getConfig(inactiveConfig.id);
-                    expect(config?.isActive).toBe(false);
-
-                    // Attempt to delete the inactive configuration
-                    let deletionSucceeded = true;
-
-                    try {
-                        llmConfigService.deleteConfig(inactiveConfig.id);
-                    } catch (err) {
-                        deletionSucceeded = false;
-                    }
-
-                    // Verify deletion succeeded
-                    const stillExists = llmConfigService.getConfig(inactiveConfig.id);
-
-                    // Clean up: Delete the active config
-                    const tempConfig = llmConfigService.createConfig({
-                        name: 'Temp Config',
-                        model: 'temp-model',
-                        providerId: 'temp',
-                        temperature: 0.7,
-
-                    });
-                    llmConfigService.setActiveConfig(tempConfig.id);
-                    llmConfigService.deleteConfig(activeConfig.id);
-                    llmConfigService.deleteConfig(tempConfig.id);
-
-                    // Return property result
-                    return deletionSucceeded && stillExists === null;
-                }
-            ),
-            { numRuns: 100 }
-        );
-    });
-
-    /**
-     * For any configuration, after deletion attempt, the active configuration should remain unchanged
-     */
-    it('deletion attempt does not change active configuration', () => {
-        fc.assert(
-            fc.property(
-                arbitraryActiveLLMConfig(),
-                arbitraryInactiveLLMConfig(),
-                (activeConfigData, inactiveConfigData) => {
-                    // Create an active configuration
-                    const activeConfig = llmConfigService.createConfig({
-                        name: activeConfigData.name,
-                        model: activeConfigData.model,
-                        providerId: activeConfigData.providerId,
-                        baseUrl: activeConfigData.baseUrl,
-                        apiKey: activeConfigData.apiKey,
-                        temperature: activeConfigData.temperature,
-
-                    });
-
-                    // Set it as active
-                    llmConfigService.setActiveConfig(activeConfig.id);
-
-                    // Create an inactive configuration
-                    const inactiveConfig = llmConfigService.createConfig({
-                        name: inactiveConfigData.name,
-                        model: inactiveConfigData.model,
-                        providerId: inactiveConfigData.providerId,
-                        baseUrl: inactiveConfigData.baseUrl,
-                        apiKey: inactiveConfigData.apiKey,
-                        temperature: inactiveConfigData.temperature,
-
-                    });
-
-                    // Get active config before deletion
-                    const activeBeforeDeletion = llmConfigService.getActiveLLMConfigRecord();
-
-                    // Attempt to delete the inactive configuration
-                    try {
-                        llmConfigService.deleteConfig(inactiveConfig.id);
-                    } catch {
-                        // Ignore errors
-                    }
-
-                    // Get active config after deletion
-                    const activeAfterDeletion = llmConfigService.getActiveLLMConfigRecord();
-
-                    // Clean up
-                    const tempConfig = llmConfigService.createConfig({
-                        name: 'Temp Config',
-                        model: 'temp-model',
-                        providerId: 'temp',
-                        temperature: 0.7,
-
-                    });
-                    llmConfigService.setActiveConfig(tempConfig.id);
-                    llmConfigService.deleteConfig(activeConfig.id);
-                    llmConfigService.deleteConfig(tempConfig.id);
-
-                    // Return property result
-                    return (
-                        activeBeforeDeletion?.id === activeAfterDeletion?.id &&
-                        activeAfterDeletion?.id === activeConfig.id
-                    );
-                }
-            ),
-            { numRuns: 100 }
-        );
+    it('leaves another configuration intact after deleting the active one', async () => {
+        await fc.assert(fc.asyncProperty(configuration, configuration, async (activeInput, otherInput) => {
+            const active = await create(activeInput);
+            const other = await create(otherInput);
+            try {
+                service.setActiveConfig(active.id);
+                service.deleteConfig(active.id);
+                expect(service.getActiveLLMConfigRecord()).toBeNull();
+                expect(service.getConfig(other.id)).toMatchObject({ id: other.id, model: otherInput.model, isActive: false });
+                service.setActiveConfig(other.id);
+                expect(service.getActiveLLMConfigRecord()?.id).toBe(other.id);
+            } finally {
+                service.deleteConfig(active.id);
+                service.deleteConfig(other.id);
+            }
+        }));
     });
 });

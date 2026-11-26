@@ -135,7 +135,7 @@ export async function exerciseRefresh(turn, runtime, desktop, folder, events, bu
     assert.equal(mount(), undefined);
     const removed = await run('reopen-file', [native('new-file', 'open_file')]);
     assert.deepEqual(pages(removed.body, app).map(page => page.content), [
-        '<view view_id="workspace" view_type="workspace" app_id="refresh_files" app_name="refresh_files">\nTest file workspace\n</view>',
+        '<view view_id="workspace" view_type="workspace" app_id="refresh_files" app_name="refresh_files" region="static">\nTest file workspace\n</view>',
     ]);
     assert.equal(tools(removed.body).includes(app + '-read_file'), false);
     const reopenedMount = mount();

@@ -19,7 +19,7 @@ function invalid(result: CompileResult, unsupported = false) {
 const schema = (properties: object, extra: object = {}) => ({ type: 'object', properties, ...extra });
 const compile = (properties: object, extra: object = {}) => contract(compileToolParameters(schema(properties, extra)));
 
-describe('Console tool parameters', () => {
+describe('Tuple and union tool parameters', () => {
   it('accepts TypeBox fixed tuples and preserves nested literal strings', () => {
     const tuple = { type: 'array', minItems: 2, items: false,
       prefixItems: [{ type: 'number' }, { anyOf: [{ type: 'string' }, { type: 'null' }] }] };

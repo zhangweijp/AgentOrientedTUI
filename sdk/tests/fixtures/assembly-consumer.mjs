@@ -4,9 +4,10 @@ import { readFile, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createAppInteraction, createSnapshotCore, createTurnCoordinator } from '@aotui/core/host';
-import { createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core/producer';
+import { commitAppFrame, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core/producer';
 import { APP_LIFECYCLE_PROTOCOL, hasViewTypeToolAuthoringProtocol, isTUIAppFactory } from '@aotui/core';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from '@aotui/runtime/adapters';
+import { createCandidateScope } from '@aotui/runtime';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 
@@ -26,39 +27,17 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
             return () => assert.ok(controller.signal.aborted, 'This fixture unmounts its owner only on shutdown');
         } },
         defineViewTypes: definitions => { projection.assertWritable(); registry.defineViewTypes(definitions); },
-        readPreparedProjection: () => projection.readPreparedProjection(),
-        readPreparedViewId: (type, name) => projection.readPreparedViewId(type, name),
+        readViewId: owner => projection.readViewId(owner, registry),
         requestAttention() {},
         publishFrame(build, options) {
             assert.equal(options, undefined, 'Work Items only uses ordinary commits in this scenario');
-            const result = projection.commit(() => {
-                const { views } = build();
-                const plan = registry.prepareFrame(views);
-                return {
-                    views: views.map(({ type, name, region, content }, i) => ({
-                        id: plan.instances[i].viewId, type, name: name ?? plan.instances[i].viewId, region, content,
-                        viewInstanceId: plan.instances[i].viewInstanceId,
-                        toolBindings: plan.instances[i].toolBindings,
-                    })),
-                    refs: views.flatMap((view, i) => view.refs.map(ref => ({
-                        ...ref, viewId: plan.instances[i].viewId, viewInstanceId: plan.instances[i].viewInstanceId,
-                    }))),
-                    tools: plan.tools, accept: plan.accept,
-                };
-            });
+            const result = commitAppFrame(projection, registry, build);
             const publication = projection.publishTo(core.committer);
             if (result.status === 'prepared') assert.ok(['published', 'unchanged'].includes(publication.status));
             return result;
         },
     };
-    const { readPreparedProjection, ...withoutReader } = context;
-    await assert.rejects(factory.initialize({ ...withoutReader, defineViewTypes() {} }), {
-        code: 'SNAPSHOT_INVALID', path: 'RuntimeContext.readPreparedProjection',
-        message: /same delivery/,
-    });
-    assert.equal(projection.token().epoch, 0);
     const instance = await factory.initialize(context);
-    assert.deepEqual(readPreparedProjection(), { status: 'prepared', sourceEpoch: 1 });
     const binding = {
         identity: {},
         isLive: ({ tool, receiver }) => !controller.signal.aborted && !projection.failed &&
@@ -78,8 +57,7 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
     return {
         app: { installationId: appId + '_installation', appId: identity.appId, appInstanceId: identity.instanceId, name: appId, status: 'running' },
         readReceipt: authority.readReceipt,
-        async observe(turns) {
-            await instance.whenCommitted(controller.signal);
+        observe(turns) {
             return turns.prepareObservation(authority, () => !controller.signal.aborted);
         },
         async close() {
@@ -118,13 +96,11 @@ const sdk = import.meta.resolve('@aotui/sdk', entry);
 const adapter = import.meta.resolve('@aotui/agent-driver-adapter');
 const resolutions = {
     sdk: await installed('@aotui/sdk', entry), runtime: await installed('@aotui/runtime'),
-    adapter: fileURLToPath(adapter), driver: await installed('@aotui/agent-driver-v2'), preact: await installed('preact', entry),
+    adapter: fileURLToPath(adapter), driver: await installed('@aotui/agent-driver-v2'),
 };
 assert.equal(await installed('@aotui/sdk'), resolutions.sdk);
-assert.equal(await installed('@aotui/runtime', sdk), resolutions.runtime);
 assert.equal(await installed('@aotui/runtime', adapter), resolutions.runtime);
 assert.equal(await installed('@aotui/agent-driver-v2', adapter), resolutions.driver);
-assert.equal(await installed('preact', sdk), resolutions.preact);
 const modules = await realpath('node_modules');
 for (const path of Object.values(resolutions)) assert.ok(path.startsWith(modules + sep), path);
 const factory = (await import(entry)).default;
@@ -154,6 +130,7 @@ try {
     delete process.env.AOTUI_SYSTEM_INSTRUCTION_PATH;
     const desktop = {
         id: desktopId, listApps: () => [...activeApps].map(owner => owner.app), getSystemLogs: () => [],
+        createCandidateScope,
         getAppWindows: () => undefined,
         getRunningApp(appId, instanceId) {
             const owner = clients.get(appId);

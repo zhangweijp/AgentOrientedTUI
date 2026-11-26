@@ -35,7 +35,7 @@ function fixture(projectionLimits?: ConstructorParameters<typeof AppWorkerHost>[
     const confirm = (override?: object) => send({ type: 'PROJECTION_CURRENT', requestId: sent().requestId,
         ...sent().known, ...override });
     const prime = async () => {
-        const refresh = opened.interaction.preview();
+        const refresh = host.preview();
         publish(2);
         expect((await refresh).status).toBe('previewed');
     };
@@ -164,7 +164,7 @@ describe('refresh before the existing Scope observation', () => {
     it('shares the refresh with read-only preview without competing for an observation', async () => {
         const x = fixture(); const again = x.host.getAppInteraction();
         expect(again).toMatchObject({ status: 'ready', interaction: x.client });
-        const observation = x.turns.prepare(), preview = x.client.preview();
+        const observation = x.turns.prepare(), preview = x.host.preview();
         expect(await x.turns.prepare()).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_BUSY' } });
         expect(x.worker.postMessage).toHaveBeenCalledTimes(1);
         x.publish(2);
@@ -182,7 +182,7 @@ describe('refresh before the existing Scope observation', () => {
         x.host.onUpdate = vi.fn();
         const before = x.host.getSemanticSnapshotReport();
         const first = x.turns.prepare();
-        const preview = x.client.preview();
+        const preview = x.host.preview();
         expect(x.sent().known).toEqual({ appId: 'app', instanceId: x.host.appInstanceId, sourceEpoch: 3, producerSeq: 3 });
         expect(x.worker.postMessage).toHaveBeenCalledTimes(2);
         x.confirm({ requestId: 'unowned' });

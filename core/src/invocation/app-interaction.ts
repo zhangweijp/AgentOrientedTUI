@@ -1,5 +1,6 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, checkWireJson, copyWireJson, isSnapshotDataError, utf8Size } from '../snapshot/json.js';
+import { plainConfigObject } from '../snapshot/projection-limits.js';
 import { RAW_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
 import type { AppIdentityReader, JsonValue, SnapshotStore } from '../snapshot/types.js';
 import { getCapturedToolParameters } from '../tool/tool-parameters.js';
@@ -40,11 +41,9 @@ const waitDeadline = new InteractionFailure('INVOCATION_WAIT_TIMEOUT',
 const waitCancelled = new InteractionFailure('INVOCATION_WAIT_CANCELLED',
     'Waiting for the original invocation was cancelled. Read its receipt before retrying.');
 function dataProperties(raw: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || ![Object.prototype, null].includes(Object.getPrototypeOf(raw))) throw 0;
-    const descriptors = Object.getOwnPropertyDescriptors(raw), keys = Reflect.ownKeys(descriptors);
-    if (required.some(key => !Object.hasOwn(descriptors, key)) || keys.some(key => typeof key !== 'string' ||
-        ![...required, ...optional].includes(key) || !descriptors[key]!.enumerable || !('value' in descriptors[key]!))) throw 0;
-    return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
+    const data = plainConfigObject(raw, [...required, ...optional], '$');
+    if (required.some(key => !Object.hasOwn(data, key))) throw 0;
+    return data;
 }
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const validRequestId = (value: unknown): value is string => nonEmpty(value) && utf8Size(value) <= 256;

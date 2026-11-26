@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { captureViewBindings, captureViewTypes } from '../../../sdk/src/tools/view-type-tool.js';
 import { ResultListType } from '../src/tui/BrowserTools.js';
-import { ResultListView } from '../src/tui/ResultListView.js';
+import { resultListBody } from '../src/tui/ResultListView.js';
 import type { SearchResultItem } from '../src/types.js';
 
 const result = (url: string): SearchResultItem => ({
@@ -21,7 +21,7 @@ function openResultTool(results: SearchResultItem[], onOpenResult: (url: string)
 describe('open_result app handler', () => {
     it('shows the URL value the Agent must pass to open_result', () => {
         const url = 'https://example.test/current';
-        expect(JSON.stringify(ResultListView({ results: [result(url)] }))).toContain(url);
+        expect(resultListBody([result(url)])).toContain(url);
     });
 
     it('opens the selected result URL from the current result list', async () => {

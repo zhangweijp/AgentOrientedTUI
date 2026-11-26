@@ -1,7 +1,6 @@
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { ActiveTurn, AppInvocation } from '@aotui/core';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
-import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { afterAll, beforeAll, afterEach, describe, expect, it } from 'vitest';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,7 +35,7 @@ const gate = () => { let resolve!: (value: boolean) => void; const promise = new
 function wait(x: any, predicate: (message: any) => boolean, from = 0): Promise<any> {
     const found = x.messages.slice(from).find(predicate); if (found) return Promise.resolve(found);
     return new Promise((yes, no) => {
-        const timer = setTimeout(() => { x.worker.off('message', receive); no(Error('Tool fixture barrier expired')); }, 5000);
+        const timer = setTimeout(() => { x.worker.off('message', receive); no(Error('Tool fixture barrier expired after ' + x.messages.map((item: any) => item.type).join(', '))); }, 5000);
         function receive(message: any) { if (predicate(message)) { clearTimeout(timer); x.worker.off('message', receive); yes(message); } }
         x.worker.on('message', receive);
     });
@@ -78,7 +77,7 @@ function scope(x: any) {
             turn = turns.adopt(prepared.candidate);
             return prepared.candidate.observation;
         },
-        invoke: (request: AppInvocation, timeout?: number) => turn.invoke(x.host.appId, request, timeout),
+        invoke: (request: AppInvocation, timeout?: number) => turn.invoke(x.host.appId, request, timeout ?? x.host.timeout),
     };
 }
 const request = (observation: any, input: Record<string, unknown> = { view_id: 'counter_1', amount: 1 }) => {
@@ -222,7 +221,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         } finally { authorized.resolve(true); await pending.catch(() => undefined); }
         expect(outcome(await sb.invoke(request(ob))).status).toBe('succeeded');
         await close(a); await close(b);
-        expect(JSON.parse(readSqliteState(join(a.root, 'state/app-state'), 'd', 'a', 'counter')!).value).toBe(2);
+        expect(JSON.parse(await readFile(join(a.root, 'state', 'a-counter.json'), 'utf8'))).toBe(2);
     }, 20000);
     it('checks the current View at Worker entry and lets the App cancel a held handler on stop', async () => {
         const x = await start(), s = scope(x), observation = await s.observeCounter();

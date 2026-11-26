@@ -11,7 +11,6 @@ import { dirname, join, resolve } from 'node:path';
 import { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import Database from 'better-sqlite3';
 import { createRuntime, readAppManifest } from '@aotui/runtime';
 import type { LLMConfig } from '@aotui/agent-driver-v2';
 import type { GuiUpdateEvent } from '../src/types/session.js';
@@ -94,7 +93,7 @@ async function verifyNpm() {
     await fs.writeFile(join(directory, 'package.json'), JSON.stringify({ name, version, type: 'module', main: './main.mjs' }));
     await fs.writeFile(join(directory, 'main.mjs'), "throw Error('The npm catalog should not import this App');\n");
     await fs.writeFile(join(directory, 'aoapp.json'), JSON.stringify({ app_name: 'npm_catalog_fixture', version,
-        entry: { main: './main.mjs' }, toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2' }));
+        entry: { main: './main.mjs' }, toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2' }));
     const packed = await execute('npm', ['pack', '--ignore-scripts', '--json'], { cwd: directory,
         env: { ...cliEnv, npm_config_cache: join(state, 'npm-pack-cache') } });
     const tarball = await fs.readFile(join(directory, JSON.parse(packed.stdout)[0].filename));
@@ -228,6 +227,7 @@ try {
     const cliEffects = await appEffects(manifest);
     assert.deepEqual(cliEffects.map(item => item.event), ['import', 'initialize', 'close']);
     assert.ok(cliEffects.every(item => item.threadId > 0));
+    assert.equal(cliEffects[1].dataDir, runtimeData);
     await fs.unlink(join(dirname(manifest.modulePath), 'catalog-effects.jsonl'));
     await host.removeApp(appName);
     assert.ok(existsSync(manifest.modulePath));
@@ -253,21 +253,14 @@ try {
         const event = calls.length ? await watchUntil(() => delivered[count]) : undefined;
         await watchUntil(() => session.agentDriver.getState() === 'idle');
         return { body: request.body, message: event?.message };
-    }, runtime, desktop, workers.events);
-    const disk = new Database(join(runtimeData, 'app-state/state.sqlite3'), { readonly: true, fileMustExist: true });
-    try {
-        facts.persisted = disk.prepare('select namespace, key, record from aotui_state').all().map(row => {
-            const entry = row as { namespace: string; key: string; record: string };
-            return [JSON.parse(entry.namespace), entry.key, JSON.parse(entry.record).value];
-        });
-        assert.deepEqual(facts.persisted, [[[id, autoEntry], 'draft', draftText]]);
-    } finally { disk.close(); }
+    }, desktop, workers.events);
+    facts.persisted = await fs.readFile(join(runtimeData, 'catalog-draft', `${id}-${appName}.txt`), 'utf8');
+    assert.equal(facts.persisted, draftText);
     const effects = await appEffects(manifest);
     facts.effects = effects;
     assert.equal(effects.filter(item => item.event === 'save').length, 1);
-    assert.deepEqual(workers.events.filter(item => item.type === 'storage' && item.address).map(item =>
-        [item.action, JSON.parse(item.address.namespace), item.address.key]), [
-        ['replace', [id, autoEntry], 'draft'], ['read', [id, manualEntry], 'draft'],
+    assert.deepEqual(effects.filter(item => item.event === 'save' || item.event === 'lookup').map(item => [item.event, item.storageKey]), [
+        ['save', appName], ['lookup', appName + '_1'],
     ]);
     await host.shutdownSession(id);
     assert.deepEqual(provider.failures, []);

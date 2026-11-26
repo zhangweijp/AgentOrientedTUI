@@ -5,7 +5,6 @@ import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index
 import { commitAppFrame, createViewOwnedTools, SemanticProjectionCoordinator, hostedObservationCapacityIssue } from '@aotui/core/producer';
 import type { ProjectionLimits, ToolRoute, ViewToolReceiver } from '@aotui/core';
 import { createAppLifecycle } from '../app-lifecycle.js';
-import type { AppStatePersistence } from '@aotui/core';
 import { SnapshotDataError } from '@aotui/core';
 import { closeError } from '../../engine/core/close-handle.js';
 
@@ -24,13 +23,6 @@ export class AppKernel {
     getAppCleanupReport() { return this.appLifecycle.getReport(); }
     private readonly projectionOwner = new AbortController();
     stopApplication(): void { this.projectionOwner.abort(); this.appLifecycle.stop(); }
-
-    async whenProjectionCommitted(): Promise<void> {
-        this.assertActive();
-        await this.instance?.whenCommitted?.(this.projectionOwner.signal);
-        this.assertActive();
-        if (this.projectionOwner.signal.aborted) throw closeError('PROJECTION_CLOSED');
-    }
 
     private closing = false;
     private openPromise?: Promise<void>;
@@ -78,11 +70,10 @@ export class AppKernel {
         factory: Pick<TUIAppFactory, 'initialize'>;
         launchConfig?: AppLaunchConfig | undefined;
         projectionLimits: ProjectionLimits;
-        persistence?: AppStatePersistence;
         requestAttention?: () => void;
     }) {
-        const { appId, desktopId, instanceId, projectionLimits, persistence } = config;
-        if (!desktopId?.trim() || persistence && persistence.instanceId !== instanceId)
+        const { appId, desktopId, instanceId, projectionLimits } = config;
+        if (!desktopId?.trim())
             throw new Error('Invalid App execution identity');
         this.context = Object.freeze({ appId, desktopId });
         this.viewOwnedTools = createViewOwnedTools(appId, instanceId);
@@ -128,7 +119,7 @@ export class AppKernel {
     // ─────────────────────────────────────────────────────────────
 
     private async initializeInstance(): Promise<void> {
-        const { launchConfig, projectionLimits, persistence } = this.config;
+        const { launchConfig, projectionLimits } = this.config;
         const runtimeContext: RuntimeContext = {
             ...this.context,
             launchConfig,
@@ -148,13 +139,8 @@ export class AppKernel {
                     return frame;
                 }, options);
             },
-            readPreparedProjection: () => {
-                if (this.projectionOwner.signal.aborted) throw closeError('PROJECTION_CLOSED');
-                return this.projection.readPreparedProjection();
-            },
-            readPreparedViewId: (type, name) => this.projectionOwner.signal.aborted ? undefined
-                : this.projection.readPreparedViewId(type, name),
-            ...(persistence === undefined ? {} : { persistence }),
+            readViewId: owner => this.projectionOwner.signal.aborted ? undefined
+                : this.projection.readViewId(owner, this.viewOwnedTools),
             appLifecycle: this.appLifecycle.port,
         };
 

@@ -1,0 +1,28 @@
+{
+  "hello": { "protocol": "aotui-app", "major": 1 },
+  "unknownOptional": "example.future-feature",
+  "unknownRequired": "example.mandatory-feature",
+  "incompatibleMajor": 99,
+  "text": "Read <文件> & review 🙂\r\nEOF",
+  "xmlText": "Read &lt;文件&gt; &amp; review 🙂&#13;\nEOF",
+  "tool": {
+    "viewType": "file",
+    "name": "edit",
+    "multiplicity": "multiple",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "text": { "type": "string" } },
+      "required": ["text"],
+      "additionalProperties": false
+    }
+  },
+  "ref": { "id": "content", "scope": "public", "schema": { "type": "string" } },
+  "decisions": {
+    "closeOrRemount": "VIEW_INSTANCE_REVOKED",
+    "activationChanged": "TOOL_SOURCE_STALE",
+    "scopeChanged": "REF_NOT_VISIBLE",
+    "badFinalInput": "E_INVALID_ARGS",
+    "wait": "INVOCATION_WAIT_TIMEOUT",
+    "noTerminal": "ACTION_OUTCOME_UNKNOWN"
+  }
+}

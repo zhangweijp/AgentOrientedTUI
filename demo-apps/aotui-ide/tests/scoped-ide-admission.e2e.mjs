@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { apps, close, facts, factsFile, fileView, invoke, modules, runCase, scope, start, toolNames, viewText, working } from './ide-test-harness.mjs';
 
 const fileViews = result => result.views.filter(view => view.type === 'FileDetail').map(view => view.id);
 function activeFiles(app, key) {
-    const Driver = createRequire(path.join(modules, '@aotui/runtime/package.json'))('better-sqlite3');
-    const db = new Driver(path.join(app.data, 'app-state', 'state.sqlite3'), { readonly: true, fileMustExist: true });
-    try {
-        const row = db.prepare('SELECT record FROM aotui_state WHERE namespace = ? AND key = ?')
-            .get(JSON.stringify(['test', key]), 'activeFiles');
-        return JSON.parse(row.record).value;
-    } finally { db.close(); }
+    const data = JSON.parse(readFileSync(path.join(app.data, 'ide-sessions', key, 'session.json'), 'utf8'));
+    return data.activeFiles;
 }
 
 try {
@@ -91,11 +86,16 @@ try {
         assert.equal(replacing.details.result.error.code, 'OBSERVATION_CAPACITY');
         const recoveredSearch = (await client.preview()).views.find(view => view.type === 'SearchResult');
         assert.deepEqual(recoveredSearch.content, searchView.content);
-        assert.notEqual(recoveredSearch.viewInstanceId, searchView.viewInstanceId);
+        assert.equal(recoveredSearch.viewInstanceId, searchView.viewInstanceId);
+        await invoke(app, 'search_files_by_pattern', { pattern: '**/b.txt' }, { turn, observation: previous });
+        const acceptedSearch = (await client.preview()).views.find(view => view.type === 'SearchResult');
+        assert.equal(acceptedSearch.id, searchView.id);
+        assert.notEqual(acceptedSearch.viewInstanceId, searchView.viewInstanceId);
+        assert.match(acceptedSearch.content.value, /b\.txt/);
         const stale = await invoke(app, 'close_search_view', {}, { view: searchView.id, status: 'rejected', turn, observation: previous });
         assert.equal(stale.code, 'VIEW_INSTANCE_REVOKED');
         turn.release();
-        await invoke(app, 'close_search_view', {}, { view: recoveredSearch.id });
+        await invoke(app, 'close_search_view', {}, { view: acceptedSearch.id });
         const beforeCreate = await client.preview();
 
         const content = 'created text\n' + 'z'.repeat(48 * 1024);

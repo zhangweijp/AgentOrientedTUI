@@ -3,25 +3,22 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createRuntime } from '@aotui/runtime';
 import { coreFixtureFacts } from './core-out/public-core.js';
-import { stateFixtureFacts } from './core-out/public-memory-state.js';
 import { selectedViewId, otherViewId } from './core-out/work-items.js';
 
 const profile = process.argv[2];
-const facts = { profile, core: coreFixtureFacts, state: stateFixtureFacts, calls: [], reports: [] };
+const facts = { profile, core: coreFixtureFacts, calls: [], reports: [] };
 
 assert.equal(coreFixtureFacts.handlerEntries, 3);
 assert.deepEqual(coreFixtureFacts.witness, [{ text: 'old!', frozen: true }, { text: 'new!', frozen: true }]);
 for (const field of ['observationSlots', 'leases', 'bindings']) {
   assert.equal(coreFixtureFacts[field], 0, field);
 }
-assert.deepEqual(stateFixtureFacts, { restoredValue: 41, stateOwners: 0, storedKeys: 1 });
 
 const workRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
 facts.workItemsExamples = [];
 try {
  const desktop = await workRuntime.createDesktop('work-items');
  const examples = [['plain', './core-out/work-items-plain.js']];
- if (facts.profile === 'full') examples.push(['preact', './full-out/work-items-preact.js']);
  for (const [author, example] of examples) {
   const appId = 'work_' + author;
   const entry = new URL('./work-' + author + '.mjs', import.meta.url);
@@ -89,7 +86,6 @@ if (profile === 'full') {
   assert.notEqual(await fs.realpath(fileURLToPath(import.meta.resolve('@aotui/sdk'))),
     await fs.realpath(fileURLToPath(import.meta.resolve('@aotui/sdk-copy'))));
   assert.notEqual(sdk.defineViewType, copy.defineViewType);
-  assert.equal(sdk.useState, copy.useState, 'Both SDK copies use the same physical Preact');
   const primaryCore = import.meta.resolve('@aotui/core', import.meta.resolve('@aotui/sdk'));
   const primaryProducer = import.meta.resolve('@aotui/core/producer', import.meta.resolve('@aotui/sdk'));
   const secondCore = import.meta.resolve('@aotui/core', import.meta.resolve('@aotui/sdk-copy'));
@@ -108,18 +104,18 @@ if (profile === 'full') {
   projection.close();
   facts.copyDiagnostic = rejectedProjection.issue;
   const copiesRuntime = createRuntime();
-  facts.preactCopies = [];
+  facts.sdkCopies = [];
   try {
-   const desktop = await copiesRuntime.createDesktop('preact-copies');
+   const desktop = await copiesRuntime.createDesktop('sdk-copies');
    async function install(mode) {
     const entry = new URL('./copy-' + mode + '.mjs', import.meta.url);
-    await fs.writeFile(entry, 'import { copyApp } from "./full-out/preact-sdk-copies.js";\n' +
+    await fs.writeFile(entry, 'import { copyApp } from "./full-out/sdk-copies.js";\n' +
       'export default copyApp(' + JSON.stringify(mode) + ');\n');
     const appFolder = new URL('./copy-manifest-' + mode + '/', import.meta.url);
     await fs.mkdir(appFolder, { recursive: true });
     await fs.writeFile(new URL('aoapp.json', appFolder), JSON.stringify({
      app_name: 'copy_views', version: '0.1.0', entry: { main: '../copy-' + mode + '.mjs' },
-     toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2',
+     toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
     }));
     const installationId = await desktop.registerPendingApp({
      installationId: mode, localPath: fileURLToPath(appFolder), config: { word: mode },
@@ -160,7 +156,7 @@ if (profile === 'full') {
     assert.ok(next.views[0].content.value.includes('Selected ' + mode), 'Only this App receives its page value');
     assert.equal(next.views[0].viewInstanceId, current.views[0].viewInstanceId);
     nextCandidate.discard();
-    facts.preactCopies.push({ mode, appId, view: next.views[0], receipt: result.receipt });
+    facts.sdkCopies.push({ mode, appId, view: next.views[0], receipt: result.receipt });
    }
    facts.rejectedCopyDeclarations = [];
    for (const mode of ['same-name', 'other-name']) {
@@ -310,7 +306,7 @@ if (profile === 'full') {
    await fs.mkdir(localPath, { recursive: true });
    await fs.writeFile(new URL('aoapp.json', localPath), JSON.stringify({
     app_name: 'interaction_example', version: '0.1.0', entry: { main: '../managed-host-app.mjs' },
-    toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2',
+    toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
    }));
    const result = await runManagedHost(fileURLToPath(localPath), data);
    assert.equal(result.outcomes.length,2);assert.ok(result.outcomes.every(o=>o.status==='succeeded'));

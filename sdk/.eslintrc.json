@@ -22,7 +22,6 @@
     },
     "env": {
         "node": true,
-        "es2022": true,
-        "browser": true
+        "es2022": true
     }
 }

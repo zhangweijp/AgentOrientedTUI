@@ -80,14 +80,14 @@ describe('planning app type-level tool handlers', () => {
     });
 
     it('rejects a resolved deleted or hidden Plan without invoking the delete callback', async () => {
-        const deletePlan = vi.fn(async () => true);
+        const deletePlan = vi.fn(async () => ({ deleted: true, selectionCleared: true }));
         const currentPlan = plan('current', 'phase', 'task');
         const hiddenCompletedPlan = plan('completed-plan', 'completed-phase', 'completed-task');
         hiddenCompletedPlan.phases[0]!.status = 'completed';
         const tools = pageTools(PlanListType, {
             plans: [currentPlan, hiddenCompletedPlan],
             activePlan: null,
-            createPlan: vi.fn(async () => 'new'),
+            createPlan: vi.fn(async () => ({ planId: 'new', selectionSaved: true })),
             updatePlan: vi.fn(async () => true),
             deletePlan,
             openPlan: vi.fn(async () => true),
@@ -140,13 +140,13 @@ describe('planning app type-level tool handlers', () => {
     });
 
     it('creates a plan with optional initial tasks', async () => {
-        const createPlan = vi.fn(async () => 'new-plan');
+        const createPlan = vi.fn(async () => ({ planId: 'new-plan', selectionSaved: true }));
         const tools = pageTools(PlanListType, {
             plans: [],
             activePlan: null,
             createPlan,
             updatePlan: vi.fn(async () => true),
-            deletePlan: vi.fn(async () => true),
+            deletePlan: vi.fn(async () => ({ deleted: true, selectionCleared: true })),
             openPlan: vi.fn(async () => true),
             closePlan: vi.fn(),
         });
@@ -160,6 +160,77 @@ describe('planning app type-level tool handlers', () => {
             { title: 'Design', tasks: [] },
             { title: 'Review', tasks: [{ title: 'Accepted' }] },
         ]);
-        expect(receipt).toMatchObject({ success: true, data: { message: 'Plan created with 2 phases and 1 tasks.' } });
+        expect(receipt).toMatchObject({ success: true, data: { planId: 'new-plan', message: 'Plan created with 2 phases and 1 tasks.' } });
+    });
+
+    it('reports step-wise honest receipts when plan creation/deletion succeeds on disk but selection save/clear fails', async () => {
+        const target = plan('target-plan', 'phase-1', 'task-1');
+        const tools = pageTools(PlanListType, {
+            plans: [target],
+            activePlan: target,
+            createPlan: async () => ({ planId: 'plan-created-1', selectionSaved: false, selectionError: 'Database busy' }),
+            updatePlan: async () => true,
+            deletePlan: async () => ({ deleted: true, selectionCleared: false, selectionError: 'Database busy' }),
+            openPlan: async () => { throw new Error('Database busy during open'); },
+            closePlan: async () => { throw new Error('Database busy during close'); },
+        });
+
+        const createReceipt = await tools.create_plan.execute({ title: 'New plan' });
+        expect(createReceipt).toMatchObject({
+            success: true,
+            data: {
+                planId: 'plan-created-1',
+                planCreated: true,
+                selectionSaved: false,
+            },
+        });
+        expect((createReceipt as { data: { selectionWarning: string } }).data.selectionWarning).toContain('Do not re-create');
+
+        const deleteReceipt = await tools.delete_plan.execute({ plan: target });
+        expect(deleteReceipt).toMatchObject({
+            success: true,
+            data: {
+                planId: 'target-plan',
+                planDeleted: true,
+                selectionCleared: false,
+            },
+        });
+        expect((deleteReceipt as { data: { selectionWarning: string } }).data.selectionWarning).toContain('deleted from disk');
+
+        const openReceipt = await tools.open_plan.execute({ plan: target });
+        expect(openReceipt).toMatchObject({ success: false, error: { code: 'PLAN_SELECTION_SAVE_FAILED' } });
+
+        const closeReceipt = await tools.close_plan.execute({});
+        expect(closeReceipt).toMatchObject({ success: false, error: { code: 'PLAN_SELECTION_SAVE_FAILED' } });
+    });
+
+    it('surfaces PLANNING_DB_BUSY instead of throwing or overwriting error codes', async () => {
+        const target = plan('target-plan', 'phase-1', 'task-1');
+        const busyError = () => Object.assign(new Error('Planning database is currently in use'), { code: 'PLANNING_DB_BUSY' });
+        const listTools = pageTools(PlanListType, {
+            plans: [target],
+            activePlan: target,
+            createPlan: async () => { throw busyError(); },
+            updatePlan: async () => { throw busyError(); },
+            deletePlan: async () => { throw busyError(); },
+            openPlan: async () => { throw busyError(); },
+            closePlan: async () => { throw busyError(); },
+        });
+        const detailTools = pageTools(PlanDetailType, {
+            activePlan: target,
+            addPhase: async () => { throw busyError(); },
+            deletePhase: async () => { throw busyError(); },
+            completePhase: async () => { throw busyError(); },
+            addTask: async () => { throw busyError(); },
+            updateTask: async () => { throw busyError(); },
+            deleteTask: async () => { throw busyError(); },
+            completeTask: async () => { throw busyError(); },
+        });
+
+        expect(await listTools.create_plan.execute({ title: 'Blocked' })).toMatchObject({ success: false, error: { code: 'PLANNING_DB_BUSY' } });
+        expect(await listTools.open_plan.execute({ plan: target })).toMatchObject({ success: false, error: { code: 'PLANNING_DB_BUSY' } });
+        expect(await listTools.close_plan.execute({})).toMatchObject({ success: false, error: { code: 'PLANNING_DB_BUSY' } });
+        expect(await detailTools.complete_phase.execute({ phase: target.phases[0]! })).toMatchObject({ success: false, error: { code: 'PLANNING_DB_BUSY' } });
+        expect(await detailTools.complete_task.execute({ task: target.phases[0]!.tasks[0]! })).toMatchObject({ success: false, error: { code: 'PLANNING_DB_BUSY' } });
     });
 });

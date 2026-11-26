@@ -167,6 +167,27 @@ describe('SettingsPanel - Accessibility', () => {
             }, { timeout: 200 });
         });
 
+        it('focuses the requested tab and returns focus to the opener on close', () => {
+            const { rerender } = render(<>
+                <button type="button">Open settings</button>
+                <SettingsPanel {...defaultProps} initialTab="theme" isOpen={false} />
+            </>);
+            const opener = screen.getByRole('button', { name: 'Open settings' });
+            opener.focus();
+            rerender(<>
+                <button type="button">Open settings</button>
+                <SettingsPanel {...defaultProps} initialTab="theme" />
+            </>);
+            const tab = screen.getByRole('tab', { name: 'Theme', selected: true });
+            expect(tab).toHaveFocus();
+            expect(screen.getByRole('tabpanel', { name: 'Theme' })).toHaveAttribute('id', tab.getAttribute('aria-controls'));
+            rerender(<>
+                <button type="button">Open settings</button>
+                <SettingsPanel {...defaultProps} initialTab="theme" isOpen={false} />
+            </>);
+            expect(opener).toHaveFocus();
+        });
+
         it('should not allow focus to escape modal', () => {
             render(<SettingsPanel {...defaultProps} />);
 
@@ -215,7 +236,7 @@ describe('SettingsPanel - Accessibility', () => {
         it('should have aria-label on close button', () => {
             render(<SettingsPanel {...defaultProps} />);
 
-            const closeButton = screen.getByLabelText('Close settings panel');
+            const closeButton = screen.getByLabelText('Exit settings panel');
             expect(closeButton).toBeInTheDocument();
         });
 
@@ -239,8 +260,8 @@ describe('SettingsPanel - Accessibility', () => {
         it('should have aria-selected on active tab', () => {
             render(<SettingsPanel {...defaultProps} />);
 
-            const modelTab = screen.getByRole('tab', { name: /model/i });
-            expect(modelTab).toHaveAttribute('aria-selected', 'true');
+            const agentTab = screen.getByRole('tab', { name: 'Agent' });
+            expect(agentTab).toHaveAttribute('aria-selected', 'true');
 
             const themeTab = screen.getByRole('tab', { name: /theme/i });
             expect(themeTab).toHaveAttribute('aria-selected', 'false');
@@ -333,7 +354,7 @@ describe('SettingsPanel - Accessibility', () => {
         it('should show focus on interactive elements', () => {
             render(<SettingsPanel {...defaultProps} />);
 
-            const closeButton = screen.getByLabelText('Close settings panel');
+            const closeButton = screen.getByLabelText('Exit settings panel');
             closeButton.focus();
 
             expect(document.activeElement).toBe(closeButton);
@@ -393,21 +414,17 @@ describe('SettingsPanel - Accessibility', () => {
         it('should use CSS variables for theming', () => {
             const { container } = render(<SettingsPanel {...defaultProps} />);
 
-            const panel = container.querySelector('[role="dialog"] > div');
-            
-            // Should use CSS variables for colors
-            const styles = window.getComputedStyle(panel!);
-            expect(styles.backgroundColor).toBeTruthy();
+            const backdrop = container.querySelector('[role="dialog"]');
+            expect(backdrop).toHaveClass('bg-[var(--mat-overlay-bg)]');
+            expect(backdrop?.firstElementChild).toHaveClass('mat-lg-regular');
         });
 
         it('should have visible borders for focus indication', () => {
             render(<SettingsPanel {...defaultProps} />);
 
-            const closeButton = screen.getByLabelText('Close settings panel');
-            const styles = window.getComputedStyle(closeButton);
-
-            // Button should have some form of visual styling
-            expect(styles.padding).toBeTruthy();
+            const closeButton = screen.getByLabelText('Exit settings panel');
+            expect(closeButton).toHaveClass('focus-visible:outline-2');
+            expect(closeButton).toHaveClass('focus-visible:outline-[var(--color-accent)]');
         });
     });
 });

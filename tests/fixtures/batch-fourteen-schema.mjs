@@ -3,7 +3,7 @@ import { rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { projectNativeToolSchema } from '@aotui/runtime/adapters';
-import { journal, modelCall, watchUntil } from './batch-two-support.mjs';
+import { consoleBindings, consoleDeclaration, journal, modelCall, watchUntil } from './batch-two-support.mjs';
 import { savedParts } from './batch-ten-delivery.mjs';
 
 export const address = '$ref.cinema.hall.seat';
@@ -120,12 +120,11 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     const westId = / view_id="([^"]+)"/.exec(deskPage)?.[1];
     assert.ok(westId);
     assert.equal(first.tools['cinema-lookup_at'].parameters.required[0], 'view_id');
-    const declaration = first.tools.run_code.description.split('\n\ntype JsonValue')[1];
-    assert.ok(declaration);
+    const declaration = consoleDeclaration(first.body);
     assert.match(declaration, /"cinema-lookup"\(args: .*readonly \[string, number(?: \| AppRefAddress)?\]/);
     assert.match(declaration, /"cinema-lookup_at"\(args: .*\bview_id: string/);
     assert.match(declaration, /"cinema-selection"\(args: .*AppRefAddress/);
-    codes.declaration = 'type JsonValue' + declaration;
+    codes.declaration = declaration;
 
     const snapshot = await compare('seat-original-ref', [native('old-ref', address)], async () => {
         const state = await publishSeat(manifest, changed);
@@ -185,7 +184,7 @@ await tools["cinema-lookup"]({seat:refs.cinema.hall.seat}); inspect(refs.cinema.
     return { codes, comparison, results, effects, observationSchema: observedSchema };
 }
 
-export async function exerciseStrict(turn, label, manifest, captured, consoleSupported = true) {
+export async function exerciseStrict(turn, label, manifest, captured) {
     const count = captured.events.length;
     const start = (await healthyLog(manifest)).length;
     const calls = [modelCall(label + '-confirm', 'healthy-confirm', { text: label })];
@@ -194,17 +193,14 @@ export async function exerciseStrict(turn, label, manifest, captured, consoleSup
     const pages = views(body);
     assert.ok(pages.some(page => page.includes('Healthy app is ready')));
     assert.ok(pages.every(page => !page.includes('app_id="cinema"')));
-    assert.equal(!!tools.run_code, consoleSupported);
+    assert.ok(tools.run_code);
     assert.ok(Object.keys(tools).every(name => !name.startsWith('cinema-')));
     assert.ok(body.tools.every(({ function: fn }) => fn.strict === true));
     assert.ok(tools['system-open_app'] && tools['system-close_app']);
     const issue = body.messages.find(item => item.role === 'user' && item.content.includes('cannot encode cinema-lookup'));
     assert.ok(issue?.content.includes('prefixItems'), JSON.stringify(body.messages));
-    if (consoleSupported) {
-        assert.deepEqual(tools.run_code.parameters.required, ['code', 'imports', 'reset']);
-        assert.ok(!tools.run_code.description.includes('"cinema-lookup"'), 'Console must keep the same App selection');
-    } else assert.ok(body.messages.some(item => item.role === 'user' && item.content.includes('Optional tool run_code is unavailable') &&
-        item.content.includes('maxItems') && item.content.includes('non-strict')), JSON.stringify(body.messages));
+    assert.deepEqual(tools.run_code.parameters.required, ['code', 'imports', 'reset']);
+    assert.ok(!consoleBindings(body).includes('"cinema-lookup"'), 'Console must keep the same App selection');
     assert.deepEqual(tools['system-collapse_view'].parameters.required, ['app_id', 'view_id', 'note']);
     assert.deepEqual(tools['system-collapse_app'].parameters.required, ['app_id', 'note']);
     assert.deepEqual(captured.events.slice(count).map(event => [event.appId, event.status]), [['healthy', 'adopted']]);

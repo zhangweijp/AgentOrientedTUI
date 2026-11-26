@@ -16,7 +16,6 @@ class Channel extends EventEmitter {
             requestId: message.requestId, success: true,
             ...(message.type === 'INIT' ? {
                 appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: message.appInstanceId },
-                persistence: { protocol: 'state-session-v2', version: 2, instanceId: message.appInstanceId },
                 protocol: message.protocol, toolsEnabled: message.toolsEnabled, appInstanceId: message.appInstanceId,
                 projectionLimits: message.projectionLimits,
             } : {}),
@@ -45,7 +44,6 @@ function clean(host: AppWorkerHost) {
 function initAck(host: AppWorkerHost, init: any, patch: Record<string, unknown> = {}) {
     return { type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
         appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
-        persistence: { protocol: 'state-session-v2', version: 2, instanceId: host.appInstanceId },
         protocol: init.protocol, toolsEnabled: init.toolsEnabled, appInstanceId: host.appInstanceId,
         projectionLimits: init.projectionLimits, ...patch };
 }
@@ -96,7 +94,6 @@ describe('Worker Host owns exactly one application initialization', () => {
             expect(host.getSemanticSnapshotReport()?.health).toBe('stopped'); const retired = host.getSemanticSnapshotReport();
             savedListener({ type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
                 appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
-                persistence: { protocol: 'state-session-v2', version: 2, instanceId: host.appInstanceId },
                 protocol: WORKER_PROTOCOL, toolsEnabled: true, appInstanceId: host.appInstanceId,
                 projectionLimits: init.projectionLimits });
             savedListener({ type: 'SNAPSHOT_PREPARED', draft: draft(host, 2) });
@@ -169,5 +166,11 @@ describe('Worker Host owns exactly one application initialization', () => {
         if (worker.last?.type === 'APP_STOP') worker.reply(worker.last);
         await closed; clean(host);
         expect(worker.messages.filter(m => m.type === 'INIT')).toHaveLength(0);
+    });
+    it('bounds the constructor timeout configuration', () => {
+        for (const timeout of [0, -1, NaN, Infinity, 1.5, 300001, 2147483648]) {
+            expect(() => new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused', timeout }))
+                .toThrow('INVALID_INPUT');
+        }
     });
 });

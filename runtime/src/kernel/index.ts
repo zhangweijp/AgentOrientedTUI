@@ -4,7 +4,6 @@ import type { CreateDesktopOptions, IKernel, IDesktop } from '../spi/runtime/ker
 import { RUNTIME_DEFAULTS, type RuntimeConfig } from '../spi/config/index.js';
 import { Desktop } from '../engine/core/desktop.js';
 import { WorkerCapacity } from '../engine/app/worker-capacity.js';
-import type { StateStorageBackend } from '@aotui/core/persistence';
 import { AOTUIError } from '@aotui/core';
 import type { DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport } from '../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, createCloseHandle, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
@@ -18,7 +17,7 @@ export class Kernel implements IKernel {
     private readonly closingDesktops = new Map<Desktop, DesktopCloseHandle | undefined>();
     private readonly closeState = newCloseState('runtime');
 
-    constructor(private readonly config: RuntimeConfig = RUNTIME_DEFAULTS, private readonly storageBackend?: StateStorageBackend) {
+    constructor(private readonly config: RuntimeConfig = RUNTIME_DEFAULTS) {
         this.workerCapacity = new WorkerCapacity(config.worker.maxWorkers);
     }
 
@@ -72,7 +71,7 @@ export class Kernel implements IKernel {
         const key = id ?? createDesktopId();
         if (this.desktops.has(key)) throw closeError('DESKTOP_ALREADY_EXISTS');
         const desktop = new Desktop(key, {
-            runtimeConfig: this.config, workerCapacity: this.workerCapacity, storageBackend: this.storageBackend, policyForApp,
+            runtimeConfig: this.config, workerCapacity: this.workerCapacity, policyForApp,
             onResourcesReleased: released => {
                 if (this.desktops.get(key) === released) this.desktops.delete(key);
             },
@@ -132,11 +131,11 @@ export class Kernel implements IKernel {
         this.closing = createCloseHandle(() => this.report(), completion);
         // Stop admission before visiting any owner. Accepted creates can add their own Desktop during the wait.
         const accepted = previous ? [] : [...this.inFlight];
-        const capacity = this.workerCapacity.close();
+        void this.workerCapacity.close();
         const desktops = previous ? this.closingDesktops.keys() : this.desktops.values();
         for (const desktop of [...desktops]) this.startDesktopClose(desktop, !!previous);
         void (async () => {
-            await Promise.allSettled([capacity, ...accepted]);
+            await Promise.allSettled(accepted);
             await Promise.all([...this.closingDesktops].map(async ([desktop, handle]) => {
                 if (!handle) return;
                 try {

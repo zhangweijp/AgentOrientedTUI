@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { createApp, createView, defineViewType, type ToolResult } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, type ToolResult } from '@aotui/sdk';
 
 const Draft = defineViewType<{ setRecipients(to: readonly string[]): Promise<ToolResult> }>()({
     name: 'draft',

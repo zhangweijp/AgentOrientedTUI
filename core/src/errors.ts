@@ -13,10 +13,9 @@ const ERROR_MESSAGES = {
 
     // App
     APP_NOT_FOUND: (c) => `App '${c.appId ?? 'unknown'}' not found${c.desktopId ? ` in Desktop '${c.desktopId}'` : ''}`,
-    APP_INVALID_EXPORT: (c) => `App module '${c.modulePath ?? 'unknown'}' must default-export an App factory created by createApp or createTUIApp`,
+    APP_INVALID_EXPORT: (c) => `App module '${c.modulePath ?? 'unknown'}' must default-export an App factory created by createApp`,
 
     APP_MANIFEST_INVALID: (c) => `Invalid App manifest at '${c.path ?? 'unknown'}': ${c.reason ?? 'expected generated aoapp.json'}`,
-    PERSISTENCE_UNAVAILABLE: (c) => String(c.reason ?? 'App persistence contract is unavailable'),
     APP_IDENTITY_MISMATCH: (c) => `App identity mismatch: expected '${c.expected ?? 'unknown'}', received '${c.actual ?? 'unknown'}' (${c.path ?? 'registration'})`,
 
     // App

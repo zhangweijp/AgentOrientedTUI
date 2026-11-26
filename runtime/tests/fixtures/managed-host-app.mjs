@@ -1,7 +1,5 @@
-import { h } from 'preact';
-import { useState } from 'preact/hooks';
 import Type from 'typebox';
-import { createTUIApp, defineViewType, refParam, DynamicView, StaticView, useDataRef } from '@aotui/sdk';
+import { createApp, createView, defineViewType, formatRef, ref, refParam } from '@aotui/sdk';
 
 const FileSchema = Type.Object({ filePath: Type.String(), text: Type.String() }, { additionalProperties: false });
 const Guide = defineViewType({ multiplicity: 'multiple', name: 'Root' });
@@ -9,9 +7,8 @@ const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'Detail', 
   ordinary: {
     description: 'Apply text to the selected file. Read the updated Detail.',
     inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
-    async execute({ input, context: { setText, setCount } }) {
-      setText(input.text);
-      setCount(current => current + 1);
+    async execute({ input, context: { edit } }) {
+      edit(input.text);
       return { success: true, data: { message: 'Change completed.' } };
     },
   },
@@ -27,22 +24,19 @@ const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'Detail', 
 } });
 const viewTypes = [Guide, FileDetail];
 
-function FileBody({ count, text, filePath }) {
-  const file = useDataRef('file', { filePath, text }, { schema: Type.Object({}), scope: 'protected', refType: 'File' });
-  return h('section', {}, h('p', {}, 'Open file: ' + filePath), h('p', {}, file('Current file value')), h('pre', {}, text),
-    h('p', {}, 'Completed actions: ' + count));
-}
-function Detail({ id, filePath }) {
-  const [count, setCount] = useState(0), [text, setText] = useState('original');
-  return h(DynamicView, { idPrefix: id, type: FileDetail, context: { filePath, setText, setCount } },
-    h(FileBody, { count, text, filePath }));
-}
-function Root() {
-  return h('main', {}, [
-    h(StaticView, { idPrefix: 'root', type: Guide }, h('section', {},
-      h('h1', {}, 'File Application Instruction'),
-      h('p', {}, 'Select the receiving View by view_id. For a File Ref, use the App ID, View ID and local Ref name.'))),
-    h(Detail, { id: 'detail', filePath: '/open/note.txt' }),
-  ]);
-}
-export default createTUIApp({ app_name: 'interaction_example', viewTypes, component: Root });
+export default createApp({ app_name: 'interaction_example', viewTypes,
+  initialize({ prepareProjection }) {
+    let count = 0, text = 'original';
+    const filePath = '/open/note.txt';
+    const root = createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({
+      body: '# File Application Instruction\n\nSelect the receiving View by view_id. Use the published File Ref address.',
+    }) });
+    const detail = createView(FileDetail, { idPrefix: 'detail', region: 'dynamic', render: () => {
+      const file = ref('file', { filePath, text }, { scope: 'protected', refType: 'File', schema: FileSchema });
+      return { refs: [file], body: ['Open file: ' + filePath, formatRef('Current file value', file), text, 'Completed actions: ' + count].join('\n\n'),
+        context: { filePath, edit(value) { text = value; count++; publish(); } } };
+    } });
+    function publish() { prepareProjection({ views: [root, detail] }); }
+    publish();
+  },
+});

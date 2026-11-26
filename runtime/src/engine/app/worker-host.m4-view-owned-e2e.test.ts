@@ -15,9 +15,7 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
         try {
             const modules = join(temp, 'node_modules');
             await mkdir(join(modules, '@aotui'), { recursive: true });
-            await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
             await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
-            await symlink(join(root, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
             await symlink(join(root, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
             await symlink(join(root, '../core'), join(modules, '@aotui/core'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
@@ -29,12 +27,9 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 target: 'node20', packages: 'external', logLevel: 'silent',
             });
             const fixture = `
-                import { h } from 'preact';
                 import Type from 'typebox';
-                import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
-                import { DynamicView } from './sdk/src/components/View.tsx';
+                import { createApp, createView, defineViewType } from './sdk/src/index.ts';
 
-                import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
                 const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
                     inspect: {
                         description: 'Inspect the selected file',
@@ -43,25 +38,18 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                     },
                 } });
 
-                function Detail({ label }) {
-                    return h('section', {}, [
-                        h('p', {key:'info'}, label),
-                    ]);
-                }
-                function App() {
-                    return h('div', null, h('main', {}, [
-                        h(DynamicView, { idPrefix: 'fd_0', type: FileDetail, context: {}, key: 'a' },
-                            h(Detail, {label:'App.tsx'})),
-                        h(DynamicView, { idPrefix: 'fd_1', type: FileDetail, context: {}, key: 'b' },
-                            h(Detail, {label:'package.json'}))
-                    ]));
-                }
-                export default createTUIApp({viewTypes:[FileDetail], app_name:'m4_fixture',component:App});
+                export default createApp({ viewTypes: [FileDetail], app_name: 'm4_fixture',
+                    initialize({ prepareProjection }) {
+                        const views = [['fd_0', 'App.tsx'], ['fd_1', 'package.json']].map(([idPrefix, body]) =>
+                            createView(FileDetail, { idPrefix, region: 'dynamic', render: () => ({ body, context: {} }) }));
+                        prepareProjection({ views });
+                    },
+                });
             `;
             await build({
                 stdin: {
                     contents: fixture, resolveDir: resolve(root, '..'),
-                    sourcefile: 'm4-sdk-fixture.tsx', loader: 'tsx',
+                    sourcefile: 'm4-sdk-fixture.ts', loader: 'ts',
                 },
                 outfile: appScript, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',

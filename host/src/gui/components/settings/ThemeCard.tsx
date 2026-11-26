@@ -53,7 +53,7 @@ export const ThemeCard: React.FC<ThemeCardProps> = ({ theme, isActive, onSelect 
     return (
         <button
             className={`
-                group relative w-full text-left outline-none
+                group relative w-full text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]
                 rounded-[16px] border transition-all duration-200 ease-[var(--ease-spring)]
                 flex flex-col p-4 gap-4 h-[180px]
                 ${isActive 
@@ -74,6 +74,7 @@ export const ThemeCard: React.FC<ThemeCardProps> = ({ theme, isActive, onSelect 
         >
             {/* Preview Area */}
             <div 
+                aria-hidden="true"
                 className="flex-1 w-full rounded-[8px] border shadow-sm overflow-hidden relative"
                 style={{ 
                     backgroundColor: colors.background,
@@ -106,7 +107,7 @@ export const ThemeCard: React.FC<ThemeCardProps> = ({ theme, isActive, onSelect 
                 </span>
                 {isActive && (
                     <div className="text-[var(--color-accent)]">
-                        <IconCheck />
+                        <IconCheck aria-hidden="true" />
                     </div>
                 )}
             </div>

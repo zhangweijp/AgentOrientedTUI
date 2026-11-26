@@ -13,7 +13,8 @@ const name = 'cli_manifest';
 const folder = await mkdtemp(join(consumer, 'cli-app-'));
 const home = join(folder, 'home');
 const config = join(home, '.agentina/config.json');
-const env = { ...process.env, HOME: home, USERPROFILE: home, AOTUI_DATA_DIR: join(home, 'data') };
+const dataDir = join(home, 'data');
+const env = { ...process.env, HOME: home, USERPROFILE: home, AOTUI_DATA_DIR: dataDir };
 delete env.AOTUI_APP_CATALOG_URL;
 const runCli = (...args) => execute(cli, args, { cwd: folder, env, timeout: 5_000 });
 async function waitFor(read, target) {
@@ -25,15 +26,16 @@ async function waitFor(read, target) {
 try {
     await mkdir(home);
     await writeFile(join(folder, 'entry.mjs'), `
-import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType } from '@aotui/sdk';
 const Item = defineViewType({ name: 'Item', multiplicity: 'single', region: 'dynamic' });
-export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ prepareProjection }) {
+export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ launchConfig, prepareProjection }) {
+    if (launchConfig?.AOTUI_DATA_DIR !== ${JSON.stringify(dataDir)}) throw Error('Expected the Host data directory in launchConfig.');
     const current = createView(Item, { id: 'current', render: () => ({ body: 'View from the custom manifest entry' }) });
     prepareProjection({ views: [current] });
 }});
 `);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
-        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
+        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
         appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     await runCli('install', '.');
@@ -63,7 +65,7 @@ export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ 
         await waitFor(() => output + errors, 'Runtime ready.');
         child.stdin.write('snapshot\n');
         await waitFor(() => output, 'View from the custom manifest entry');
-        assert.match(output, /<view view_id="current" view_type="Item" app_id="cli_manifest" app_name="cli_manifest">/);
+        assert.match(output, /<view view_id="current" view_type="Item" app_id="cli_manifest" app_name="cli_manifest" region="dynamic">/);
         child.stdin.end('exit\n');
         assert.deepEqual(await finished, [0, null]);
         assert.equal(errors, '');

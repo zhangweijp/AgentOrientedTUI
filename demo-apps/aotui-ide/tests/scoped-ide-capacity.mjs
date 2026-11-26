@@ -8,8 +8,6 @@ import { ScopedSearch } from '../dist/core/scoped-search.js';
 import { directoryIdentity } from '../dist/core/versioned-file-write.js';
 import { createFileWithParents } from '../dist/core/observed-file-actions.js';
 import { boundedJSON } from '../dist/core/ide-errors.js';
-import { createMemoryStateStorage } from '../../../runtime/dist/adapters/storage/memory-state-storage.js';
-import { createAppStatePersistence } from '../../../runtime/dist/worker-runtime/state-persistence.js';
 const working = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-capacity-')));
 const facts = { working, cases: [], passed: false }, owners = [], searches = []; let sequence = 0;
 const code = expected => error => { assert.equal(error.code ?? error.message.split(':')[0], expected); return true; };
@@ -17,12 +15,12 @@ async function root(name) { const value = path.join(working, name); await fs.mkd
 async function run(name, action) { const started = performance.now(); const details = await action(); facts.cases.push({ name, passed: true, elapsedMs: performance.now() - started, details }); console.log('PASS', name); }
 async function session(projectPath) {
     const id = 'capacity' + ++sequence;
-    const backend = createMemoryStateStorage({ maxStoredKeys: 128, maxStoredBytes: 8 * 1024 * 1024, maxRecordBytes: 262272, maxAddressBytes: 1024, maxActiveOwners: 8, maxClaimedNamespaces: 64 });
-    const storage = backend.open(id); assert.equal(storage.status, 'opened');
-    const managed = createAppStatePersistence({ instanceId: id, desktopId: 'test', appKey: id, storage: storage.storage });
-    const owner = new IDESession(managed.port, { sessionKey: id, historyPath: path.join(working, id + '-history.json'), projectPath }, () => {});
-    const x = { owner, managed, call: (name, args, view = 'workspace') => owner.invoke(name, args, view),
-        async close() { owner.stop(); return managed.close(() => owner.close()); } }; owners.push(x); await owner.start(); return x;
+    const owner = new IDESession({ sessionKey: id, sessionPath: path.join(working, id + '-session.json'), historyPath: path.join(working, id + '-history.json'), projectPath }, () => {});
+    const x = { owner, call: (name, args, view = 'workspace') => owner.invoke(name, args, view),
+        async close() {
+            try { await owner.close(); return { ok: true }; }
+            catch { return { ok: false }; }
+        } }; owners.push(x); await owner.start(); return x;
 }
 function succeeds(reply) { assert.equal(reply?.success, true, JSON.stringify(reply)); return reply; }
 function fails(reply, expected) { assert.equal(reply?.error?.code, expected, JSON.stringify(reply)); assert.equal(Object.hasOwn(reply, 'effects'), false); }

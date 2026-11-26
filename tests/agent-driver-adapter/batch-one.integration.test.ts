@@ -39,7 +39,7 @@ async function prepareConsumer(folder: string) {
             { cwd: new URL(name + '/', repo) });
         await run('tar', ['-xzf', join(folder, pack.stdout.trim()), '--strip-components', '1', '-C', target]);
     }
-    for (const [owner, name] of [['core', 'acorn'], ['sdk', 'linkedom'], ['runtime', '@types'], ['sdk', 'typebox']]) {
+    for (const [owner, name] of [['core', 'acorn'], ['runtime', '@types'], ['sdk', 'typebox']]) {
         await symlink(await realpath(new URL(owner + '/node_modules/' + name, repo)), join(modules, name), 'dir');
     }
     await writeFile(join(folder, 'package.json'), '{"type":"module"}');

@@ -108,7 +108,7 @@ try {
         appClient(desktop, 'cinema').client, captured));
     facts.openai = await runMode('openai', 'strict', turn => exerciseStrict(turn, 'strict-openai', healthyManifest, captured));
     facts.deepseek = await runMode('deepseek', 'strict', async turn => {
-        const result = await exerciseStrict(turn, 'strict-deepseek', healthyManifest, captured, false);
+        const result = await exerciseStrict(turn, 'strict-deepseek', healthyManifest, captured);
         const start = provider.requests.length;
         const { errors } = await turn('provider-refusal', [], undefined, 400);
         assert.equal(provider.requests.length - start, 1);

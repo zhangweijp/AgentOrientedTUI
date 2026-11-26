@@ -18,11 +18,6 @@ export interface CloseReport {
     readonly pendingTasks: number;
     readonly unverifiedParticipants: number;
     readonly appCleanup?: { readonly managedApps: number; readonly completedApps: number; readonly failedApps: number };
-    readonly persistence?: {
-        readonly managedApps: number;
-        readonly closeReceipts: number; readonly missingCloseReceipts: number; readonly confirmedFlushes: number; readonly failedFlushes: number;
-        readonly unknownApps: number; readonly unsavedKeys: number;
-    };
     readonly resources: { readonly retainedOwners: number; readonly pendingOperations: number };
     readonly workers: { readonly ownership: 'owned' | 'not-owned'; readonly report: null | {
         readonly state: 'open' | 'closing' | 'closed'; readonly limit: number; readonly total: number;
@@ -32,9 +27,9 @@ export interface CloseReport {
         readonly logger: 'pending' | 'done' | 'failed' | 'not-owned';
     };
     readonly failures: readonly {
-        readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'signals' | 'logger';
+        readonly stage: 'admission' | 'apps' | 'worker' | 'signals' | 'logger';
         readonly codes: readonly ('INSTALL_FAILED' | 'APP_CLOSE_FAILED' | 'APP_CLOSE_DEADLINE_EXCEEDED' | 'RESOURCE_RELEASE_FAILED' |
-            'WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'PERSISTENCE_CLOSE_FAILED' |
+            'WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'EXECUTION_CHANNEL_ENDED' |
             'APP_UNMOUNT_FAILED' | 'DESKTOP_CLEANUP_FAILED')[];
         readonly desktopId?: string; readonly appId?: string;
     }[];

@@ -1,39 +1,24 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { acquireWorkspaceWriteLock } from './file-write-lock.js';
 import { checkedPath, directoryIdentity, inside, readObservedFile, replaceFileIfVersion, type ObservedFile } from './versioned-file-write.js';
 import { IDEError, requireIDE } from './ide-errors.js';
 import { nativeOpenCode } from './conditional-file-create.js';
 
 type Guard = () => void;
 type Effect = { status: 'succeeded'; cleanupWarning?: string };
-/** Same cooperative sibling lock protocol as replaceFileIfVersion. */
-export async function withLocks<T extends Effect>(files: string[], action: (verifyLocks: () => Promise<void>) => Promise<T>): Promise<T> {
-    const owned: Array<{ path: string; handle: Awaited<ReturnType<typeof fs.open>>; dev?: number; ino?: number }> = [];
+
+export async function withLocks<T extends Effect>(files: string[], action: (verifyLocks: () => void) => Promise<T>): Promise<T> {
+    const owned: ReturnType<typeof acquireWorkspaceWriteLock>[] = [];
     let result: T | undefined;
     const warnings: string[] = [];
     try {
-        for (const file of [...new Set(files)].sort()) {
-            let handle: Awaited<ReturnType<typeof fs.open>>;
-            try { handle = await fs.open(file + '.aotui-lock', 'wx', 0o600); }
-            catch (error: any) { if (error.code === 'EEXIST') throw new IDEError('RESOURCE_BUSY'); throw error; }
-            const lock: (typeof owned)[number] = { path: file + '.aotui-lock', handle }; owned.push(lock);
-            const identity = await handle.stat(); lock.dev = identity.dev; lock.ino = identity.ino;
-        }
-        result = await action(async () => {
-            for (const lock of owned) {
-                const now = await fs.lstat(lock.path);
-                requireIDE(now.isFile() && now.dev === lock.dev && now.ino === lock.ino, 'RESOURCE_LOCK_CHANGED');
-            }
-        });
+        for (const file of [...new Set(files)].sort()) owned.push(acquireWorkspaceWriteLock(file));
+        result = await action(() => { for (const lock of owned) lock.verify(); });
         return result;
     } finally {
         for (const lock of owned.reverse()) {
-            try {
-                const now = await fs.lstat(lock.path);
-                if (now.dev !== lock.dev || now.ino !== lock.ino) throw Error();
-                await fs.unlink(lock.path);
-            } catch { warnings.push('Exclusive lock cleanup failed'); }
-            try { await lock.handle.close(); } catch { warnings.push('Exclusive lock handle close failed'); }
+            try { lock.close(); } catch { warnings.push('Exclusive lock close failed'); }
         }
         if (warnings.length) {
             if (result) result.cleanupWarning = warnings.join('; ');
@@ -44,6 +29,11 @@ export async function withLocks<T extends Effect>(files: string[], action: (veri
 
 async function same(observed: ObservedFile): Promise<void> {
     requireIDE((await readObservedFile(observed.root, observed.path)).stamp === observed.stamp, 'RESOURCE_CONFLICT');
+}
+async function requireAbsent(file: string): Promise<void> {
+    try { await fs.lstat(file); }
+    catch (error: any) { if (error.code === 'ENOENT') return; throw error; }
+    throw new IDEError('RESOURCE_ALREADY_EXISTS');
 }
 export async function replaceObservedFile(observed: ObservedFile, content: string, current: Guard): Promise<Effect> {
     requireIDE(Buffer.from(content, 'utf8').toString('utf8') === content, 'IDE_CONTENT_INVALID');
@@ -62,7 +52,7 @@ export async function replaceObservedFile(observed: ObservedFile, content: strin
 export async function deleteObservedFile(observed: ObservedFile, current: Guard): Promise<Effect> {
     await same(observed); current();
     return withLocks([observed.path], async verifyLocks => {
-        await same(observed); await verifyLocks(); current();
+        await same(observed); verifyLocks(); current();
         try { await fs.unlink(observed.path); } catch { throw new IDEError('RESOURCE_DELETE_UNCERTAIN', 'unknown'); }
         return { status: 'succeeded' };
     });
@@ -76,12 +66,13 @@ export async function renameObservedFile(observed: ObservedFile, destination: st
     requireIDE(target !== observed.path, 'RESOURCE_SAME_PATH');
     const parent = path.dirname(target), parentIdentity = await directoryIdentity(parent);
     requireIDE((await fs.stat(parent)).dev === observed.stat.dev, 'RESOURCE_CROSS_DEVICE');
+    // An existing alias of the source must not make the reservation contend with itself.
+    await requireAbsent(target);
     return await withLocks([observed.path, target], async verifyLocks => {
         await same(observed);
         requireIDE(await checkedPath(targetRoot, destination) === target && await directoryIdentity(parent) === parentIdentity, 'RESOURCE_SCOPE_CHANGED');
-        try { await fs.lstat(target); throw new IDEError('RESOURCE_ALREADY_EXISTS'); }
-        catch (error: any) { if (error.code !== 'ENOENT') throw error; }
-        await verifyLocks(); requireIDE(await directoryIdentity(targetRoot) === targetRootIdentity, 'WORKSPACE_ROOT_CHANGED'); current();
+        await requireAbsent(target);
+        verifyLocks(); requireIDE(await directoryIdentity(targetRoot) === targetRootIdentity, 'WORKSPACE_ROOT_CHANGED'); current();
         try { await fs.rename(observed.path, target); } catch { throw new IDEError('RESOURCE_RENAME_UNCERTAIN', 'unknown'); }
         return { status: 'succeeded' };
     });

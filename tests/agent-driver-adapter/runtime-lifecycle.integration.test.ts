@@ -9,7 +9,6 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 let directory: string, app: string, runtimePackage: any, adaptersPackage: any;
-let AppWorkerHost: any;
 const authorName = 'interaction_example';
 const facts: any[] = [];
 const output = process.env.AOTUI_W08_C1_FACTS_DIR;
@@ -24,7 +23,6 @@ async function capture(path: string, body: string) {
 beforeAll(async () => {
     const repo = fileURLToPath(new URL('../../', import.meta.url));
     if (output) await mkdir(output, { recursive: true });
-    let runtimeRoot: string;
     if (installedConsumer) {
         if (!isAbsolute(installedConsumer)) throw new Error('AOTUI_PACKAGE_CONSUMER_DIR must be absolute');
         const consumer = await realpath(installedConsumer);
@@ -37,7 +35,6 @@ beforeAll(async () => {
         }
         directory = await mkdtemp(join(consumer, 'runtime-lifecycle-'));
         await capture(join(directory, 'package.json'), JSON.stringify({ type: 'module', private: true }));
-        runtimeRoot = join(modules, 'runtime');
         facts.push({ consumer, mode: 'provided-installation', fixtures: directory });
     } else {
         directory = await mkdtemp(join(output ?? tmpdir(), 'aotui-b2-public-'));
@@ -59,15 +56,11 @@ beforeAll(async () => {
             if (entry.name.startsWith('.') || entry.name === '@aotui') continue;
             const target = join(modules, entry.name);try { await symlink(join(repo, pkg, 'node_modules', entry.name), target, 'dir');links.push({ path: target, source: join(repo, pkg, 'node_modules', entry.name) }); } catch (error: any) { if (error.code !== 'EEXIST') throw error; }
         }
-        runtimeRoot = join(modules, '@aotui', 'runtime');
         facts.push({ consumer: directory, selfPackageLinks: false, thirdPartyLinks: links, completeCleanInstall: false });
     }
-    ({ AppWorkerHost } = await import(pathToFileURL(join(runtimeRoot, 'dist/engine/app/worker-host.js')).href));
     app = join(directory, 'app.mjs');
-    await capture(app, `import { h } from 'preact';
-import { useState } from 'preact/hooks';
-import Type from 'typebox';
-import { createTUIApp, defineViewType, refParam, useDataRef, StaticView, DynamicView } from '@aotui/sdk';
+    await capture(app, `import Type from 'typebox';
+import { createApp, createView, defineViewType, formatRef, ref, refParam } from '@aotui/sdk';
 
 const FileSchema = Type.Object({ filePath: Type.String(), text: Type.String() }, { additionalProperties: false });
 const Guide = defineViewType({ multiplicity: 'multiple', name: 'Root' });
@@ -75,12 +68,11 @@ const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'Detail', 
   ordinary: {
     description: 'Apply text to the selected file. Read the updated Detail.',
     inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
-    async execute({ input, context: { setText, setCount } }) {
+    async execute({ input, context: { edit } }) {
       if (input.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
       if (input.text === 'business') return { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
         data: { refreshed: false } };
-      setText(input.text);
-      setCount(current => current + 1);
+      edit(input.text);
       return { success: true, data: { message: 'Change completed.' } };
     },
   },
@@ -96,25 +88,25 @@ const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'Detail', 
 } });
 const viewTypes = [Guide, FileDetail];
 
-function FileBody({ count, text, filePath }) {
-  const file = useDataRef('file', { filePath, text }, { scope: 'protected', refType: 'File', schema: Type.Object({ filePath: Type.String(), text: Type.String() }) });
-  return h('section', {}, h('p', {}, 'Open file: ' + filePath), h('p', {}, file('Current file value')), h('pre', {}, text),
-    h('p', {}, 'Completed actions: ' + count));
-}
-function Detail({ id, filePath }) {
-  const [count, setCount] = useState(0), [text, setText] = useState('original');
-  return h(DynamicView, { idPrefix: id, type: FileDetail, context: { filePath, setText, setCount } },
-    h(FileBody, { count, text, filePath }));
-}
-function Root() {
-  return h('main', {}, [
-    h(StaticView, { idPrefix: 'root', type: Guide }, h('section', {},
-      h('h1', {}, 'File Application Instruction'),
-      h('p', {}, 'Select the receiving View by view_id. For a File Ref, use the App ID, View ID and local Ref name.'))),
-    h(Detail, { id: 'detail', filePath: '/open/note.txt' }),
-  ]);
-}
-export default createTUIApp({ app_name: 'interaction_example', viewTypes, component: Root });
+export default createApp({ app_name: 'interaction_example', viewTypes,
+  initialize({ prepareProjection }) {
+    let count = 0, text = 'original';
+    const filePath = '/open/note.txt';
+    const root = createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({
+      body: '# File Application Instruction\\n\\nSelect the receiving View by view_id. Use the published File Ref address.',
+    }) });
+    const detail = createView(FileDetail, { idPrefix: 'detail', region: 'dynamic', render: () => {
+      const file = ref('file', { filePath, text }, { scope: 'protected', refType: 'File', schema: FileSchema });
+      return {
+        refs: [file],
+        body: ['Open file: ' + filePath, formatRef('Current file value', file), text, 'Completed actions: ' + count].join('\\n\\n'),
+        context: { filePath, edit(value) { text = value; count++; publish(); } },
+      };
+    } });
+    function publish() { prepareProjection({ views: [root, detail] }); }
+    publish();
+  },
+});
 `);
     const entry = join(directory, 'entry.mjs');await capture(entry, "export * from '@aotui/runtime';\n");runtimePackage = await import(pathToFileURL(entry).href);
     const adaptersEntry = join(directory, 'adapters.mjs');await capture(adaptersEntry, "export * from '@aotui/agent-driver-adapter';\n");adaptersPackage = await import(pathToFileURL(adaptersEntry).href);
@@ -270,7 +262,7 @@ it('packed SDK separates authorization, a returned E_HANDLER_ERROR and an actual
 it('checks the complete Tool Schema at the packed SDK, Runtime and Snapshot boundaries', async () => {
     const entry = join(directory, 'capacity-app.mjs');
     await capture(entry, `import Type from 'typebox';
-import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType } from '@aotui/sdk';
 import { projectNativeToolSchema } from '@aotui/runtime/adapters';
 
 export const modelSchemaFor = inputSchema => projectNativeToolSchema({ multiplicity: 'multiple',
@@ -360,7 +352,7 @@ export * as sdk from '@aotui/sdk';
 ${declaration}
 export default ${variant === 'invalid-export' ? '[' : ''}{
     app_name: 'legacy_sdk',
-    toolAuthoringProtocol: abi, persistenceSupport: 'state-session-v2', appLifecycleSupport: 'app-lifecycle-v2',
+    toolAuthoringProtocol: abi, appLifecycleSupport: 'app-lifecycle-v2',
     initialize() {
         throw Error('INCOMPATIBLE_FACTORY_ENTERED');
     }
@@ -368,7 +360,7 @@ export default ${variant === 'invalid-export' ? '[' : ''}{
             const issue = variant === 'import'
                 ? { code: 'E_INIT_FAILED', cause: { message: expect.stringContaining('ORDINARY_INVOCATION_MODE') } }
                 : variant === 'invalid-export' ? { code: 'E_INIT_FAILED', cause: { code: 'APP_INVALID_EXPORT' } }
-                : { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', message: expect.stringContaining('view-type-tools-v7') };
+                : { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', message: expect.stringContaining('view-type-tools-v8') };
             await expect(install(runtime, 'd', variant, undefined, { name: 'legacy_sdk' }, file)).rejects.toMatchObject({
                 code: 'INSTALL_FAILED', cause: issue,
             });
@@ -380,44 +372,54 @@ export default ${variant === 'invalid-export' ? '[' : ''}{
     }
 }, 15000);
 
-it('rejects a missing or incompatible Worker ACK before installing an App', async () => {
-    for (const variant of ['missing', 'wrong-protocol', 'wrong-authorization']) {
-        const runtime = makeRuntime(), script = join(directory, `ack-${variant}.mjs`);
-        await capture(script, `import {parentPort} from 'node:worker_threads';
-let instanceId, closePending;
-function respond(m) {
-  const init=m.type==='INIT', completed=m.type==='APP_CLOSE';
-  if(init) instanceId=m.appInstanceId;
-  const flush={status:'completed',ok:true,entries:[]};
-  const persistence=init?{protocol:'state-session-v2',version:2,instanceId}
-    :completed?{protocol:'state-session-v2',instanceId,ok:true,unmount:'completed',flush,dispose:{status:'disposed',unsaved:[],release:{status:'released'}}}:undefined;
-  const appCleanup=['APP_STOP','APP_CLOSE'].includes(m.type)?{protocol:'app-lifecycle-v2',instanceId,state:completed?'completed':'stopped',issues:[]}:undefined;
-  parentPort.postMessage({type:init?'INIT_RESPONSE':'LIFECYCLE_RESPONSE',requestId:m.requestId,success:true,
-    ...(init?{appInstanceId:m.appInstanceId,projectionLimits:m.projectionLimits,appLifecycle:{protocol:'app-lifecycle-v2',instanceId:m.appInstanceId},persistence,toolsEnabled:${variant === 'wrong-authorization' ? '!m.toolsEnabled' : 'm.toolsEnabled'}${variant === 'missing' ? '' : ',protocol:' + (variant === 'wrong-protocol' ? JSON.stringify('app-worker/v5') : 'm.protocol')}}:{}),
-    ...(!init&&persistence?{persistence}:{}),...(appCleanup?{appCleanup}:{})});
-}
-parentPort.on('message',m=>{
-  if(m.type==='STATE_STORAGE_RESPONSE') { if(closePending) { const request=closePending;closePending=undefined;respond(request); } return; }
-  if(m.type==='APP_CLOSE') { closePending=m;parentPort.postMessage({type:'STATE_STORAGE_REQUEST',version:2,instanceId,sequence:1,action:'release'});return; }
-  respond(m);
-});
-`);
-        const start = AppWorkerHost.prototype.start;
-        const override = vi.spyOn(AppWorkerHost.prototype, 'start').mockImplementationOnce(function (this: any) {
-            this.workerScriptPath = script;
-            return start.call(this);
+it.each([
+    ['missing', 'WORKER_PROTOCOL_UNSUPPORTED'],
+    ['wrong-protocol', 'WORKER_PROTOCOL_UNSUPPORTED'],
+    ['wrong-authorization', 'APP_INIT_ACK_INVALID'],
+] as const)('rejects the bundled Worker ACK before installing an App (%s)', async (variant, reason) => {
+    const runtime = makeRuntime(), post = Worker.prototype.postMessage, emit = Worker.prototype.emit;
+    const appUrl = pathToFileURL(app).href;
+    let worker: Worker | undefined, init: Record<string, unknown> | undefined;
+    const sent: string[] = [];
+    const replies: { threadId: number; original: Record<string, unknown>; delivered: Record<string, unknown> }[] = [];
+    const outgoing = vi.spyOn(Worker.prototype, 'postMessage').mockImplementation(function (this: Worker, message, ...args) {
+        if (message.type === 'INIT' && message.appModulePath === appUrl) {
+            worker = this;
+            init = message;
+        }
+        if (this === worker) sent.push(message.type);
+        return post.call(this, message, ...args);
+    });
+    const incoming = vi.spyOn(Worker.prototype, 'emit').mockImplementation(function (this: Worker, event, ...args) {
+        if (this !== worker || event !== 'message' || args[0]?.type !== 'INIT_RESPONSE')
+            return emit.call(this, event, ...args);
+        const original = args[0], delivered = { ...original };
+        if (variant === 'missing') delete delivered.protocol;
+        else if (variant === 'wrong-protocol') delivered.protocol = 'app-worker/v5';
+        else delivered.toolsEnabled = !original.toolsEnabled;
+        replies.push({ threadId: this.threadId, original, delivered });
+        return emit.call(this, event, delivered);
+    });
+    try {
+        const failure = await install(runtime).then(() => undefined, error => error);
+        expect(failure).toMatchObject({ code: 'INSTALL_FAILED', cause: { code: reason },
+            closeReport: { resourcesReleased: true, worker: 'exited', interactions: { retainedOperations: 0 } } });
+        expect(replies).toHaveLength(1);
+        expect(replies[0]!.threadId).toBeGreaterThan(0);
+        expect(init).toMatchObject({ protocol: expect.any(String), toolsEnabled: true });
+        expect(replies[0]!.original).toMatchObject({
+            requestId: init!.requestId, protocol: init!.protocol, appInstanceId: init!.appInstanceId, toolsEnabled: init!.toolsEnabled,
         });
-        try {
-            const reason = variant === 'wrong-authorization' ? 'APP_INIT_ACK_INVALID' : 'WORKER_PROTOCOL_UNSUPPORTED';
-            await expect(install(runtime, 'd', 'a')).rejects.toMatchObject({
-                code: 'INSTALL_FAILED', cause: { code: reason },
-            });
-            const installed = runtime.getDesktop('d').listApps().find((entry: any) => entry.installationId === 'a');
-            expect(installed).toBeUndefined();
-            const report = await runtime.beginClose().completion;
-            facts.push({ case: `worker-ack-${variant}`, report, installedStatus: installed?.status });
-            expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedOperations: 0 } });
-        } finally { override.mockRestore(); await runtime.beginClose().completion; }
+        expect(sent).not.toContain('APP_OPEN');
+        expect(runtime.getDesktop('d').listApps()).toEqual([]);
+        const report = await runtime.beginClose().completion;
+        expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed',
+            interactions: { verified: true, retainedOperations: 0 }, workers: { report: { total: 0 } } });
+        facts.push({ case: `worker-ack-${variant}`, reason, sent, replies, report, failedStartup: failure.closeReport });
+    } finally {
+        incoming.mockRestore();
+        outgoing.mockRestore();
+        await runtime.beginClose().completion;
     }
 }, 15000);
 
@@ -584,8 +586,8 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
     for (const reject of [false, true]) {
         const runtime = makeRuntime(), entered = deferred(), gate = deferred();try {
             const trace = join(directory, `handlers-${stage}-${parent}-${reject}`), tracedApp = trace + '.mjs';
-            const original = await readFile(app, 'utf8'), traced = original.replace('setCount(current => current + 1);',
-                `await appendFile(${JSON.stringify(trace)}, 'entered\\n');setCount(current => current + 1);`);
+            const original = await readFile(app, 'utf8'), traced = original.replace('edit(input.text);',
+                `await appendFile(${JSON.stringify(trace)}, 'entered\\n');edit(input.text);`);
             expect(traced).not.toBe(original);await capture(tracedApp, "import { appendFile } from 'node:fs/promises';\n" + traced);
             const handlerCount = async () => (await readFile(trace, 'utf8').catch(error => { if (error.code === 'ENOENT') return '';throw error; })).split('\n').filter(Boolean).length;
             await install(runtime, 'd', 'a', undefined, {}, tracedApp);const s = scope(runtime), observation = await s.observe(), input = request(observation);let calls = 0;
@@ -609,11 +611,12 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
 
 it('keeps the trusted setting through collapse, expand and reopen while revoking the old routes', async () => {
     const pendingApp = join(directory, 'pending-limits.mjs');
-    const author = (await readFile(app, 'utf8'))
-        .replace('function Root() {', `function Root() {
-  const { maxViews, observation } = useAppRuntimeContext().projectionLimits;`)
-        .replace("'File Application Instruction'", "'Configured limits ' + maxViews + '/' + observation.maxCanonicalBytes");
-    await capture(pendingApp, "import { useAppRuntimeContext } from '@aotui/sdk';\n" + author);
+    const original = await readFile(app, 'utf8');
+    const author = original
+        .replace('initialize({ prepareProjection }) {', 'initialize({ prepareProjection, projectionLimits: { maxViews, observation } }) {')
+        .replace("'# File Application Instruction", "'Configured limits ' + maxViews + '/' + observation.maxCanonicalBytes + '");
+    expect(author).not.toBe(original);
+    await capture(pendingApp, author);
     const expectLimits = (frame: any) => expect(frame.views.find((view: any) => view.id === 'root_1')?.content.value)
         .toContain('Configured limits 2/8192');
     const runtime = makeRuntime();try {
@@ -654,7 +657,7 @@ it('fails an initially over-limit projection and releases its Worker even when t
     const entry = join(directory, 'initial-projection-limit.mjs'), disposed = join(directory, 'initial-projection-limit-closed');
     await capture(entry, `
 import { appendFileSync } from 'node:fs';
-import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType } from '@aotui/sdk';
 const Page = defineViewType({ multiplicity: 'multiple', name: 'Page' });
 export default createApp({ app_name: 'initial_projection_limit', viewTypes: [Page], initialize({ prepareProjection, registerCleanup }) {
     registerCleanup({ close() { appendFileSync(${JSON.stringify(disposed)}, 'closed'); } });

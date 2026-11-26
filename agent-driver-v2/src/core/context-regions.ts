@@ -10,24 +10,22 @@ function stripTiming(message: MessageWithTimestamp): ModelMessage {
   return modelMessage as ModelMessage;
 }
 
-function getToolCallIds(message: ModelMessage): string[] {
+export function getClientToolCallIds(message: ModelMessage): string[] {
   if (message.role !== 'assistant' || !Array.isArray(message.content)) {
     return [];
   }
 
-  return message.content
-    .filter((part: any) => part?.type === 'tool-call' && typeof part.toolCallId === 'string')
-    .map((part: any) => part.toolCallId as string);
+  return message.content.flatMap(part =>
+    part?.type === 'tool-call' && part.providerExecuted !== true && typeof part.toolCallId === 'string' ? [part.toolCallId] : []);
 }
 
-function getToolResultIds(message: ModelMessage): string[] {
+export function getToolResultIds(message: ModelMessage): string[] {
   if (message.role !== 'tool' || !Array.isArray(message.content)) {
     return [];
   }
 
-  return message.content
-    .filter((part: any) => part?.type === 'tool-result' && typeof part.toolCallId === 'string')
-    .map((part: any) => part.toolCallId as string);
+  return message.content.flatMap(part =>
+    part?.type === 'tool-result' && typeof part.toolCallId === 'string' ? [part.toolCallId] : []);
 }
 
 function findMatchingAssistantIndex(messages: ModelMessage[], toolIndex: number): number | null {
@@ -39,7 +37,7 @@ function findMatchingAssistantIndex(messages: ModelMessage[], toolIndex: number)
   for (let index = toolIndex - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === 'assistant') {
-      const toolCallIds = getToolCallIds(message);
+      const toolCallIds = getClientToolCallIds(message);
       if (toolCallIds.some((id) => toolResultIds.has(id))) {
         return index;
       }
@@ -55,7 +53,7 @@ function findMatchingAssistantIndex(messages: ModelMessage[], toolIndex: number)
 
 function maybeExpandAssistantTail(messages: ModelMessage[], assistantIndex: number): number {
   const assistantMessage = messages[assistantIndex];
-  if (assistantMessage.role !== 'assistant' || getToolCallIds(assistantMessage).length > 0) {
+  if (assistantMessage.role !== 'assistant' || getClientToolCallIds(assistantMessage).length > 0) {
     return assistantIndex;
   }
 
@@ -74,7 +72,7 @@ function maybeExpandAssistantTail(messages: ModelMessage[], assistantIndex: numb
     return assistantIndex;
   }
 
-  const candidateToolCallIds = new Set(getToolCallIds(candidateAssistant));
+  const candidateToolCallIds = new Set(getClientToolCallIds(candidateAssistant));
   if (candidateToolCallIds.size === 0) {
     return assistantIndex;
   }

@@ -12,7 +12,7 @@ const state = await mkdtemp(join(import.meta.dirname, 'stream-'));
 const entry = join(state, 'app.mjs'), go = join(state, 'go'), done = join(state, 'done');
 await writeFile(entry, `
 import { existsSync, writeFileSync } from 'node:fs';
-import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType } from '@aotui/sdk';
 const Static = defineViewType({ name: 'static_page', multiplicity: 'multiple', region: 'static' });
 const Log = defineViewType({ name: 'log', multiplicity: 'single', region: 'dynamic' });
 export default createApp({ app_name: 'stream', viewTypes: [Static, Log], initialize(ctx) {

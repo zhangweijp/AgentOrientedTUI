@@ -44,7 +44,6 @@
     "asarUnpack": [
       "**/worker-runtime/**/*",
       "**/agent-driver-adapter/dist/console/program-child.mjs",
-      "**/adapters/storage/sqlite-state-worker.js",
       "**/better-sqlite3/prebuilds/**/*"
     ],
     "mac": {

@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -170,23 +171,21 @@ describe('post-commit file mutation and cleanup', () => {
         await fs.rm(root, { recursive: true, force: true });
     });
 
-    it('preserves a SUCCESS with cleanup warning if lock removal fails AFTER atomic rename', async () => {
-        const unlinkOriginal = fs.unlink.bind(fs);
-        const spy = jest.spyOn(fs, 'unlink').mockImplementation(async (target: any) => {
-            if (String(target).endsWith('.aotui-lock')) {
-                throw Object.assign(new Error('Mocked permission error'), { code: 'EACCES' });
-            }
-            return unlinkOriginal(target);
+    it('preserves a SUCCESS with cleanup warning if releasing the lock fails after atomic rename', async () => {
+        const close = DatabaseSync.prototype.close;
+        const spy = jest.spyOn(DatabaseSync.prototype, 'close').mockImplementation(function (this: DatabaseSync) {
+            close.call(this);
+            throw new Error('Mocked lock release error');
         });
         try {
             const next = 'const value = 2;\n';
             const result = await replaceFileIfVersion(root, file, digest(before), next, await observe(root, file));
             expect(result).toMatchObject({
                 status: 'written', version: digest(next),
-                cleanupWarning: 'Exclusive lock cleanup failed',
+                cleanupWarning: 'Exclusive lock close failed',
             });
             expect(await fs.readFile(file, 'utf8')).toBe(next);
-            expect(await fs.readFile(file + '.aotui-lock', 'utf8')).toBe('');
+            await expect(fs.lstat(file + '.aotui-lock')).rejects.toMatchObject({ code: 'ENOENT' });
         } finally {
             spy.mockRestore();
         }

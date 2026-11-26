@@ -1,6 +1,6 @@
 export { commitAppFrame, SemanticProjectionCoordinator } from './projection/coordinator.js';
 export type {
-    AppFrameRef, AppFrameView, AppProjectionFrame, CompleteProjectionFrame, PreparedProjection,
+    AppFrameRef, AppFrameView, AppProjectionFrame, CompleteProjectionFrame, OpeningProjectionResult, PreparedProjection,
     ProjectionCommitResult, ProjectionOptions, ProjectionSource,
 } from './projection/coordinator.js';
 export { createViewOwnedTools, ViewToolContractError } from './tool/view-owned-tools.js';
@@ -9,7 +9,7 @@ export type {
 } from './tool/view-owned-tools.js';
 export { viewToolReceiver } from './tool/source-binding.js';
 export { captureSnapshotPrepareIssue } from './snapshot/snapshot-support.js';
-export { captureSnapshotDraftEnvelope } from './snapshot/validate-snapshot.js';
+export { captureSnapshotDraftEnvelope, validatePreparedSnapshot } from './snapshot/validate-snapshot.js';
 export type { SnapshotDraftEnvelope, SnapshotPrepareIssue } from './snapshot/types.js';
 export { hostedObservationCapacityIssue } from './invocation/observation-projection.js';
 export { checkRefViews, refPath, scopeAllows } from './tool/ref-path.js';

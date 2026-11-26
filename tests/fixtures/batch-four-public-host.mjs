@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRuntime } from '@aotui/runtime';
-import { projectNativeToolSchema, buildPublicToolName, DEFAULT_AOTUI_SYSTEM_INSTRUCTION, escapeXmlText, fitWindowPresentation } from '@aotui/runtime/adapters';
-import { fixtureAppPath, appClient, fixtureProvider, journal, modelCall, observe } from './batch-two-support.mjs';
+import { DESKTOP_TOOL_NAMES, projectDesktop, routeNativeInvocation, fitWindowPresentation } from '@aotui/runtime/adapters';
+import { fixtureAppPath, appClient, fixtureProvider, journal, modelCall } from './batch-two-support.mjs';
 import { APP, INPUT, A_NOTE, APP_NOTE, currentReportId, openFiles, onFile, windowAction, pageFor, wireCost, setupFiles, namesOf,
     updateFile } from './batch-four-support.mjs';
 import { presentWindows } from './dist/batch-four-readme.js';
@@ -18,7 +18,7 @@ const history = [];
 const facts = { requests: provider.requests, trials: [], adoptions: [], receipts: [], toolMessages: [], passed: false };
 const moduleURL = new URL('./dist/batch-four-files.js', import.meta.url).href;
 const desktop = await runtime.createDesktop();
-await desktop.registerPendingApp({ installationId: 'files_install', localPath: await fixtureAppPath(moduleURL, APP, folder), config: { folder, staticB: true } });
+await desktop.registerPendingApp({ installationId: 'files_install', localPath: await fixtureAppPath(moduleURL, APP, folder), config: { folder, staticB: !repair } });
 const { app, client } = appClient(desktop, (await desktop.openApp('files_install')).appId);
 const fullLayout = { hints: new Set(), managementOnly: false };
 let previous = new Map();
@@ -54,10 +54,6 @@ function necessaryHistory(messages) {
         (index > assistant && message.role === 'tool' && ids.has(message.tool_call_id)));
 }
 
-function tool(name, properties, required, description) {
-    return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } };
-}
-
 function readable(record) {
     return record.until > Date.now() && record.scope.every(({ installationId, appId, instanceId, views }) => {
         const current = !disabled.has(installationId) && desktop.getAppWindows(appId, instanceId);
@@ -80,7 +76,8 @@ async function prepare(label, upcoming = history, receiptIndex, expansion) {
     const discovered = desktop.listApps().filter(item => !disabled.has(item.installationId));
     const catalog = new Map();
     const captured = [];
-    const release = () => { for (const item of captured) item.client.release(item.observation.observationId); };
+    const candidateScope = desktop.createCandidateScope();
+    const release = () => { assert.deepEqual(candidateScope.discard(), []); };
     try {
         for (const item of discovered) {
             if (!item.appInstanceId) continue;
@@ -94,8 +91,10 @@ async function prepare(label, upcoming = history, receiptIndex, expansion) {
             }
             catalog.set(item.appId, windows);
             if (!windows.expanded) continue;
-            const { client } = appClient(desktop, item.appId);
-            captured.push({ name: item.name, client, observation: await observe(client), windows });
+            const { running } = appClient(desktop, item.appId);
+            const observed = await candidateScope.observe(running);
+            assert.equal(observed.status, 'prepared', JSON.stringify(observed));
+            captured.push({ name: item.name, candidate: observed.candidate, observation: observed.candidate.observation, windows });
         }
         const scope = discovered.filter(item => catalog.has(item.appId)).map(item => {
             const windows = catalog.get(item.appId);
@@ -103,97 +102,80 @@ async function prepare(label, upcoming = history, receiptIndex, expansion) {
                 views: windows.expanded ? windows.views.map(view => [view.viewId, view.viewInstanceId]) : [] };
         });
         for (const [id, record] of reports) if (!readable(record)) reports.delete(id);
-        const string = { type: 'string' }, appId = { app_id: string }, viewId = { ...appId, view_id: string };
-        const running = [...catalog.values()].filter(windows => windows.expanded);
-        const definitions = [
-            tool('system-open_app', { installation_id: string }, ['installation_id'], 'Open an installed App.'),
-            tool('system-close_app', appId, ['app_id'], 'Close the selected App.'),
-            ...[...catalog.values()].some(windows => !windows.expanded)
-                ? [tool('system-expand_app', appId, ['app_id'], 'Expand the selected App.')] : [],
-            ...running.length ? [tool('system-collapse_app', { ...appId, note: string }, ['app_id'], 'Collapse the App.'),
-                    tool('system-collapse_view', { ...viewId, note: string }, ['app_id', 'view_id'], 'Collapse the View.'),
-                    tool('system-expand_view', viewId, ['app_id', 'view_id'], 'Expand the View.'),
-                    tool('system-close_view', viewId, ['app_id', 'view_id'], 'Close the View.')] : [],
-        ];
-        const make = (layout, fullCost, report, includeReportTool = false) => {
-            const routes = new Map(), staticPages = new Map(), rows = new Map();
-            const dynamicMessages = [], business = [], granted = [], references = [];
-            const selections = captured.map(item => {
-                const { name, observation, windows } = item;
-                const viewNotes = new Map(windows.views.filter(view => !view.expanded)
-                    .map(view => [view.viewInstanceId, notes.get(noteKey(windows, view.viewInstanceId)) ?? '']));
-                const hints = new Set(observation.views.filter(view => layout.hints.has(windowKey(windows.appId, view.viewInstanceId)))
+        const hint = () => 'This View is open. Its body does not fit the current model request. Collapse or close other windows.';
+        const make = (layout, report, includeReportTool = false) => {
+            const staticPages = new Map(), rows = new Map();
+            const dynamicMessages = [];
+            const inputs = captured.map(item => {
+                const notesByMount = new Map(item.windows.views.filter(view => !view.expanded)
+                    .map(view => [view.viewInstanceId, notes.get(noteKey(item.windows, view.viewInstanceId)) ?? '']));
+                const hints = new Set(item.observation.views.filter(view => layout.hints.has(windowKey(item.windows.appId, view.viewInstanceId)))
                     .map(view => view.viewInstanceId));
-                const rendering = presentWindows(name, observation, windows, { ...layout, hints }, body =>
-                    'This View is open. Its body does not fit the current model request. Collapse or close other windows.\n' +
-                    `This View uses about ${Buffer.byteLength(body, 'utf8')} input tokens. The complete request needs ${fullCost.estimated}, ` +
-                    `with ${fullCost.inputLimit} available (short by ${fullCost.estimated - fullCost.inputLimit}).`, viewNotes);
-                const bodies = new Set(rendering.selection.refViews.map(view => view.viewInstanceId));
-                for (const ref of observation.refs) if (bodies.has(ref.viewInstanceId)) references.push({ source: observation.source, ref });
-                rendering.pages.forEach(({ role, region, content }, index) => {
-                    const view = observation.views[index];
-                    const key = windowKey(windows.appId, view.viewInstanceId);
-                    rows.set(key, { app_id: windows.appId, view_id: view.id, bytes: Buffer.byteLength(content), body: bodies.has(view.viewInstanceId) });
-                    if (region === 'static') staticPages.set(key, content);
-                    else dynamicMessages.push({ role, content });
-                });
-                for (const descriptor of rendering.tools) {
-                    const name = buildPublicToolName(windows.appId, descriptor.name);
-                    routes.set(name, { appId: windows.appId, observationId: observation.observationId, toolId: descriptor.id });
-                    const receivers = rendering.selection.receiverViews.filter(receiver => observation.views.some(view =>
-                        view.id === receiver.viewId && view.type === descriptor.viewType &&
-                        (!descriptor.eligibleViewIds || descriptor.eligibleViewIds.includes(view.id))));
-                    granted.push({ name, descriptor, source: observation.source, receivers });
-                }
-                return { ...item, selection: rendering.selection };
+                const windows = new Map(item.observation.views.map(view => [view.viewInstanceId, notesByMount.has(view.viewInstanceId)
+                    ? { kind: 'collapsed', note: notesByMount.get(view.viewInstanceId) } :
+                        hints.has(view.viewInstanceId) ? { kind: 'hint', text: hint() } : { kind: 'body' }]));
+                return { item, notesByMount, hints, windows };
             });
-            for (const { name, descriptor, source, receivers } of granted) business.push({ type: 'function', function: {
-                name, description: descriptor.description, parameters: projectNativeToolSchema(descriptor, source, receivers, references),
-            } });
-            const entries = discovered.map(item => {
-                const windows = catalog.get(item.appId);
-                const note = windows && notes.get(noteKey(windows));
-                const listed = !windows ? item.status : windows.expanded ? windows.views.map(view =>
-                    `${view.viewId} ${view.expanded ? 'open' : 'collapsed'}`).join('\n')
-                    : 'Collapsed' + (!layout.managementOnly && note ? ' · Agent note\n' + escapeXmlText(note) : '');
-                return `installation_id ${item.installationId}\n${windows ? `app_id ${item.appId}\n` : ''}${listed}`;
+            const projection = projectDesktop({
+                apps: inputs.map(({ item, windows }) => ({ observation: item.observation, windows })), compact: layout.managementOnly, includeInstruction: !layout.managementOnly,
+                catalog: discovered.map(app => {
+                    const windows = catalog.get(app.appId);
+                    return { app, windows, note: windows && notes.get(noteKey(windows)) };
+                }),
+                capabilities: Object.keys(DESKTOP_TOOL_NAMES).filter(key => key !== 'readWindowBudget' || includeReportTool || report || reports.size),
+                desktopSuffix: report ? `\nUse ${reportTool} with report_id ${report.id}.` : '',
             });
-            const budget = report ? `\nUse ${reportTool} with report_id ${report.id}.` : '';
-            const directory = { role: 'user', content: `<desktop>\n${entries.join('\n\n')}${budget}\n</desktop>` };
+            assert.deepEqual(projection.issues, []);
+            const selections = inputs.flatMap(({ item, hints, notesByMount }) => {
+                const selection = projection.appSelections.find(entry => entry.observationId === item.observation.observationId)?.windows;
+                // The published single-App example must produce the same pages and active mounts.
+                const example = presentWindows(item.name, item.observation, item.windows, { ...layout, hints }, hint, notesByMount);
+                assert.deepEqual(example.selection, selection ?? { activeViews: [] });
+                assert.deepEqual(example.pages, projection.views.filter(view => view.appId === item.windows.appId)
+                    .map(({ region, content }) => ({ role: 'user', region, content })));
+                return selection ? [{ ...item, selection }] : [];
+            });
+            for (const { appId, viewInstanceId, viewId, region, content, kind } of projection.views) {
+                const key = windowKey(appId, viewInstanceId);
+                rows.set(key, { app_id: appId, view_id: viewId, bytes: Buffer.byteLength(content), body: kind === 'body' });
+                if (region === 'static') staticPages.set(key, content);
+                else dynamicMessages.push({ role: 'user', content });
+            }
+            const directory = { role: 'user', content: projection.desktop };
             const fixed = [...staticOrder.keys()].filter(id => staticPages.has(id) && staticOrder.get(id) === staticPages.get(id));
             const ordered = new Map([...fixed, ...[...staticPages.keys()].filter(id => !fixed.includes(id))].map(id => [id, staticPages.get(id)]));
             const staticMessages = [...ordered.values()].map(content => ({ role: 'user', content }));
             const withReport = report && receiptIndex !== undefined
                 ? upcoming.map((message, index) => index === receiptIndex ? attachReport(message, report) : message)
                 : upcoming;
-            const messages = [...(!layout.managementOnly ? [{ role: 'user', content: DEFAULT_AOTUI_SYSTEM_INSTRUCTION }, ...staticMessages] : []),
+            const messages = [...(!layout.managementOnly ? [{ role: 'user', content: projection.instruction }, ...staticMessages] : []),
                 directory, ...dynamicMessages,
                 ...(extra && !layout.managementOnly ? [{ role: 'user', content: extra }] : []),
                 ...(layout.managementOnly ? necessaryHistory(withReport) : withReport)];
-            const tools = [...definitions, ...business];
-            if (includeReportTool || report || reports.size) tools.push(tool(reportTool, { report_id: string, page: { type: 'integer', minimum: 1 } },
-                ['report_id', 'page'], 'Read the specified page of the window budget report.'));
+            const tools = projection.tools.map(({ name, description, inputSchema }) =>
+                ({ type: 'function', function: { name, description, parameters: inputSchema } }));
             const body = { model: 'window-fixture', max_tokens: 750, messages, tools };
-            return { measurement: wireCost(body, inputLimit), body, layout, catalog, selections, rows, routes, ordered, release };
+            return { measurement: wireCost(body, inputLimit), body, layout, catalog, selections, rows,
+                tools: projection.tools, ordered, release };
         };
         let full = make(fullLayout);
-        if (full.measurement.estimated > inputLimit && !reports.size) full = make(fullLayout, undefined, undefined, true);
+        if (full.measurement.estimated > inputLimit && !reports.size) full = make(fullLayout, undefined, true);
         const candidates = [...full.rows].filter(([key, row]) => row.body && row.bytes > (previous.get(key)?.bytes ?? -1));
-        const hinted = make({ hints: new Set(candidates.map(([key]) => key)), managementOnly: false }, full.measurement);
+        const hinted = make({ hints: new Set(candidates.map(([key]) => key)), managementOnly: false });
         const expanded = candidates.filter(([key, row]) => hinted.rows.get(key).bytes < row.bytes).map(([key]) => key);
         const keepBodies = new Set(expansion?.bodies);
         for (const key of full.rows.keys()) if (previous.get(key)?.restoreBody) keepBodies.add(key);
         let selected = await fitWindowPresentation(full, expanded, async layout => {
-            const first = make(layout, full.measurement, undefined, true);
+            const first = make(layout, undefined, true);
             const rows = [...full.rows].map(([key, row]) => ({ app_id: row.app_id, view_id: row.view_id, full: row.bytes,
                 presented: first.rows.get(key)?.bytes ?? 0 }));
             const report = { id: trialId, rows, summary: { complete: full.measurement,
                 short_by: full.measurement.estimated - inputLimit, mode: layout.managementOnly ? 'management' : 'window_hints',
                 presented: first.measurement } };
-            let measured = make(layout, full.measurement, report);
+            let measured = make(layout, report);
             for (let pass = 0; pass < 4 && measured.measurement.estimated !== report.summary.presented.estimated; pass++) {
                 report.summary.presented = measured.measurement;
-                measured = make(layout, full.measurement, report);
+                measured = make(layout, report);
             }
             return { ...measured, report };
         }, { keepBodies, requireBodies: !!expansion });
@@ -202,7 +184,7 @@ async function prepare(label, upcoming = history, receiptIndex, expansion) {
             const key = JSON.stringify([scope, rows, summary]);
             const existing = [...reports.values()].find(record => record.key === key && readable(record));
             const report = { id: existing?.id ?? randomUUID(), rows, summary, key, scope };
-            selected = { ...make(selected.layout, full.measurement, report), report };
+            selected = { ...make(selected.layout, report), report };
         }
         facts.trials.push({ label, complete: full.measurement, selected: selected.measurement, managementOnly: selected.layout.managementOnly,
             hints: [...selected.layout.hints] });
@@ -221,14 +203,12 @@ async function step(label, calls, { addUser = true, saveText = true } = {}) {
         assert.ok(turn.measurement.estimated <= inputLimit, JSON.stringify(turn.measurement));
         const encoded = JSON.stringify(turn.body);
         if (encoded === lastInput) return;
-        const selected = turn.selections.filter(item => item.selection.receiverViews.length || item.selection.refViews.length);
-        for (const { client, observation, selection } of turn.selections) {
-            if (!selection.receiverViews.length && !selection.refViews.length) client.release(observation.observationId);
-        }
-        const adopted = desktop.adoptTurn({ apps: selected.map(({ client, observation, selection }) =>
-            ({ candidate: client.candidate(observation.observationId), windows: selection })) });
+        const selected = turn.selections.filter(item => item.selection.activeViews.length);
+        const adopted = desktop.adoptTurn({ apps: selected.map(({ candidate, selection }) => ({ candidate, windows: selection })) });
         assert.equal(adopted.status, 'adopted', JSON.stringify(adopted));
+        assert.deepEqual(adopted.cleanupIssues, []);
         active = adopted.turn;
+        turn.release();
         for (const { observation, selection } of selected) facts.adoptions.push({ label, appId: observation.source.appId, selection });
         retain(turn.report);
         staticOrder = turn.ordered;
@@ -244,11 +224,14 @@ async function step(label, calls, { addUser = true, saveText = true } = {}) {
         for (const call of message.tool_calls ?? []) {
             const name = call.function.name;
             const input = JSON.parse(call.function.arguments);
-            const route = turn.routes.get(name);
+            const offered = turn.tools.find(tool => tool.name === name);
             let result;
-            if (route) {
-                result = await active.invoke(route.appId, { observationId: route.observationId, invocationId: call.id, ...(typeof input.view_id === 'string' ? { viewId: input.view_id } : {}),
-                    input: Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'view_id')), toolId: route.toolId });
+            if (!name.startsWith('system-') || offered?.route) {
+                const routed = routeNativeInvocation(turn.tools, name, input, call.id);
+                if (routed.status === 'ready') {
+                    const { appId, instanceId: _instanceId, ...request } = routed.invocation;
+                    result = await active.invoke(appId, request);
+                } else result = routed.issue;
                 facts.receipts.push({ label, id: call.id, result });
                 result = result.receipt?.outcome ?? result;
             } else if (name === reportTool) {
@@ -333,14 +316,14 @@ async function onceOnly() {
     await step('open A and B', [openFiles('open', 'A', 'B')]);
     await step('write B once', [onFile('write-b', 'edit', 'B', { mode: 'large' })]);
     const hint = await step('open with budget hint', [
-        onFile('denied-hidden-ref', 'echo', 'B', { value: '$ref.window_files.file_B_1.content' }),
+        onFile('denied-hidden-ref', 'echo', 'A', { value: '$ref.window_files.file_B_1.content' }),
         onFile('hinted-receiver', 'echo', 'B', { value: 'echo while hinted' }),
     ]);
     assert.match(pageFor(hint, 'B'), /body does not fit/);
     assert.doesNotMatch(pageFor(hint, 'B'), /B-LATEST|Available references/);
     assert.match(pageFor(hint, 'A'), /A-BODY/);
     assert.equal(result('denied-hidden-ref').receipt.outcome.code, 'REF_NOT_VISIBLE');
-    assert.equal(result('hinted-receiver').receipt.outcome.status, 'succeeded');
+    assert.equal(result('hinted-receiver').receipt.outcome.code, 'TOOL_UNAVAILABLE');
     await step('collapse A to make room', [windowAction('note-a', 'collapse_view', 'A', { note: A_NOTE })]);
     const recovered = await step('normal restored request', []);
     assert.match(pageFor(recovered, 'A'), /Check A &lt;later&gt; &amp; keep the original note\./);
@@ -395,7 +378,7 @@ async function onceOnly() {
 }
 
 async function repairChecks() {
-    await step('open B, C and A', [openFiles('open-for-expansion', 'B', 'C', 'A')]);
+    await step('open B, C and A', [openFiles('open-for-expansion', 'B', 'C', 'A', 'D')]);
     const beforeCollapse = await step('save a place at C and A', [
         windowAction('note-c', 'collapse_view', 'C', { note: 'Return to C' }),
         windowAction('keep-a', 'collapse_view', 'A', { note: A_NOTE }),
@@ -408,7 +391,7 @@ async function repairChecks() {
     const sentBeforeExpansion = provider.requests.length;
     const adopted = facts.adoptions.length;
     const beforeExpand = await step('expand the small C', [windowAction('restore-c', 'expand_view', 'C'),
-        onFile('not-yet-a-source', 'echo', 'B', { value: '$ref.window_files.file_C_1.content' })]);
+        onFile('not-yet-a-source', 'echo', 'D', { value: '$ref.window_files.file_C_1.content' })]);
     assert.equal(provider.requests.length - sentBeforeExpansion, 1);
     assert.equal(facts.adoptions.length - adopted, 1);
     assert.match(pageFor(beforeExpand, 'C'), /Return to C/);
@@ -416,7 +399,7 @@ async function repairChecks() {
     assert.equal(result('not-yet-a-source').receipt.outcome.code, 'REF_NOT_VISIBLE');
     assert.equal(mount('C').expanded, true);
     assert.equal(mount('C').viewInstanceId, originalC);
-    const restored = await step('read C after new adoption', [onFile('now-a-source', 'echo', 'B', { value: '$ref.window_files.file_C_1.content' }),
+    const restored = await step('read C after new adoption', [onFile('now-a-source', 'echo', 'C', { value: '$ref.window_files.file_C_1.content' }),
         onFile('b-still-not-a-source', 'echo', 'C', { value: '$ref.window_files.file_B_1.content' })], { addUser: false });
     assert.match(pageFor(restored, 'B'), /body does not fit/);
     assert.match(pageFor(restored, 'C'), /C-LATEST-WHILE-COLLAPSED[\s\S]+Available references/);

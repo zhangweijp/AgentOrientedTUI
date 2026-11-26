@@ -1,4 +1,3 @@
-import type { StateStorageBackend } from '@aotui/core/persistence';
 /**
  * SDK Layer - Runtime Facade
  * 
@@ -16,10 +15,6 @@ import {
 } from '../spi/config/index.js';
 
 export type { RuntimeConfig };
-
-export interface RuntimeOptions {
-    readonly storageBackend?: StateStorageBackend;
-}
 
 // ============================================================================
 // Runtime factory
@@ -47,8 +42,8 @@ export interface RuntimeOptions {
  * const app = await desktop.installDynamicWorkerApp('/absolute/path/to/app.mjs', { name: 'my_app' });
  * ```
  */
-export function createRuntime(input: RuntimeConfigInput = {}, options?: RuntimeOptions): IKernel {
+export function createRuntime(input: RuntimeConfigInput = {}): IKernel {
     const config: RuntimeConfig = defineRuntimeConfig(input);
-    return new Kernel(config, options?.storageBackend);
+    return new Kernel(config);
 }
 

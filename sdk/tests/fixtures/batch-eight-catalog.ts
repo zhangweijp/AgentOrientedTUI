@@ -2,7 +2,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { arrayRef, createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, defineViewType } from '@aotui/sdk';
 
 const list = defineViewType({ name: 'list', multiplicity: 'single', region: 'dynamic' });
 const todo = Type.Object({ title: Type.String(), done: Type.Boolean() }, { additionalProperties: false });

@@ -35,7 +35,6 @@ function fixture() {
             ref('people', [value], { type: 'array', items: item }, { array: true }),
             ref('plain', [value], { type: 'array', items: item }),
             ref('number', 42, number), ref('secret', 'restricted', string, { scope: 'private' }),
-            ref('key.with.dots', '\"literal\"', string),
             ref('wideA', '字'.repeat(116_000), string), ref('wideB', '字'.repeat(116_000), string),
         ];
         const result = core.committer.accept({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId: 'app', instanceId: 'run',
@@ -87,10 +86,10 @@ it('recognizes only the reserved complete prefix and decodes literal selection o
     try {
         const literals = ['$HOME', '$100', '$$HOME', '$.items[0].name', '$.ajax(opts)', 'body ' + addr('secret')];
         const nested = { $ref: '#/defs/User', list: [addr('secret'), '$' + addr('secret')] };
-        const result = f.prepare({ ordinary: nested, items: [...literals, '$' + addr('secret'), [addr('secret')]],
-            text: '$$notes.list.value' });
+        const result = f.prepare({ ordinary: nested, items: [...literals, '$$ref.x', '$$$ref.x', '$$$$ref.x', [addr('secret')]],
+            text: '$$$ref.x' });
         expect(result).toMatchObject({ status: 'prepared', refSources: [], effectiveArgs: {
-            ordinary: nested, items: [...literals, addr('secret'), [addr('secret')]], text: '$$notes.list.value',
+            ordinary: nested, items: [...literals, '$ref.x', '$$ref.x', '$$$ref.x', [addr('secret')]], text: '$$ref.x',
         } });
         expect(f.store.resolveRef).not.toHaveBeenCalled();
     } finally { f.close(); }
@@ -124,9 +123,7 @@ it('checks exact receiver identities for a private Ref and a Host allowlist', ()
             appId: 'app', instanceId: 'new-run', viewId: 'list', viewInstanceId: 'live',
         }] };
         expect(f.prepare({ text: addr('secret') }, [grant])).toMatchObject({ status: 'rejected', issue: { code: 'REF_NOT_VISIBLE' } });
-        expect(f.prepare({ text: '$ref.app.list["key.with.dots"]' })).toMatchObject({
-            status: 'prepared', effectiveArgs: { text: '\"literal\"' },
-        });
+
     } finally { f.close(); }
 });
 it('measures the original and expanded boundaries with actual UTF-8 JSON lengths', () => {

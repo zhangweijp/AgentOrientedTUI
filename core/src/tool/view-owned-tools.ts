@@ -112,11 +112,11 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         if (disposed) fail('VIEW_REGISTRY_CLOSED', 'View registry is closed');
     }
 
-    function identity(id: string, type: string): ViewInstance {
+    function identity(id: string, type: string, sequence: number): ViewInstance {
         if (!isInstanceName(id)) fail('VIEW_INVALID', 'Expected a View ID using ASCII letters, digits or underscores, with at least one nondigit');
         if (id.length + type.length > maxRetainedBytes) fail('VIEW_CAPACITY', 'View identity exceeds retention limit');
-        if (mountSequence >= Number.MAX_SAFE_INTEGER) fail('VIEW_CAPACITY', 'View mount sequence exhausted');
-        return Object.freeze({ viewId: id, viewType: type, viewInstanceId: 'vi:v1:' + JSON.stringify([appInstanceId, ++mountSequence]) });
+        if (!Number.isSafeInteger(sequence)) fail('VIEW_CAPACITY', 'View mount sequence exhausted');
+        return Object.freeze({ viewId: id, viewType: type, viewInstanceId: 'vi:v1:' + JSON.stringify([appInstanceId, sequence]) });
     }
 
     function current(tool: ToolRoute, receiver: ViewToolReceiver) {
@@ -182,7 +182,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         },
 
         /** Build the entire next inventory without changing any currently executable handler. */
-        prepareFrame(views: readonly ViewCandidate[]) {
+        prepareFrame(views: readonly ViewCandidate[], resetActivations = false) {
             assertActive();
             if (!Array.isArray(views) || views.length > maxViews) fail('VIEW_CAPACITY', 'App frame exceeds the View limit');
             const previous = mounted;
@@ -193,6 +193,8 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 return prior ? [prior.view.viewId] : [];
             }));
             const nextSequences = new Map(sequences);
+            let nextMountSequence = mountSequence;
+            let nextActivationSequence = activationSequence;
             const owners = new Set<object>();
             const singles = new Set<string>();
             const tools = new Map<string, ToolDescriptor>();
@@ -240,7 +242,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     nextSequences.set(naming, sequence);
                     occupied.add(id);
                 }
-                const view = continuous?.view ?? identity(id, type);
+                const view = continuous?.view ?? identity(id, type, ++nextMountSequence);
                 if (onClose !== undefined && typeof onClose !== 'function')
                     throw new SnapshotDataError('SNAPSHOT_INVALID', `View ${id}.onClose`, 'Expected a close callback');
                 const definitions = definition.tools;
@@ -259,9 +261,10 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     seen.add(name);
                     if (!enabled) continue;
                     const toolId = tool.descriptor.id;
-                    const old = continuous?.bindings.get(toolId);
-                    if (!old && activationSequence >= Number.MAX_SAFE_INTEGER) fail('TOOL_CAPACITY', 'Tool activation sequence exhausted');
-                    const activationId = old?.activationId ?? 'ta:v2:' + ++activationSequence;
+                    // A recovered frame needs a newly adopted tool binding even on an unchanged mount.
+                    const old = resetActivations ? undefined : continuous?.bindings.get(toolId);
+                    if (!old && nextActivationSequence >= Number.MAX_SAFE_INTEGER) fail('TOOL_CAPACITY', 'Tool activation sequence exhausted');
+                    const activationId = old?.activationId ?? 'ta:v2:' + ++nextActivationSequence;
                     const reference = Object.freeze({ toolId, activationId });
                     bytes += utf8Size(canonicalJson(reference));
                     count++;
@@ -281,6 +284,8 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     if (mounted !== previous) fail('VIEW_INVALID', 'Prepared View inventory was superseded');
                     mounted = next;
                     sequences = nextSequences;
+                    mountSequence = nextMountSequence;
+                    activationSequence = nextActivationSequence;
                     liveBytes = bytes;
                     bindingCount = count;
                 },
@@ -288,6 +293,9 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         },
 
         getView(id: string): ViewInstance | undefined { return mounted.get(id)?.view; },
+        readViewId(owner: object): string | undefined {
+            for (const entry of mounted.values()) if (entry.owner === owner) return entry.view.viewId;
+        },
         async closeView(viewId: string, viewInstanceId: string): Promise<ViewToolInvocationTerminal> {
             const selected = mounted.get(viewId);
             if (selected?.view.viewInstanceId !== viewInstanceId)

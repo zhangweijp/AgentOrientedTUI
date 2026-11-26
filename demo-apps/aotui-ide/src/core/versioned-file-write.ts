@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { IDEError } from './ide-errors.js';
+import { acquireWorkspaceWriteLock } from './file-write-lock.js';
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const versionOf = (data: Buffer) => 'sha256:' + createHash('sha256').update(data).digest('hex');
@@ -74,7 +75,7 @@ export async function readObservedFile(root: string, input: string, maxBytes = M
 export type ObservedFile = Awaited<ReturnType<typeof readObservedFile>>;
 
 /**
- * Versioned replacement for COOPERATING writers. A sibling O_EXCL lock
+ * Versioned replacement for COOPERATING writers. A SQLite write reservation
  * serializes users of this API; old content is checked under that lock, then
  * staged and atomically renamed into place.
  *
@@ -99,21 +100,10 @@ export async function replaceFileIfVersion(
     const current = await readObservedFile(workspaceRoot, filePath);
     if (current.stamp !== observed.stamp) return { status: 'conflict', currentVersion: current.version };
     const file = current.path;
-    const lockPath = file + '.aotui-lock';
-    let lock: Awaited<ReturnType<typeof fs.open>>;
-    try {
-        lock = await fs.open(lockPath, 'wx', 0o600);
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-            throw new Error('RESOURCE_BUSY: another versioned file write is in progress');
-        }
-        throw error;
-    }
+    const lock = acquireWorkspaceWriteLock(file);
     let temporary: string | undefined;
-    let lockOwner: { ino: number; dev: number } | undefined;
     let written: { status: 'written'; version: string; cleanupWarning?: string } | undefined;
     try {
-        lockOwner = await lock.stat();
         const before = await readRegularFile(file);
         if (before.version !== expectedVersion) {
             return { status: 'conflict', currentVersion: before.version };
@@ -133,11 +123,6 @@ export async function replaceFileIfVersion(
         // Check again for best-effort detection of an uncooperative editor,
         // a swapped parent symlink, or a replacement lock inode.
         await checkedPath(workspaceRoot, filePath);
-        const lockNow = await fs.lstat(lockPath);
-        if (!lockNow.isFile() || lockNow.dev !== lockOwner!.dev ||
-            lockNow.ino !== lockOwner!.ino) {
-            throw new Error('RESOURCE_LOCK_CHANGED: exclusive lock was replaced');
-        }
         const now = await readRegularFile(file);
         if (now.version !== expectedVersion ||
             now.stat.dev !== before.stat.dev || now.stat.ino !== before.stat.ino) {
@@ -145,6 +130,7 @@ export async function replaceFileIfVersion(
         }
         if ((await readObservedFile(workspaceRoot, filePath)).stamp !== observed.stamp)
             return { status: 'conflict', currentVersion: now.version };
+        lock.verify();
         observed.current();
         await fs.rename(temporary, file);
         temporary = undefined;
@@ -157,23 +143,8 @@ export async function replaceFileIfVersion(
         } catch {
             cleanupProblems.push('Temporary file cleanup failed');
         }
-        try {
-            const current = await fs.lstat(lockPath).catch(error => {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-                throw error;
-            });
-            // Never knowingly delete another actor's replacement lock.
-            if (current && lockOwner && current.dev === lockOwner.dev &&
-                current.ino === lockOwner.ino) {
-                await fs.unlink(lockPath);
-            } else {
-                cleanupProblems.push('Exclusive lock owner changed or disappeared');
-            }
-        } catch {
-            cleanupProblems.push('Exclusive lock cleanup failed');
-        }
-        try { await lock.close(); } catch {
-            cleanupProblems.push('Exclusive lock handle close failed');
+        try { lock.close(); } catch {
+            cleanupProblems.push('Exclusive lock close failed');
         }
         if (cleanupProblems.length) {
             if (written) {

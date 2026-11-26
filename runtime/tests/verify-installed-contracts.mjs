@@ -79,16 +79,42 @@ void [ref, oldRef, schemaVersion, result, oldResult, oldTerminal, execute, ready
     const tsc = path.join(consumer, 'node_modules/typescript/bin/tsc');
     await run([tsc, '-p', path.join(folder, 'core-tsconfig.json')], 'Core Tool, SnapshotLimits and declaration types compile with ES2022 only');
     if (!refOnly) await run([path.join(folder, 'core-out/public-core.js')], 'public Core fixture executes');
+    await fs.writeFile(path.join(folder, 'candidate-scope.mts'), `import { type CandidateScope, type IDesktop, type RunningApp } from '@aotui/runtime';
+export function prepare(desktop: IDesktop, app: RunningApp) {
+    const scope: CandidateScope = desktop.createCandidateScope();
+    return { observation: scope.observe(app), discard: scope.discard };
+}
+// @ts-expect-error Importing Runtime does not add the disposable global library.
+Symbol.dispose;
+`);
+    await fs.writeFile(path.join(folder, 'candidate-scope-using.mts'), `import { createRuntime } from '@aotui/runtime';
+const runtime = createRuntime();
+try {
+    const desktop = await runtime.createDesktop();
+    using scope = desktop.createCandidateScope();
+    if (typeof scope[Symbol.dispose] !== 'function') throw new TypeError('Expected a disposable candidate scope');
+} finally {
+    if (!(await runtime.beginClose().completion).resourcesReleased) throw new Error('Runtime still owns resources');
+}
+`);
+    const scopeCompiler = { ...compiler, outDir: './scope-out' };
+    await fs.writeFile(path.join(folder, 'scope-tsconfig.json'), JSON.stringify({
+        compilerOptions: scopeCompiler, files: ['./candidate-scope.mts'],
+    }));
+    await fs.writeFile(path.join(folder, 'scope-using-tsconfig.json'), JSON.stringify({
+        compilerOptions: { ...scopeCompiler, lib: ['ES2022', 'ESNext.Disposable'] }, files: ['./candidate-scope-using.mts'],
+    }));
+    await run([tsc, '-p', path.join(folder, 'scope-tsconfig.json')], 'Runtime candidate scope compiles with strict ES2022 and no DOM or Node types');
+    await run([tsc, '-p', path.join(folder, 'scope-using-tsconfig.json')], 'Runtime candidate scope using compiles with ESNext.Disposable');
+    await run([path.join(folder, 'scope-out/candidate-scope-using.mjs')], 'installed Runtime candidate scope disposes with using');
     const ideTypeImports = `import ideDefault from '@agentina/aotui-ide';
 // @ts-expect-error The IDE package has one default managed factory, not route-specific entries.
 import { ideEntryForRoute } from '@agentina/aotui-ide';`;
     const ideTypeAssertions = `const ideFactory: TUIAppFactory = ideDefault;
-const persistenceSupport: 'state-session-v2' | undefined = ideFactory.persistenceSupport;
 const ideLifecycleSupport: 'app-lifecycle-v2' = ideFactory.appLifecycleSupport;
-const ideToolAuthoringProtocol: 'view-type-tools-v7' = ideFactory.toolAuthoringProtocol;
-void [persistenceSupport, ideLifecycleSupport, ideToolAuthoringProtocol, ideFactory];`;
-    await fs.writeFile(path.join(folder, 'sdk-types.ts'), `import { h } from 'preact';
-import { Type } from 'typebox';
+const ideToolAuthoringProtocol: 'view-type-tools-v8' = ideFactory.toolAuthoringProtocol;
+void [ideLifecycleSupport, ideToolAuthoringProtocol, ideFactory];`;
+    await fs.writeFile(path.join(folder, 'sdk-types.ts'), `import { Type } from 'typebox';
 import { createRuntime, type AppInteractionOptions } from '@aotui/runtime';
 import type {
   ActiveTurn, RunningApp, AppInteractionPolicy, AppInvocation, ReceiptQuery, ObservationCandidate, Observation,
@@ -122,7 +148,7 @@ export function checkHostRequests(app: RunningApp, turn: ActiveTurn, raw: unknow
   void app.readReceipt({ ...hostQuery, toolId: 'inspect' });
   return app.readReceipt(hostQuery);
 }
-import { createTUIApp, defineViewType, useDataRef, refParam, type ArgsOf, useAppLifecycle, type AppLifecycleCallbacks, StaticView, DynamicView } from '@aotui/sdk';
+import { createApp, createView, defineViewType, formatRef, ref, refParam, type ArgsOf, type AppLifecycleCallbacks } from '@aotui/sdk';
 ${refOnly ? '' : ideTypeImports}
 import type { AppFrameRef, AppProjectionFrame, ProjectionCommitResult, RuntimeContext, TUIAppFactory } from '@aotui/core';
 export function publishCompleteFrame(context: RuntimeContext): ProjectionCommitResult {
@@ -167,22 +193,23 @@ const Counter = defineViewType<object>()({ name: 'Counter', multiplicity: 'multi
  },
 } });
 export type CounterRefArgs = ArgsOf<typeof Counter.tools.inspect_record>;
-function Detail() { return 'Counter'; }
-function RefDetail() {
- const current = useDataRef('current_record', { id: 'record-1' }, { scope: 'protected', refType: 'Record', schema: Type.Object({ id: Type.String() }) });
- return h('p', {}, current('Current record'));
-}
 const owner: AppLifecycleCallbacks = { stop() {}, async close() {} };
-function Root() {
- useAppLifecycle(owner);
- return h(Counter, { idPrefix: 'counter', region: 'dynamic', context: {} }, h(Detail, {}));
-}
 ${refOnly ? '' : ideTypeAssertions}
-const managedFactory = createTUIApp({ app_name: 'package_types', component: Root, viewTypes: [Counter] });
+const managedFactory = createApp({
+ app_name: 'package_types', viewTypes: [Counter],
+ initialize({ prepareProjection, registerCleanup }) {
+  registerCleanup(owner);
+  const page = createView(Counter, { idPrefix: 'counter', region: 'dynamic', render() {
+   const selected = ref('current_record', { id: 'record-1' }, { scope: 'protected', refType: 'Record', schema: Type.Object({ id: Type.String() }) });
+   return { body: formatRef('Current record', selected), refs: [selected], context: {} };
+  } });
+  prepareProjection({ views: [page] });
+ },
+});
 const lifecycleSupport: 'app-lifecycle-v2' = managedFactory.appLifecycleSupport;
-const toolAuthoringProtocol: 'view-type-tools-v7' = managedFactory.toolAuthoringProtocol;
-// @ts-expect-error Managed lifecycle support is the default factory contract, not a config flag.
-createTUIApp({ app_name: 'retired_lifecycle_flag', component: Root, viewTypes: [Counter], experimentalAppLifecycle: true });
+const toolAuthoringProtocol: 'view-type-tools-v8' = managedFactory.toolAuthoringProtocol;
+// @ts-expect-error Managed lifecycle support is the default factory contract.
+createApp({ app_name: 'retired_lifecycle_flag', initialize() {}, viewTypes: [Counter], experimentalAppLifecycle: true });
 export default managedFactory;
 const writable: AppInteractionOptions = { toolsEnabled: true };
 const readOnly: AppInteractionOptions = { toolsEnabled: false };
@@ -191,7 +218,7 @@ const oldOptions: AppInteractionOptions = { interactionModes: [] };
 const lifecyclePort = (port: AppLifecyclePort) => { const detach = port.register(owner); detach(); };
 void [writable, readOnly, oldOptions, lifecyclePort, lifecycleSupport, toolAuthoringProtocol, createRuntime];
 `);
-    await fs.writeFile(path.join(folder, 'sdk-tsconfig.json'), JSON.stringify({ compilerOptions: { ...compiler, lib: ['ES2022', 'DOM'], types: ['node'], outDir: './sdk-out' }, files: ['./sdk-types.ts'] }));
+    await fs.writeFile(path.join(folder, 'sdk-tsconfig.json'), JSON.stringify({ compilerOptions: { ...compiler, lib: ['ES2022'], types: ['node'], outDir: './sdk-out' }, files: ['./sdk-types.ts'] }));
     await run([tsc, '-p', path.join(folder, 'sdk-tsconfig.json')], refOnly ? 'strict Runtime Host types, SPI and SDK Ref declarations' : 'strict Runtime Host types, SPI and SDK with IDE declarations');
     await fs.writeFile(path.join(folder, 'adapter-types.ts'), `import { SemanticAOTUIDrivenSource, type SemanticAOTUIDrivenSourceOptions } from '@aotui/agent-driver-adapter';
 import type { ContextDrivenSource } from '@aotui/agent-driver-v2';
@@ -220,11 +247,9 @@ export const findApp = (desktop: IDesktop, appId: string, instanceId: string) =>
     const toolAppPath = path.join(folder, 'type-tool-app.mjs');
     const witnessPath = path.join(folder, 'ref-witness.jsonl');
     await fs.writeFile(witnessPath, '', { flag: 'wx' });
-    await fs.writeFile(toolAppPath, `import { h } from 'preact';
-import { useState } from 'preact/hooks';
-import { appendFileSync } from 'node:fs';
+    await fs.writeFile(toolAppPath, `import { appendFileSync } from 'node:fs';
 import Type from 'typebox';
-import { createTUIApp, defineViewType, useDataRef, refParam, StaticView, DynamicView } from '@aotui/sdk';
+import { createApp, createView, defineViewType, formatRef, ref, refParam } from '@aotui/sdk';
 const filePath = '/open/a.txt';
 // This test-only witness is outside Tool Result and the App projection.
 const witnessFile = ${JSON.stringify(witnessPath)};
@@ -253,16 +278,19 @@ const File = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', to
   },
  },
 } });
-function FileDetail({ content }) {
- const current = useDataRef('current_file', { filePath, content }, { scope: 'protected', refType: 'File', schema: Type.Object({ filePath: Type.String(), content: Type.String() }) });
- return h('section', {}, [h('p', {}, current('Current file')), h('pre', {}, content)]);
-}
-function App() {
- const [content, setContent] = useState('OLD_PACKAGE_VIEW_VALUE');
- return h('main', {}, [h(StaticView, { idPrefix: 'root', type: Guide }, h('p', {}, 'Package consumer tool test.')),
-  h(DynamicView, { idPrefix: 'file_a', type: File, context: { content, setContent } }, h(FileDetail, { content }))]);
-}
-export default createTUIApp({ app_name: 'package_type_tool_consumer', component: App, viewTypes: [Guide, File] });
+export default createApp({
+ app_name: 'package_type_tool_consumer', viewTypes: [Guide, File],
+ initialize({ prepareProjection }) {
+  let content = 'OLD_PACKAGE_VIEW_VALUE';
+  const root = createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({ body: 'Package consumer tool test.' }) });
+  const page = createView(File, { idPrefix: 'file_a', region: 'dynamic', render() {
+    const current = ref('current_file', { filePath, content }, { scope: 'protected', refType: 'File', schema: Type.Object({ filePath: Type.String(), content: Type.String() }) });
+    return { body: formatRef('Current file', current) + '\\n\\n' + content, refs: [current],
+      context: { content, setContent(value) { content = value; prepareProjection({ views: [root, page] }); } } };
+  } });
+  prepareProjection({ views: [root, page] });
+ },
+});
 `);
     await fs.writeFile(path.join(folder, 'public-tools.mjs'), `import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -349,7 +377,6 @@ try {
 import fs from 'node:fs/promises'; import path from 'node:path'; import {tmpdir} from 'node:os';
 import {createRuntime} from '@aotui/runtime'; import {SemanticAOTUIDrivenSource} from '@aotui/agent-driver-adapter'; import ideFactory from '@agentina/aotui-ide';
 const ideModulePath=import.meta.resolve('@agentina/aotui-ide');
-assert.equal(Object.getOwnPropertyDescriptor(ideFactory,'persistenceSupport')?.value,'state-session-v2');
 assert.equal(Object.getOwnPropertyDescriptor(ideFactory,'appLifecycleSupport')?.value,'app-lifecycle-v2');
 const base = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-public-package-'))), root=path.join(base,'project'); await fs.mkdir(root);
 const file=path.join(root,'example.ts'), unopenedFile=path.join(root,'not-open.ts'); await fs.writeFile(file,'export const answer = 1;\\n'); await fs.writeFile(path.join(root,'tsconfig.json'),'{}');

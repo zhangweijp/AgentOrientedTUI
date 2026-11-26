@@ -17,10 +17,13 @@ export function resolveIDEOptions(context: {
     requireIDE(typeof sessionKey === 'string' && /^[a-zA-Z0-9_.-]{1,128}$/.test(sessionKey), 'IDE_SESSION_KEY_REQUIRED');
     const dataDir = config.AOTUI_DATA_DIR ?? path.join(os.homedir(), '.aotui', 'data');
     requireIDE(typeof dataDir === 'string' && path.isAbsolute(dataDir), 'IDE_DATA_DIR_INVALID');
+    const sessionPath = config.ideSessionPath ?? path.join(dataDir, 'ide-sessions', sessionKey, 'session.json');
+    requireIDE(typeof sessionPath === 'string' && path.isAbsolute(sessionPath), 'IDE_SESSION_PATH_INVALID');
     const historyPath = config.ideHistoryPath ?? path.join(dataDir, 'ide-sessions', sessionKey, 'history.json');
     requireIDE(typeof historyPath === 'string' && path.isAbsolute(historyPath), 'IDE_HISTORY_PATH_INVALID');
     return {
         sessionKey,
+        sessionPath,
         historyPath,
         projectPath: typeof config.projectPath === 'string' ? config.projectPath : undefined,
     };

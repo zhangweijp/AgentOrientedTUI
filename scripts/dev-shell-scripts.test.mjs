@@ -20,7 +20,7 @@ test('first launch installs, builds and registers once, then subsequent launches
 printf '%s|%s|%s\\n' "\${0##*/}" "\${PWD#\$AOTUI_TEST_ROOT/}" "\$*"
 if [ "\${0##*/}" = pnpm ]; then
     if [ "\$1" = install ]; then mkdir -p node_modules; fi
-    if [ "\$1" = -C ] && [ "\$3" = install ]; then mkdir -p "\$2/node_modules/linkedom"; fi
+    if [ "\$1" = -C ] && [ "\$3" = install ]; then mkdir -p "\$2/node_modules"; fi
 fi
 `;
         for (const name of ['pnpm', 'npm', 'node']) await writeFile(join(bin, name), command, { mode: 0o755 });
@@ -35,8 +35,6 @@ fi
         assert.equal(calls.filter(line => line === 'npm|host|link').length, 1);
         assert.deepEqual(calls.filter(line => line.includes('/app-distribution/cli.js install . --force'))
             .map(line => line.split('|')[1]), apps);
-        assert.deepEqual(calls.filter(line => line.includes('/scripts/link-local-preact.mjs'))
-            .map(line => line.split(' ').at(-1).slice(root.length + 1)), apps);
         assert.equal(calls.at(-1), 'pnpm|host|electron:dev');
 
         const subsequent = run();

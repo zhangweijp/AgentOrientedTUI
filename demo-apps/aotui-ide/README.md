@@ -28,6 +28,7 @@ See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup. Hos
 
 ## Runtime Requirements
 
+- Node.js 22.13 or newer for the built-in SQLite write reservations.
 - Matching SDK 0.9.0 and Runtime 8.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v7` authoring, native value and Ref parameters, Snapshot 7, and `app-lifecycle-v2`. Runtime checks the `createTUIApp` authoring marker before initialization.
 - TypeBox 1.4.3 for the IDE's single-source Tool parameter declarations.
 - Optional local language servers for advanced code intelligence

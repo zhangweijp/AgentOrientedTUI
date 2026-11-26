@@ -1,5 +1,5 @@
 import Type from 'typebox';
-import { defineViewType, type ToolResult } from '@aotui/sdk/app';
+import { defineViewType, type ToolResult } from '@aotui/sdk';
 
 export const RootType = defineViewType({ multiplicity: 'multiple', name: 'Root' });
 

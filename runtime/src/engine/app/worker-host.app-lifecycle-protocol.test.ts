@@ -7,36 +7,20 @@ function fixture(fault?: (request: any, response: any) => any) {
     let host: AppWorkerHost;
     const worker = new class extends EventEmitter {
         messages: any[] = []; threadId = 1;
-        pendingCloseResponse: any;
         postMessage(request: any) {
             this.messages.push(request);
-            if (request.type === 'STATE_STORAGE_RESPONSE' && this.pendingCloseResponse) {
-                const response = this.pendingCloseResponse;this.pendingCloseResponse = undefined;
-                queueMicrotask(() => this.emit('message', response));return;
-            }
             const report = { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId,
                 state: request.type === 'APP_CLOSE' ? 'completed' : 'stopped', issues: [] };
             const response = { requestId: request.requestId, success: true,
                 type: request.type === 'INIT' ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
                 ...(request.type === 'INIT' ? {
                     appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
-                    persistence: { protocol: 'state-session-v2', version: 2, instanceId: host.appInstanceId },
                     protocol: request.protocol, toolsEnabled: request.toolsEnabled,
                     projectionLimits: request.projectionLimits,
                     appInstanceId: host.appInstanceId,
                 } : ['APP_STOP', 'APP_CLOSE'].includes(request.type) ? {
                     appCleanup: report,
-                    ...(request.type === 'APP_CLOSE' ? { persistence: {
-                        protocol: 'state-session-v2', instanceId: host.appInstanceId, ok: true, unmount: 'completed',
-                        flush: { status: 'completed', ok: true, entries: [] },
-                        dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } },
-                    } } : {}),
                 } : {}) };
-            if (request.type === 'APP_CLOSE') {
-                this.pendingCloseResponse = fault ? fault(request, response) : response;
-                queueMicrotask(() => this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2, instanceId: host.appInstanceId,
-                    sequence: 1, action: 'release', }));return;
-            }
             queueMicrotask(() => this.emit('message', fault ? fault(request, response) : response));
         }
         async terminate() { this.threadId = -1; this.emit('exit', 0); return 0; }
@@ -78,54 +62,18 @@ it.each(['wrong-type', 'active', 'wrong-instance', 'missing'])('does not trust %
 });
 it('preserves cleanup failure while reporting the terminated execution resources separately', async () => {
     const x = fixture((request, response) => request.type === 'APP_CLOSE' ? { ...response, success: false,
-        appCleanup: { ...response.appCleanup, state: 'failed', issues: ['APP_CLEANUP_FAILED'] },
-        persistence: { ...response.persistence, unmount: 'failed' } } : response);
+        appCleanup: { ...response.appCleanup, state: 'failed', issues: ['APP_CLEANUP_FAILED'] } } : response);
     await x.host.start(); await x.host.open(); await expect(x.host.close()).rejects.toHaveProperty('code', 'APP_CLEANUP_FAILED');
     expect((await x.host.waitForResourceRelease()).appCleanup?.report).toMatchObject({ state: 'failed', issues: ['APP_CLEANUP_FAILED'] });
-    expect(x.host.getResourceReport()).toMatchObject({ worker: 'exited', resourcesReleased: true,
-        storage: { unsafe: false, lifecycle: { ok: true, unmount: 'failed' } } });
+    expect(x.host.getResourceReport()).toMatchObject({ worker: 'exited', resourcesReleased: true });
 });
 
-it.each(['missing', 'wrong-instance', 'contradictory-status'])('keeps a %s storage receipt visible when App cleanup also fails', async fault => {
-    const x = fixture((request, response) => request.type === 'APP_CLOSE' ? { ...response, success: false,
-        appCleanup: { ...response.appCleanup, state: 'failed', issues: ['APP_CLEANUP_FAILED'] },
-        persistence: fault === 'missing' ? undefined : { ...response.persistence, unmount: 'failed',
-            ...(fault === 'wrong-instance' ? { instanceId: 'different' } : { ok: false }) } } : response);
-    await x.host.start(); await x.host.open(); await expect(x.host.close()).rejects.toHaveProperty('code', 'APP_CLEANUP_FAILED');
-    const report = await x.host.waitForResourceRelease();
-    expect(report).toMatchObject({ appCleanup: { report: { state: 'failed' } }, resourcesReleased: true,
-        storage: { unsafe: true, release: { status: 'released' } } });
-    expect(report.storage).not.toHaveProperty('lifecycle');
-});
-
-it('classifies a completed app cleanup and failed persistence flush as a persistence close failure', async () => {
-    const x = fixture((request, response) => request.type === 'APP_CLOSE' ? { ...response, success: false,
-        persistence: { ...response.persistence, ok: false,
-            flush: { status: 'completed', ok: false, entries: [{ address: { namespace: 'd/app', key: 'state' },
-                revision: 1, status: 'failed', issue: { code: 'IO_FAILED', message: 'Storage I/O failed' } }] },
-            dispose: { status: 'disposed', unsaved: [{ address: { namespace: 'd/app', key: 'state' },
-                revision: 1, status: 'failed', issue: { code: 'IO_FAILED', message: 'Storage I/O failed' } }],
-                release: { status: 'released' } } } } : response);
-    await x.host.start(); await x.host.open();
-
-    await expect(x.host.close()).rejects.toThrow('PERSISTENCE_CLOSE_FAILED');
-
-    expect(x.host.getResourceReport().appCleanup?.report).toMatchObject({ state: 'completed', issues: [] });
-    expect(x.host.getPersistenceReport()).toMatchObject({
-        unsafe: true,
-        lifecycle: { ok: false, unmount: 'completed', flush: { ok: false, entries: [{ status: 'failed', issue: { code: 'IO_FAILED' } }] },
-            dispose: { unsaved: [{ status: 'failed', issue: { code: 'IO_FAILED' } }], release: { status: 'released' } } },
-    });
-    expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
-});
-
-it('rejects a false APP_CLOSE terminal even when both managed reports claim success', async () => {
+it('rejects a false APP_CLOSE terminal even when appCleanup reports completed', async () => {
     const x = fixture((request, response) => request.type === 'APP_CLOSE' ? { ...response, success: false } : response);
     await x.host.start(); await x.host.open();
 
     await expect(x.host.close()).rejects.toThrow();
 
     expect(x.host.getResourceReport().appCleanup?.report).toMatchObject({ state: 'completed', issues: [] });
-    expect(x.host.getPersistenceReport()).toMatchObject({ unsafe: true, lifecycle: { ok: true, unmount: 'completed' } });
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });

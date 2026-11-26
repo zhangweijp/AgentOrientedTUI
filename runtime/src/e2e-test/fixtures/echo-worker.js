@@ -22,12 +22,6 @@ if (parentPort) {
                 projectionLimits: msg.projectionLimits,
                 appLifecycle: {
                     protocol: 'app-lifecycle-v2',
-                    version: 2,
-                    instanceId: appInstanceId
-                },
-                persistence: {
-                    protocol: 'state-session-v2',
-                    version: 2,
                     instanceId: appInstanceId
                 }
             });

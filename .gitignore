@@ -61,3 +61,10 @@ ui.md
 !/docs/sdk-runtime-design/**
 !/docs/sdk-runtime-design-v2/
 !/docs/sdk-runtime-design-v2/**
+!/docs/sdk-runtime-design-v3/
+/docs/sdk-runtime-design-v3/*
+!/docs/sdk-runtime-design-v3/00-index.md
+!/docs/sdk-runtime-design-v3/01-conceptual-design.md
+!/docs/sdk-runtime-design-v3/02-system-design.md
+!/docs/sdk-runtime-design-v3/03-module-design.md
+!/docs/sdk-runtime-design-v3/04-mechanism-design.md

@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { fixtureAppPath, appClient, journal, modelCall, watchUntil } from './batch-two-support.mjs';
+import { fixtureAppPath, appClient, consoleBindings, consoleDeclaration, journal, modelCall, watchUntil } from './batch-two-support.mjs';
 
 export const CATALOG = 'console_catalog', TASKS = 'console_tasks';
 export const original = [
@@ -53,7 +53,6 @@ export function consolePolicy(hooks) {
 export const system = (id, name, args) => modelCall(id, 'system-' + name, args);
 export const tool = (name) => TASKS + '-' + name;
 const names = body => body.tools.map(entry => entry.function.name);
-export const sdkDescription = body => body.tools.find(entry => entry.function.name === 'run_code')?.function.description;
 export function savedResult(message, id) {
     assert.equal(message.role, 'tool');
     assert.equal(message.content.length, 1);
@@ -63,8 +62,7 @@ export function savedResult(message, id) {
 function output(result) { return result.result ?? result; }
 
 export async function strictGeneratedTypes(consumer, body, prefix, hasDetail = false) {
-    const description = sdkDescription(body);
-    const declaration = description.slice(description.indexOf('type JsonValue ='));
+    const declaration = consoleDeclaration(body);
     const source = join(consumer, prefix + '-declaration.ts');
     await writeFile(source, declaration + '\n' + [
         'export {};',
@@ -150,8 +148,8 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         { items: original, literal: itemAddress, meta: [2, null] },
         { item: original[0], items: [original[1], original[0], original[1]] },
     ]);
-    const declaration = sdkDescription(cross.body);
-    assert.match(declaration, /console_tasks-native_only.+\$.properties.constant.const/);
+    const declaration = consoleBindings(cross.body);
+    assert.match(declaration, /console_tasks-native_only.+\$\.properties\.constant(?:\.anyOf\[0\])?\.const/);
     assert.ok(names(cross.body).includes(tool('native_only')));
     for (const hidden of ['phone', 'private_rows', 'team_rows']) assert.equal(declaration.includes(hidden), false);
     assert.equal(JSON.stringify(cross.body).includes('SYNTHETIC_PHONE_NEVER_PUBLISHED'), false);
@@ -189,7 +187,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
             ? 'inspect(refs.console_catalog.list.todos[0].title); inspect(typeof refs.console_catalog.list.people);' : attempt;
         const id = 'scope-' + label.replaceAll(' ', '-');
         const narrowed = await step('publish scope revoked with ' + label + ' imports', codeCall(id, code, imports), () => moveScope(id, true));
-        assert.match(sdkDescription(narrowed.body), /readonly email: string/);
+        assert.match(consoleBindings(narrowed.body), /readonly email: string/);
         if (label === 'empty') assert.deepEqual(narrowed.result.output, ['0']);
         else if (label === 'other field') assert.deepEqual(narrowed.result.output, [changed[0].title, 'undefined']);
         else {
@@ -232,7 +230,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         'await tools["console_tasks-edit"]({view_id:"detail_1",value:"$original literal"});'));
     assert.ok(names(next.body).includes(tool('edit')));
     assert.equal(next.body.messages.filter(message => message.role === 'tool' && message.tool_call_id === 'open-detail').length, 1);
-    assert.match(sdkDescription(next.body), /"console_tasks-edit".+view_id: string/);
+    assert.match(consoleBindings(next.body), /"console_tasks-edit".+view_id: string/);
     if (declarationFolder) summary.detailStrict = await strictGeneratedTypes(declarationFolder, next.body, 'actual-b8-edit', true);
     const native = await step('unsupported schema stays native', modelCall('native-only', tool('native_only'), { constant: { mark: 'native' } }));
     assert.equal(native.result.saved, true);

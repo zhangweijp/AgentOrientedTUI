@@ -29,7 +29,7 @@ import { debounce } from '../utils/debounce.js';
 import { Logger } from '../utils/logger.js';
 import { LLMClient, inputBudgetExceeded } from './llm-client.js';
 import { ProviderToolSchemaError } from './provider-tool-schema.js';
-import { assembleContextRegions } from './context-regions.js';
+import { assembleContextRegions, getClientToolCallIds, getToolResultIds } from './context-regions.js';
 
 const REQUEST_SKIPPED = Symbol('model request skipped');
 const TOOL_TURN_CLOSED = Symbol('tool turn closed');
@@ -67,21 +67,20 @@ function createToolTurn() {
 
 type ToolTurn = ReturnType<typeof createToolTurn>;
 
-function toolIds(message: MessageWithTimestamp, type: 'tool-call' | 'tool-result'): string[] {
-    if (!Array.isArray(message.content)) return [];
-    return message.content.flatMap(part => part.type === type && 'toolCallId' in part ? [part.toolCallId] : []);
-}
-
 function recoveryHistory(messages: readonly MessageWithTimestamp[]): MessageWithTimestamp[] {
     const history = messages.filter(message => message.region === undefined || message.region === 'session')
         .sort((a, b) => b.timestamp - a.timestamp);
     const user = history.find(message => message.role === 'user');
     const lastResult = history.findIndex(message => message.role === 'tool');
     const result = history[lastResult];
-    const ids = result ? new Set(toolIds(result, 'tool-result')) : undefined;
-    const call = ids && history.find((message, index) => index > lastResult &&
-        message.role === 'assistant' && toolIds(message, 'tool-call').some(id => ids.has(id)));
-    return messages.filter(message => message.role === 'system' || message === user || (!!call && (message === call || message === result)));
+    const ids = result ? new Set(getToolResultIds(result)) : undefined;
+    const callIndex = ids ? history.findIndex((message, index) => index > lastResult &&
+        getClientToolCallIds(message).some(id => ids.has(id))) : -1;
+    const call = history[callIndex];
+    const clientIds = new Set(call ? getClientToolCallIds(call) : []);
+    const paired = new Set(call ? history.slice(0, callIndex).filter(message =>
+        getToolResultIds(message).some(id => clientIds.has(id))) : []);
+    return messages.filter(message => message.role === 'system' || message === user || message === call || paired.has(message));
 }
 
 /**
@@ -217,26 +216,6 @@ export class AgentDriverV2 {
 
         const normalized = assembleContextRegions(normalizedTimedMessages);
 
-        const getToolCallIds = (message: ModelMessage): string[] => {
-            if (message.role !== 'assistant' || !Array.isArray(message.content)) {
-                return [];
-            }
-
-            return message.content
-                .filter((part: any) => part?.type === 'tool-call' && typeof part.toolCallId === 'string')
-                .map((part: any) => part.toolCallId as string);
-        };
-
-        const getToolResultIds = (message: ModelMessage): string[] => {
-            if (message.role !== 'tool' || !Array.isArray(message.content)) {
-                return [];
-            }
-
-            return message.content
-                .filter((part: any) => part?.type === 'tool-result' && typeof part.toolCallId === 'string')
-                .map((part: any) => part.toolCallId as string);
-        };
-
         const toolMessages = normalized.filter((message) => message.role === 'tool');
         const nonToolMessages = normalized.filter((message) => message.role !== 'tool');
         const usedToolMessages = new Set<number>();
@@ -245,23 +224,17 @@ export class AgentDriverV2 {
         for (const message of nonToolMessages) {
             reordered.push(message);
 
-            const toolCallIds = getToolCallIds(message);
+            const toolCallIds = getClientToolCallIds(message);
             if (toolCallIds.length === 0) {
                 continue;
             }
 
-            const toolIndex = toolMessages.findIndex((toolMessage, index) => {
-                if (usedToolMessages.has(index)) {
-                    return false;
+            toolMessages.forEach((toolMessage, index) => {
+                if (!usedToolMessages.has(index) && getToolResultIds(toolMessage).some(id => toolCallIds.includes(id))) {
+                    usedToolMessages.add(index);
+                    reordered.push(toolMessage);
                 }
-                const toolResultIds = getToolResultIds(toolMessage);
-                return toolResultIds.some((id) => toolCallIds.includes(id));
             });
-
-            if (toolIndex >= 0) {
-                usedToolMessages.add(toolIndex);
-                reordered.push(toolMessages[toolIndex]);
-            }
         }
 
         for (let index = 0; index < toolMessages.length; index += 1) {
@@ -276,7 +249,7 @@ export class AgentDriverV2 {
         for (const message of reordered) {
             if (message.role === 'assistant') {
                 protocolSafe.push(message);
-                const callIds = getToolCallIds(message);
+                const callIds = getClientToolCallIds(message);
                 pendingToolCallIds = callIds.length > 0 ? new Set(callIds) : null;
                 continue;
             }
@@ -294,10 +267,10 @@ export class AgentDriverV2 {
 
                 const pendingIds = pendingToolCallIds;
 
-                const matchedParts = (message.content as any[]).filter((part: any) => (
+                const matchedParts = message.content.filter(part => (
                     part?.type === 'tool-result'
                     && typeof part.toolCallId === 'string'
-                    && pendingIds.has(part.toolCallId)
+                    && pendingIds.delete(part.toolCallId)
                 ));
 
                 if (matchedParts.length === 0) {
@@ -305,14 +278,10 @@ export class AgentDriverV2 {
                     continue;
                 }
 
-                for (const part of matchedParts as any[]) {
-                    pendingToolCallIds.delete(part.toolCallId);
-                }
-
                 protocolSafe.push({
                     ...message,
                     content: matchedParts,
-                } as ModelMessage);
+                });
                 continue;
             }
 
@@ -674,7 +643,7 @@ export class AgentDriverV2 {
                     type: 'tool-call' as const, toolName: call.toolName, toolCallId: call.toolCallId, input: call.args,
                 })),
             } : undefined);
-            if (response.toolCalls.length) this.toolTurn = turn = createToolTurn();
+            if (response.toolCalls.length || response.toolMessages?.length) this.toolTurn = turn = createToolTurn();
             if (assistant && this.config.onAssistantMessage) {
                 this.logger.debug('Emitting onAssistantMessage event');
                 this.config.onAssistantMessage(assistant);
@@ -688,8 +657,15 @@ export class AgentDriverV2 {
                 })();
             }
 
+            // SDK-completed protocol operations have no Source execution receipt.
+            for (const toolMessage of response.toolMessages ?? []) await this.config.onToolResult?.(toolMessage, []);
+            if (turn && response.toolCalls.length === 0) {
+                turn.delivered();
+                this.toolTurn = undefined;
+            }
+
             // 3. 如果有 ToolCalls
-            if (turn && assistant) {
+            if (turn && assistant && response.toolCalls.length > 0) {
                 await this.setState('executing');
 
                 this.logger.info(`Executing ${response.toolCalls.length} tool calls...`);

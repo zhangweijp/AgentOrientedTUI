@@ -380,8 +380,8 @@ try {
     const idleDeadline = Date.now() + 3_000;
     while (session && session.agentDriver.getState() !== 'idle' && Date.now() < idleDeadline) await sleep(25);
     await cleanupStep('session', async () => { await manager?.cleanup(); });
-    await cleanupStep('runtime', async () => { await runtime?.shutdown(); });
-    await cleanupStep('module-runtime', async () => { await moduleRuntime?.shutdown(); });
+    await cleanupStep('runtime', async () => { await runtime?.beginClose().completion; });
+    await cleanupStep('module-runtime', async () => { await moduleRuntime?.beginClose().completion; });
     await cleanupStep('database', () => { database?.closeDatabase(); });
     await cleanupStep('temporary-files', async () => { if (work) await fs.rm(work, { recursive: true, force: true }); });
     facts.elapsedMs = Date.now() - startedAt;

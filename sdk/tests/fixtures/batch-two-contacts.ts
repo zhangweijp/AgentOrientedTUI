@@ -2,7 +2,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { arrayRef, createApp, createView, defineViewType, formatRef } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, defineViewType, formatRef } from '@aotui/sdk';
 
 const List = defineViewType({ name: 'list', multiplicity: 'single', region: 'dynamic' });
 type Contacts = { emails: string[]; scope?: 'public' | 'protected'; withdrawn?: boolean };

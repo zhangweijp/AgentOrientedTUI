@@ -1,6 +1,6 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import Type from 'typebox';
-import { createApp, createView, defineViewType, ref, type JsonValue, type ToolResult } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, ref, type JsonValue, type ToolResult } from '@aotui/sdk';
 
 type Context = { mode: string; write(tool: string, input: Readonly<Record<string, JsonValue>>): ToolResult };
 const object = <T extends Type.TProperties>(properties: T) => Type.Object(properties, { additionalProperties: false });

@@ -8,11 +8,26 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SettingsPanel } from './SettingsPanel.js';
 import { SettingsSidebar } from './SettingsSidebar.js';
 import { ModelTab } from './ModelTab.js';
 import { ThemeTab } from './ThemeTab.js';
+import { AddProviderModal } from './AddProviderModal.js';
+
+vi.mock('../../hooks/useProviderConfigs.js', async importOriginal => ({
+    ...await importOriginal<typeof import('../../hooks/useProviderConfigs.js')>(),
+    useProviderConfigs: () => ({ providers: [], activeProviderId: null, isLoading: false, error: null }),
+}));
+vi.mock('../../hooks/useCustomProviders.js', () => ({
+    useCustomProviders: () => ({ customProviders: [], isLoading: false }),
+}));
+vi.mock('../../hooks/useModels.js', () => ({
+    useModels: () => ({ models: [], activeModelId: null, isLoading: false }),
+}));
+vi.mock('../../ChatBridge.js', () => ({
+    useChatBridge: () => ({ getTrpcClient: () => ({ modelRegistry: { getProviders: { query: async () => [] } } }) }),
+}));
 
 describe('Responsive Behavior', () => {
     const defaultProps = {
@@ -38,17 +53,15 @@ describe('Responsive Behavior', () => {
             const { container } = render(<SettingsPanel {...defaultProps} />);
 
             const panel = container.querySelector('[role="dialog"] > div');
-            expect(panel?.className).toContain('max-w-[900px]');
+            expect(panel?.className).toContain('max-w-[1100px]');
         });
 
         it('should have responsive margins', () => {
             const { container } = render(<SettingsPanel {...defaultProps} />);
 
             const panel = container.querySelector('[role="dialog"] > div');
-            // Should have mx-4 for mobile, sm:mx-6 for small screens, md:mx-8 for medium+
             expect(panel?.className).toContain('mx-4');
             expect(panel?.className).toContain('sm:mx-6');
-            expect(panel?.className).toContain('md:mx-8');
         });
 
         it('should have full width', () => {
@@ -101,7 +114,7 @@ describe('Responsive Behavior', () => {
             );
 
             const sidebar = container.querySelector('nav');
-            expect(sidebar?.className).toContain('md:w-[200px]');
+            expect(sidebar?.className).toContain('md:w-[160px]');
         });
 
         it('should have responsive padding', () => {
@@ -110,8 +123,8 @@ describe('Responsive Behavior', () => {
             );
 
             const sidebar = container.querySelector('nav');
-            expect(sidebar?.className).toContain('p-3');
-            expect(sidebar?.className).toContain('md:p-4');
+            expect(sidebar?.className).toContain('p-2');
+            expect(screen.getByRole('tab', { name: 'Model' })).toHaveClass('px-3', 'md:px-4');
         });
 
         it('should have responsive button layout', () => {
@@ -131,12 +144,11 @@ describe('Responsive Behavior', () => {
             expect(modelButton?.className).toContain('md:justify-start');
         });
 
-        it('should have responsive text size', () => {
+        it('should use readable text sizing on mobile and desktop', () => {
             const { container } = render(<SettingsSidebar activeTab="model" onTabChange={vi.fn()} />);
 
             const modelText = container.querySelector('span');
-            expect(modelText?.className).toContain('text-xs');
-            expect(modelText?.className).toContain('md:text-sm');
+            expect(modelText).toHaveClass('text-[13px]');
         });
 
         it('should have border on bottom for mobile, right for desktop', () => {
@@ -159,12 +171,8 @@ describe('Responsive Behavior', () => {
         });
 
         it('should have responsive padding in content area', () => {
-            const { container } = render(<SettingsPanel {...defaultProps} />);
-
-            const contentArea = container.querySelector('.overflow-y-auto');
-            expect(contentArea?.className).toContain('p-4');
-            expect(contentArea?.className).toContain('sm:p-6');
-            expect(contentArea?.className).toContain('md:p-8');
+            render(<SettingsPanel {...defaultProps} />);
+            expect(screen.getByRole('tabpanel').parentElement).toHaveClass('p-5', 'sm:p-6');
         });
 
         it('should allow content to scroll when it exceeds viewport', () => {
@@ -186,87 +194,25 @@ describe('Responsive Behavior', () => {
     });
 
     describe('ModelTab responsive layout', () => {
-        it('should have responsive header layout', () => {
-            const { container } = render(<ModelTab />);
-
-            // Find any div with flex-col class (header container)
-            const header = container.querySelector('[class*="flex-col"]');
-            expect(header).toBeTruthy();
+        it('puts the provider search below its heading on mobile and beside it on larger screens', () => {
+            render(<ModelTab />);
+            const heading = screen.getByRole('heading', { name: 'Providers' });
+            expect(heading).toHaveClass('text-[11px]', 'sm:text-[13px]');
+            expect(heading.parentElement).toHaveClass('flex-col', 'sm:grid', 'sm:grid-cols-[1fr_auto]');
+            expect(within(heading.parentElement!).getByRole('textbox', { name: 'Search providers' })).toBeInTheDocument();
         });
 
-        it('should have responsive heading size', () => {
+        it('increases the spacing between sections for larger viewports', () => {
             const { container } = render(<ModelTab />);
-
-            // Find heading with responsive text size
-            const heading = container.querySelector('h2');
-            // May be null if database not initialized, but if it exists, should have responsive classes
-            if (heading) {
-                expect(heading.className).toContain('text-[17px]');
-                expect(heading.className).toContain('sm:text-[22px]');
-                expect(heading.className).toContain('md:text-[28px]');
-            } else {
-                // If no heading found, test passes (database not initialized scenario)
-                expect(true).toBe(true);
-            }
+            expect(container.firstElementChild).toHaveClass('gap-4', 'sm:gap-5', 'md:gap-6');
         });
 
-        it('should have responsive spacing between sections', () => {
-            const { container } = render(<ModelTab />);
-
-            const mainContainer = container.querySelector('[class*="gap-"]');
-            if (mainContainer) {
-                expect(mainContainer.className).toContain('gap-4');
-                expect(mainContainer.className).toContain('sm:gap-5');
-                expect(mainContainer.className).toContain('md:gap-6');
-            }
-        });
-
-        it('should have responsive section headings', () => {
-            const { container } = render(<ModelTab />);
-
-            const sectionHeading = container.querySelector('h3');
-            if (sectionHeading) {
-                expect(sectionHeading.className).toContain('text-xs');
-                expect(sectionHeading.className).toContain('sm:text-sm');
-            }
-        });
-
-        it('should use single column grid on mobile', () => {
-            const { container } = render(<ModelTab />);
-
-            // Find the grid container (it might not exist if no configs, so check for the class pattern)
-            const gridContainer = container.querySelector('[class*="grid-cols-1"]');
-            if (gridContainer) {
-                expect(gridContainer.className).toContain('grid-cols-1');
-            }
-        });
-
-        it('should use two column grid on small screens', () => {
-            const { container } = render(<ModelTab />);
-
-            const gridContainer = container.querySelector('[class*="grid-cols"]');
-            if (gridContainer) {
-                expect(gridContainer.className).toContain('sm:grid-cols-2');
-            }
-        });
-
-        it('should use three column grid on large screens', () => {
-            const { container } = render(<ModelTab />);
-
-            const gridContainer = container.querySelector('[class*="grid-cols"]');
-            if (gridContainer) {
-                expect(gridContainer.className).toContain('lg:grid-cols-3');
-            }
-        });
-
-        it('should have responsive gap between cards', () => {
-            const { container } = render(<ModelTab />);
-
-            const gridContainer = container.querySelector('[class*="grid-cols"]');
-            if (gridContainer) {
-                expect(gridContainer.className).toContain('gap-3');
-                expect(gridContainer.className).toContain('sm:gap-4');
-            }
+        it('shows model search below its heading when no provider is selected', () => {
+            render(<ModelTab />);
+            const heading = screen.getByRole('heading', { name: 'Models Of Provider' });
+            expect(heading).toHaveClass('text-[11px]', 'sm:text-[13px]');
+            expect(heading.parentElement).toHaveClass('flex-col', 'sm:grid', 'sm:grid-cols-[1fr_auto]');
+            expect(within(heading.parentElement!).getByRole('textbox', { name: 'Search models' })).toBeDisabled();
         });
     });
 
@@ -275,18 +221,15 @@ describe('Responsive Behavior', () => {
             const { container } = render(<ThemeTab currentTheme="dark" onThemeChange={vi.fn()} />);
 
             const heading = container.querySelector('h2');
-            expect(heading?.className).toContain('text-[17px]');
-            expect(heading?.className).toContain('sm:text-[22px]');
-            expect(heading?.className).toContain('md:text-[28px]');
+            expect(heading).toHaveClass('text-[22px]');
+            expect(heading?.parentElement).toHaveClass('text-center', 'sm:text-left');
         });
 
         it('should have responsive padding', () => {
             const { container } = render(<ThemeTab currentTheme="dark" onThemeChange={vi.fn()} />);
 
             const mainContainer = container.querySelector('.flex-col');
-            expect(mainContainer?.className).toContain('p-4');
-            expect(mainContainer?.className).toContain('sm:p-6');
-            expect(mainContainer?.className).toContain('md:p-8');
+            expect(mainContainer).toHaveClass('p-2', 'max-w-[800px]', 'mx-auto');
         });
 
         it('should use single column on mobile', () => {
@@ -313,95 +256,75 @@ describe('Responsive Behavior', () => {
             );
 
             const grid = container.querySelector('[class*="grid-cols"]');
-            expect(grid?.className).toContain('gap-3');
-            expect(grid?.className).toContain('sm:gap-4');
-            expect(grid?.className).toContain('md:gap-6');
+            expect(grid).toHaveClass('gap-4');
         });
 
         it('should have responsive margin bottom on header', () => {
             const { container } = render(<ThemeTab currentTheme="dark" onThemeChange={vi.fn()} />);
 
-            const header = container.querySelector('.mb-4');
-            expect(header?.className).toContain('mb-4');
-            expect(header?.className).toContain('sm:mb-6');
+            const header = container.querySelector('.mb-6');
+            expect(header).toContainElement(screen.getByRole('heading', { name: 'Appearance' }));
         });
     });
 
     describe('Responsive form elements', () => {
-        it('should have responsive button layout in forms', () => {
+        it('lets users open Add Provider from the normal Model settings flow', () => {
             render(<ModelTab />);
-
-            // The "Add Provider" button should have flex and items-center classes
-            // Note: May show error if database not initialized, but button structure should still be testable
-            const buttons = screen.queryAllByRole('button');
-            expect(buttons.length).toBeGreaterThan(0);
+            const trigger = screen.getByRole('button', { name: 'Add new provider' });
+            fireEvent.click(trigger);
+            expect(screen.getByRole('dialog', { name: 'Add Provider' })).toBeInTheDocument();
         });
 
-        it('should center buttons on mobile', () => {
+        it('keeps form actions aligned and reachable on narrow screens', () => {
             render(<ModelTab />);
-
-            // Buttons should have justify-center class
-            const buttons = screen.queryAllByRole('button');
-            expect(buttons.length).toBeGreaterThan(0);
-        });
-    });
-
-    describe('ModelCard responsive layout', () => {
-        it('should have responsive text sizes', () => {
-            // ModelCard should have responsive text sizing for model name and details
-            // This is tested through the component's className patterns
-            expect(true).toBe(true); // Placeholder - actual test would require rendering with mock data
+            fireEvent.click(screen.getByRole('button', { name: 'Add new provider' }));
+            const dialog = screen.getByRole('dialog', { name: 'Add Provider' });
+            const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+            const submit = within(dialog).getByRole('button', { name: 'Add Provider' });
+            expect(cancel.parentElement).toHaveClass('flex', 'justify-end', 'gap-3');
+            expect(submit.parentElement).toBe(cancel.parentElement);
         });
 
-        it('should stack pricing info vertically on mobile', () => {
-            // ModelCard pricing should stack vertically on mobile (flex-col) and horizontally on desktop (sm:flex-row)
-            expect(true).toBe(true); // Placeholder - actual test would require rendering with mock data
-        });
+        it('validates and saves through the native form submit path', async () => {
+            const onSaveCustom = vi.fn(async () => {});
+            const onClose = vi.fn();
+            render(<AddProviderModal isOpen onClose={onClose} onSave={vi.fn(async () => {})} onSaveCustom={onSaveCustom} />);
+            fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
 
-        it('should have responsive badge spacing', () => {
-            // Capability badges should have smaller spacing on mobile
-            expect(true).toBe(true); // Placeholder - actual test would require rendering with mock data
-        });
-    });
+            const url = screen.getByRole('textbox', { name: /base url/i });
+            const submit = screen.getByRole('button', { name: 'Create Provider' });
+            fireEvent.change(screen.getByRole('textbox', { name: /provider name/i }), { target: { value: 'Local provider' } });
+            fireEvent.change(url, { target: { value: 'ftp://localhost' } });
+            expect(submit).toHaveAttribute('type', 'submit');
+            const form = url.closest('form')!;
+            expect(form).toContainElement(submit);
+            fireEvent.submit(form);
 
-    describe('ProviderCard responsive layout', () => {
-        it('should adjust card width for narrow viewports', () => {
-            // ProviderCard uses clamp() for responsive width
-            expect(true).toBe(true); // Placeholder - actual test would require rendering with mock data
-        });
+            expect(onSaveCustom).not.toHaveBeenCalled();
+            expect(url).toHaveAttribute('aria-invalid', 'true');
+            expect(url).toHaveAccessibleDescription('Base URL must start with http:// or https://');
 
-        it('should maintain minimum width on mobile', () => {
-            // ProviderCard should have minimum width of 100px
-            expect(true).toBe(true); // Placeholder - actual test would require rendering with mock data
+            fireEvent.change(url, { target: { value: 'https://localhost/v1' } });
+            expect(url).not.toHaveAttribute('aria-invalid');
+            fireEvent.submit(form);
+            await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+            expect(onSaveCustom).toHaveBeenCalledExactlyOnceWith({
+                name: 'Local provider', baseUrl: 'https://localhost/v1', protocol: 'openai', apiKey: undefined,
+            });
         });
     });
 
     describe('Scrollable areas responsive behavior', () => {
-        it('should have touch-friendly scrolling on mobile', () => {
+        it('keeps the provider row horizontally scrollable and vertically constrained', () => {
             const { container } = render(<ModelTab />);
-
-            // Provider row and model list should have -webkit-overflow-scrolling: touch
-            const scrollableAreas = container.querySelectorAll('[style*="overflow"]');
-            expect(scrollableAreas.length).toBeGreaterThan(0);
+            const row = container.querySelector('.provider-row-scroll');
+            expect(row).toHaveStyle({ overflowX: 'auto', overflowY: 'hidden' });
         });
 
-        it('should adjust max height based on viewport', () => {
+        it('scales provider card gaps with the viewport', () => {
             const { container } = render(<ModelTab />);
-
-            // Model list should use clamp() for responsive max-height
-            const modelList = container.querySelector('.model-list-scroll');
-            if (modelList) {
-                const style = (modelList as HTMLElement).style;
-                expect(style.maxHeight).toBeTruthy();
-            }
-        });
-
-        it('should have responsive gap in scrollable areas', () => {
-            const { container } = render(<ModelTab />);
-
-            // Scrollable areas should use clamp() for responsive gaps
-            const scrollableAreas = container.querySelectorAll('[style*="gap"]');
-            expect(scrollableAreas.length).toBeGreaterThan(0);
+            const row = container.querySelector('.provider-row-scroll') as HTMLElement;
+            expect(row.style.gap).toBe('clamp(12px, 2vw, 16px)');
         });
     });
 

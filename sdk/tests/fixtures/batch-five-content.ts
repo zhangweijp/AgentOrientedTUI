@@ -27,5 +27,5 @@ export const RAW_VIEWS = {
     raw: RAW, split_raw: RAW_PARTS.join(''), whitespace: SPACES, author_table: AUTHOR_TABLE,
 } as const;
 
-export const PREACT_APP = 'stock_preact';
+export const STOCK_APP = 'stock_inventory';
 export const PLAIN_APP = 'stock_plain';

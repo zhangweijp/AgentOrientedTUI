@@ -1,54 +1,14 @@
-/**
- * @aotui/sdk - component application entry for the current Preact Runtime.
- *
- * The package README shows how to build and run an App.
- *
- * Preact's useRef is a state hook; useDataRef declares application data references.
- */
-export { StaticView, DynamicView, defineViewType, type ViewProps } from './components/View.js';
-export { ViewRegion, ViewMultiplicity, type RefScope } from '@aotui/core';
-export {
-  useState,
-  useCallback,
-  useEffect,
-  useRef,
-  useMemo,
-  useReducer,
-} from 'preact/hooks';
-export { createTUIApp, type TUIAppConfig } from './app-factory/createTUIApp.js';
-export type { TUIAppFactory } from './app-factory/app-factory.js';
-export { useAppLifecycle, type AppLifecycleCallbacks } from './hooks/useAppLifecycle.js';
-export { useAppRuntimeContext } from './context/AppRuntimeContext.js';
-export { useDataRef, type RefHandle } from './hooks/useRef.js';
-export {
-  useArrayRef,
-  type ArrayRefHandle,
-  type ListRefFormatter,
-  type ItemRefFormatter,
-} from './hooks/useArrayRef.js';
-export { refParam } from './tools/view-type-tool.js';
+export { createApp, createView } from './app-factory/createApp.js';
+export type { AppAuthorContext, CreateAppConfig, TUIAppFactory, ViewHandle } from './app-factory/createApp.js';
+export { ref, arrayRef, formatRef } from './app-factory/refs.js';
+export type { PublishedRef, RefOptions, ArrayRefOptions } from './app-factory/refs.js';
+export { defineViewType, refParam } from './tools/view-type-tool.js';
 export type {
-  ArgsOf,
-  DeepReadonly,
-  JsonSchemaObject,
-  ViewType,
-  ContextualViewType,
-  ContextToolMetadata,
+    ArgsOf, ContextualViewType, ContextToolMetadata, DeepReadonly, JsonSchemaObject, RefParameter, ViewType,
 } from './tools/view-type-tool.js';
+export type { StandardJSONSchemaV1 } from './tools/schema-types.js';
+export { AOTUIError, ViewRegion, ViewMultiplicity } from '@aotui/core';
 export type {
-  AppID,
-  DesktopID,
-  ToolError,
-  ToolResult,
-  AppContext,
-  ProjectionLimits,
-  AppStatePersistence,
-  StateValue,
-  StatePersistenceOptions,
-  StateFlushReport,
-  StateIssue,
+    AppID, AppLifecycleCallbacks, DesktopID, JsonValue, OpeningProjectionResult,
+    PreparedProjection, ProjectionLimits, RefScope, ToolError, ToolResult,
 } from '@aotui/core';
-export { AOTUIError } from '@aotui/core';
-
-export { formatRef } from './app-factory/refs.js';
-export type { RefOptions } from './app-factory/refs.js';

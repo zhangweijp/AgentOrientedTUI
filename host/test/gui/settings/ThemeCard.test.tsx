@@ -16,7 +16,7 @@ describe('ThemeCard', () => {
             );
             
             // Check for checkmark SVG path
-            const checkmark = container.querySelector('svg path[d="M20 6L9 17l-5-5"]');
+            const checkmark = container.querySelector('svg[aria-hidden="true"] polyline');
             expect(checkmark).toBeTruthy();
         });
 
@@ -26,7 +26,7 @@ describe('ThemeCard', () => {
             );
             
             // Check for checkmark SVG path
-            const checkmark = container.querySelector('svg path[d="M20 6L9 17l-5-5"]');
+            const checkmark = container.querySelector('svg[aria-hidden="true"] polyline');
             expect(checkmark).toBeFalsy();
         });
 
@@ -37,8 +37,8 @@ describe('ThemeCard', () => {
             
             // Find the button wrapper (first child)
             const button = container.firstChild as HTMLElement;
-            expect(button.className).toContain('ring-2');
-            expect(button.className).toContain('border-[var(--ac-blue)]');
+            expect(button.className).toContain('shadow-[0_0_0_1px_var(--color-accent)]');
+            expect(button.className).toContain('border-[var(--color-accent)]');
         });
 
         it('should apply default border when inactive', () => {
@@ -49,8 +49,8 @@ describe('ThemeCard', () => {
             // Find the button wrapper (first child)
             const button = container.firstChild as HTMLElement;
             expect(button.className).toContain('border');
-            expect(button.className).toContain('border-[var(--lg-border)]');
-            expect(button.className).not.toContain('ring-2');
+            expect(button.className).toContain('border-[var(--mat-border)]');
+            expect(button.className).not.toContain('shadow-[0_0_0_1px_var(--color-accent)]');
         });
     });
 
@@ -90,7 +90,7 @@ describe('ThemeCard', () => {
             const preview = container.querySelector('[style*="background-color"]') as HTMLElement;
             expect(preview).toBeTruthy();
             const bgColor = preview.style.backgroundColor.toLowerCase();
-            expect(bgColor === '#0a0a0a' || bgColor === 'rgb(10, 10, 10)').toBe(true);
+            expect(bgColor === '#1c1c1e' || bgColor === 'rgb(28, 28, 30)').toBe(true);
         });
 
         it('should display light theme preview colors', () => {
@@ -102,7 +102,7 @@ describe('ThemeCard', () => {
             const preview = container.querySelector('[style*="background-color"]') as HTMLElement;
             expect(preview).toBeTruthy();
             const bgColor = preview.style.backgroundColor.toLowerCase();
-            expect(bgColor === '#ffffff' || bgColor === 'rgb(255, 255, 255)').toBe(true);
+            expect(bgColor === '#f5f5f7' || bgColor === 'rgb(245, 245, 247)').toBe(true);
         });
 
         it('should display "Dark" label for dark theme', () => {
@@ -115,14 +115,15 @@ describe('ThemeCard', () => {
             expect(screen.getByText('Light')).toBeTruthy();
         });
 
-        it('should display preview text in theme card', () => {
+        it('keeps decorative preview content out of the accessible name', () => {
             render(<ThemeCard theme="dark" isActive={false} onSelect={() => {}} />);
-            expect(screen.getByText('Preview Text')).toBeTruthy();
+            const card = screen.getByRole('radio', { name: 'Dark theme' });
+            expect(card.querySelector('[aria-hidden="true"] div[style]')).toBeInTheDocument();
         });
     });
 
     describe('theme-specific styling', () => {
-        it('should apply dark theme accent color (#3B82F6)', () => {
+        it('should apply dark theme accent color (#0A84FF)', () => {
             const { container } = render(
                 <ThemeCard theme="dark" isActive={false} onSelect={() => {}} />
             );
@@ -131,12 +132,12 @@ describe('ThemeCard', () => {
             const accentElements = Array.from(container.querySelectorAll('[style*="background-color"]')) as HTMLElement[];
             const accentElement = accentElements.find(el => {
                 const bgColor = el.style.backgroundColor.toLowerCase();
-                return bgColor === '#3b82f6' || bgColor === 'rgb(59, 130, 246)';
+                return bgColor === '#0a84ff' || bgColor === 'rgb(10, 132, 255)';
             });
             expect(accentElement).toBeTruthy();
         });
 
-        it('should apply light theme accent color (#8B5CF6)', () => {
+        it('should apply light theme accent color (#007AFF)', () => {
             const { container } = render(
                 <ThemeCard theme="light" isActive={false} onSelect={() => {}} />
             );
@@ -145,7 +146,7 @@ describe('ThemeCard', () => {
             const accentElements = Array.from(container.querySelectorAll('[style*="background-color"]')) as HTMLElement[];
             const accentElement = accentElements.find(el => {
                 const bgColor = el.style.backgroundColor.toLowerCase();
-                return bgColor === '#8b5cf6' || bgColor === 'rgb(139, 92, 246)';
+                return bgColor === '#007aff' || bgColor === 'rgb(0, 122, 255)';
             });
             expect(accentElement).toBeTruthy();
         });

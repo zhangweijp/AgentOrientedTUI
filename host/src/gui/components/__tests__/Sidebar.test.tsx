@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { Sidebar } from '../Sidebar.js';
 import type { Topic } from '../../../types.js';
@@ -54,7 +54,7 @@ describe('Sidebar Component', () => {
         expect(screen.getAllByText('Current').length).toBeGreaterThan(0);
         expect(screen.getByText('Active')).toBeInTheDocument();
         expect(screen.getByText('Recent')).toBeInTheDocument();
-        expect(screen.getByText('History')).toBeInTheDocument();
+        expect(screen.getByText('Other')).toBeInTheDocument();
         expect(screen.getByText('Current Topic')).toBeInTheDocument();
     });
 
@@ -70,60 +70,46 @@ describe('Sidebar Component', () => {
         expect(defaultProps.onSelectTopic).toHaveBeenCalledWith('recent-2');
     });
 
-    it('shows recent default 3 and history default hidden, supports show more and collapse', () => {
+    it('shows three recent and other sessions by default and expands each group independently', () => {
         render(<Sidebar {...defaultProps} />);
+        const recent = screen.getByTestId('recent-list');
+        const other = screen.getByTestId('other-list');
 
-        expect(screen.getByText('Active 1')).toBeInTheDocument();
-        expect(screen.getByText('Active 2')).toBeInTheDocument();
+        expect(within(recent).getAllByText(/^Recent [1-3]$/)).toHaveLength(3);
+        expect(within(other).getAllByText(/^History [1-3]$/)).toHaveLength(3);
+        expect(within(recent).queryByText('Recent 4')).not.toBeInTheDocument();
+        expect(within(other).queryByText('History 4')).not.toBeInTheDocument();
 
-        expect(screen.getByText('Recent 1')).toBeInTheDocument();
-        expect(screen.getByText('Recent 2')).toBeInTheDocument();
-        expect(screen.getByText('Recent 3')).toBeInTheDocument();
-        expect(screen.queryByText('Recent 4')).not.toBeInTheDocument();
+        fireEvent.click(within(recent.parentElement!).getByRole('button', { name: 'Show 3 More' }));
+        expect(within(recent).getByText('Recent 6')).toBeInTheDocument();
+        expect(within(other).queryByText('History 4')).not.toBeInTheDocument();
 
-        expect(screen.queryByText('History 1')).not.toBeInTheDocument();
-        expect(screen.queryByText('History 2')).not.toBeInTheDocument();
-
-        const showMoreButtons = screen.getAllByText('Show More');
-        fireEvent.click(showMoreButtons[0]);
-        expect(screen.getByText('Recent 4')).toBeInTheDocument();
-        expect(screen.getByText('Recent 5')).toBeInTheDocument();
-        expect(screen.getByText('Recent 6')).toBeInTheDocument();
-        expect(screen.getByText('Collapse')).toBeInTheDocument();
-
-        fireEvent.click(showMoreButtons[1]);
-        expect(screen.getByText('History 1')).toBeInTheDocument();
-        expect(screen.getByText('History 5')).toBeInTheDocument();
-        expect(screen.getByText('History 6')).toBeInTheDocument();
-
-        const historyList = screen.getByTestId('history-list');
-        expect(historyList.className).toContain('max-h-[11rem]');
+        fireEvent.click(within(other.parentElement!).getByRole('button', { name: 'Show 3 More' }));
+        expect(within(other).getByText('History 6')).toBeInTheDocument();
+        expect(other).toHaveClass('max-h-[11rem]', 'overflow-y-auto');
     });
 
-    it('filters grouped sessions by search input', () => {
-        render(<Sidebar {...defaultProps} />);
-        fireEvent.change(screen.getByPlaceholderText('Search sessions...'), { target: { value: 'history 6' } });
-
-        expect(screen.getByText('History 6')).toBeInTheDocument();
-        expect(screen.queryByText('History 1')).not.toBeInTheDocument();
-        expect(screen.queryByText('Recent 1')).not.toBeInTheDocument();
-        expect(screen.queryByText('Active 1')).not.toBeInTheDocument();
+    it('moves a selected older session to Current when the active topic changes', () => {
+        const { rerender } = render(<Sidebar {...defaultProps} />);
+        fireEvent.click(within(screen.getByTestId('other-list')).getByText('History 2'));
+        expect(defaultProps.onSelectTopic).toHaveBeenCalledWith('history-2');
+        rerender(<Sidebar {...defaultProps} activeTopicId="history-2" />);
+        expect(screen.getByText('History 2')).toBeInTheDocument();
+        expect(within(screen.getByTestId('other-list')).queryByText('History 2')).not.toBeInTheDocument();
+        expect(within(screen.getByTestId('recent-list')).getByText('Current Topic')).toBeInTheDocument();
     });
 
-    it('uses 5-day boundary for Recent vs History groups', () => {
-        const boundaryTopics: Topic[] = [
-            { id: 'current', title: 'Current Topic', createdAt: now - 1000, updatedAt: now, status: 'hot' },
-            { id: 'recent-4d', title: 'Recent 4d', createdAt: now - 4 * 24 * 60 * 60 * 1000, updatedAt: now - 4 * 24 * 60 * 60 * 1000, status: 'warm' },
-            { id: 'history-6d', title: 'History 6d', createdAt: now - 6 * 24 * 60 * 60 * 1000, updatedAt: now - 6 * 24 * 60 * 60 * 1000, status: 'cold' },
+    it('groups inactive sessions on either side of the three-day threshold', () => {
+        const day = 24 * 60 * 60 * 1000;
+        const topics: Topic[] = [
+            { id: 'current', title: 'Current Topic', createdAt: now, updatedAt: now, status: 'hot' },
+            { id: 'recent', title: 'Just recent', createdAt: now - 4 * day, updatedAt: now - 3 * day + 60_000, status: 'warm' },
+            { id: 'other', title: 'Just older', createdAt: now - 3 * day - 60_000, status: 'cold' },
         ];
+        render(<Sidebar {...defaultProps} topics={topics} activeTopicIds={[]} />);
 
-        render(<Sidebar {...defaultProps} topics={boundaryTopics} activeTopicIds={[]} />);
-
-        expect(screen.getByText('Recent 4d')).toBeInTheDocument();
-        expect(screen.queryByText('History 6d')).not.toBeInTheDocument();
-
-        fireEvent.click(screen.getByText('Show More'));
-        expect(screen.getByText('History 6d')).toBeInTheDocument();
+        expect(within(screen.getByTestId('recent-list')).getByText('Just recent')).toBeInTheDocument();
+        expect(within(screen.getByTestId('other-list')).getByText('Just older')).toBeInTheDocument();
     });
 
     it('hides content when closed', () => {
