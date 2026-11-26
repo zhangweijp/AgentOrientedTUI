@@ -33,7 +33,7 @@ Dependency direction in the codebase is:
 - `runtime` can be consumed independently of `agent-driver-v2`
 - `sdk`, `runtime`, and `agent-driver-adapter` depend on `core`
 - `host` depends on `agent-driver-v2`, `agent-driver-adapter`, `runtime`, and `sdk`
-- App authoring uses `sdk` and the peers required by the chosen authoring entry
+- App authoring uses `sdk` and the business declaration dependencies it uses
 
 Manual build order:
 
@@ -51,7 +51,7 @@ agent-driver-adapter + runtime -> host
 | `agent-driver-v2/` | LLM execution layer: provider setup, streaming, message aggregation, and tool-call orchestration. |
 | `core/` | Portable projection, snapshot, Ref, observation, and Tool invocation semantics. |
 | `runtime/` | Installed App instances, Workers, Desktop lifecycle, and View exposure. |
-| `sdk/` | Author API for TypeScript and Preact, including View types, Refs, and Tools. |
+| `sdk/` | Author API for TypeScript, including View types, Refs, and Tools. |
 | `host/` | Electron desktop shell, web UI, local services, App catalog, npm installs, and the `agentina` CLI. |
 | `demo-apps/` | Reference apps that run on the stack. The setup scripts auto-install `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` by default. |
 | `scripts/` | Repo-level helper scripts for builds, verification, and local release. |
@@ -70,7 +70,7 @@ Use `pnpm -C <folder> …` for individual sibling packages. The root provides `p
 3. **Core**
    Defines the projection, observation, Ref and invocation rules shared across authoring and execution.
 4. **SDK**
-   The app authoring model. It provides `createTUIApp()`, component primitives, hooks, refs, and typed Tools for building agent-facing apps.
+   The app authoring model. It provides `createApp`, `createView`, typed Refs and Tools for building agent-facing apps.
 5. **Apps**
    Concrete system or demo apps built with the SDK and executed through the runtime/host stack.
 6. **Agent Driver**
@@ -89,7 +89,7 @@ Use `pnpm -C <folder> …` for individual sibling packages. The root provides `p
 
 - Agent driver: `agent-driver-v2/src/core/agent-driver-v2.ts`, `agent-driver-v2/src/core/llm-client.ts`
 - Runtime: `runtime/src/facades/facades.ts`, `runtime/src/kernel/index.ts`
-- SDK: `sdk/src/app-factory/createTUIApp.ts`, `sdk/src/components/View.tsx`
+- SDK: `sdk/src/index.ts`, `sdk/src/app-factory/createApp.ts`
 - Host: `host/src/`
 - Agentina CLI and App distribution: `host/src/app-distribution/`
 - App manifests: `sdk/bin/generate-aoapp.mjs`, shipped as the SDK's `generate-aoapp` command
@@ -103,12 +103,11 @@ Core stack:
 - **Runtime / platform**: Node.js, Electron, Worker Threads
 - **UI**:
   - `host/` uses React 19, Vite, Tailwind CSS 4, and related UI libraries
-  - `sdk/` and app-side authoring center on Preact
-- **Agent / model integration**: Vercel AI SDK (`ai`) and provider packages such as `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/xai`
+  - SDK Apps publish Markdown through TypeScript View handles
+- **Agent / model integration**: Vercel AI SDK (`ai`) and provider packages such as `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google` and `@ai-sdk/openai-compatible`
 - **App Tool and Ref schemas** use TypeBox and JSON Schema.
 - **Testing**: `vitest` across most packages; `demo-apps/aotui-ide` currently uses `jest`
 - **Build tooling**: `tsc`, Vite, `electron-builder`
-- **DOM simulation / rendering helpers**: `linkedom`, `happy-dom`, `preact-render-to-string`
 - **CLI / app distribution helpers**: `agentina`, `npm link`, and generated `aoapp.json` manifests
 
 ### Stack By Layer
@@ -117,10 +116,10 @@ Core stack:
 | --- | --- |
 | `host/` | Electron, React 19, Vite, Tailwind CSS 4, TRPC, Express, SQLite-related tooling |
 | `core/` | TypeScript, JSON Schema validation, platform-standard encoding and timers |
-| `runtime/` | Node.js, Worker Threads, application and storage backends |
-| `sdk/` | TypeScript, Preact, `@preact/signals`, `linkedom`, TypeBox |
+| `runtime/` | Node.js, Worker Threads, and local process execution |
+| `sdk/` | TypeScript and JSON Schema authoring with TypeBox |
 | `agent-driver-v2/` | Vercel AI SDK (`ai`), native and compatible Provider routes, including xAI through the Responses adapter |
-| `demo-apps/` | TypeScript + SDK-based app packages; mostly Preact-powered app definitions |
+| `demo-apps/` | TypeScript App packages with their own business services |
 
 ### Why This Stack Looks Like This
 
@@ -128,8 +127,6 @@ This stack is opinionated. It is optimized for an agent-facing desktop runtime, 
 
 - **Electron in `host/`** keeps the product local-first. The host needs desktop integration, local persistence, app installation, and process-level control that a browser-only shell would make harder.
 - **Node.js + Worker Threads in `runtime/`** separate app execution from the host shell. That matters because apps are not just UI fragments here; they are active runtime participants that expose views, refs, and Tools to the agent.
-- **Preact in `sdk/` and runtime-facing app code** keeps the app model component-based without paying the full weight of a larger client framework inside worker-rendered app execution.
-- **React in `host/`** is a separate choice from Preact in the app layer. The host is a conventional GUI product surface, while the SDK is an embedded app-authoring surface. They solve different problems, so the stack intentionally splits here.
 - **Vercel AI SDK and provider adapters in `agent-driver-v2/`** give the project one abstraction point for multi-model support, streaming, and tool-call execution. That keeps provider churn out of the rest of the runtime.
 - **TypeBox** lets App authors declare typed business parameters and Refs. Runtime validates inputs against that contract and derives the model-facing JSON Schema.
 
@@ -137,8 +134,7 @@ This stack is opinionated. It is optimized for an agent-facing desktop runtime, 
 
 This stack also carries real trade-offs:
 
-- **Two UI stacks** means some conceptual overhead. React in the host and Preact in the SDK is deliberate, but it increases mental context for contributors.
-- **Worker-based isolation** improves boundaries and safety, but it makes debugging, dependency wiring, and snapshot consistency harder than a single-process app model.
+- **Worker-based execution** gives each App its own lifecycle, but it makes debugging, dependency wiring, and snapshot consistency harder than a single-process app model.
 - **Desktop-first architecture** makes local tooling and stateful workflows easier, but it also means the system is not optimized for straightforward web deployment.
 - **Provider abstraction** speeds up model experimentation, but it can hide provider-specific behavior until you are deep in debugging or tool-call edge cases.
 
@@ -159,7 +155,7 @@ You need:
 - **pnpm** installed
 - **Git** installed
 
-Use a recent enough Node.js version to run Electron, Vite, and current TypeScript tooling.
+Use Node 24 for repository builds and the packaged Runtime and Python integration checks.
 
 ## How To Run
 
@@ -173,7 +169,7 @@ chmod +x setup.sh run.sh
 ./run.sh
 ```
 
-Setup installs the sibling packages using their lockfiles, builds them in dependency order, links the Host CLI, and registers the four default apps. The launcher runs setup on a fresh tree. Later launches rebuild source and start Electron. The linked JSX Apps use the SDK’s Preact instance.
+Setup installs the sibling packages using their lockfiles, builds them in dependency order, links the Host CLI, and registers the four default apps. The launcher runs setup on a fresh tree. Later launches rebuild source and start Electron.
 
 ## Useful Commands
 
@@ -203,16 +199,16 @@ agentina --help
 
 ### I want to change runtime state, views, or app execution
 
-- `runtime/src/adapters/semantic-aotui-driven-source.ts`
+- `agent-driver-adapter/src/semantic-aotui-driven-source.ts`
 - `runtime/src/facades/facades.ts`
 - `runtime/src/kernel/`
 - `runtime/src/worker-runtime/`
 
 ### I want to change app authoring APIs
 
-- `sdk/src/app-factory/createTUIApp.ts`
-- `sdk/src/components/View.tsx`
-- `sdk/src/hooks/`
+- `sdk/src/app-factory/createApp.ts`
+- `sdk/src/app-factory/refs.ts`
+- `sdk/src/tools/view-type-tool.ts`
 
 ### I want to change the desktop product
 
@@ -238,7 +234,7 @@ Use **Settings → MCP → Add Server** to configure a server or import its sett
 
 Use an existing `demo-apps/*` package as the template. Apps outside the default install set can be registered manually.
 
-- export a `createTUIApp(...)` app factory from the app entry
+- export a `createApp(...)` app factory from the app entry
 - compile with `tsc`
 - generate `aoapp.json` with `pnpm exec generate-aoapp .` after compiling the installed App
 - register the app locally with `agentina install local:<path>`

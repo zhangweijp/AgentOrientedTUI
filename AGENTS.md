@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是项目的开发准则，按核心概念和模块职责组织，维护当前有效的项目目标、跨模块约束和工作方式。SDK 的当前应用开发合同归 SDK README，Runtime 的当前宿主集成合同归 Runtime README。SDK / Runtime 的本轮设计讨论与后续决策统一维护于 [设计 SSOT v3](docs/sdk-runtime-design-v3/00-index.md)；其中明确区分已确认要求、待讨论方案、暂缓及撤回意见，不把候选设计写成现行能力。其他批次进度和验收证据留在任务报告及 Git 历史中。
+本文件是项目的开发准则，按核心概念和模块职责组织，维护当前有效的项目目标、跨模块约束和工作方式。SDK 的当前应用开发合同归 SDK README，Runtime 的当前宿主集成合同归 Runtime README。已归档的 SDK / Runtime 设计可在 Git 的 `47a1c0480` 查看。现行行为以实际入口、包说明和验收为准。
 
 阅读与修改代码时，区分产品要求、当前实现和待讨论方案。发现冲突应明确指出，不能用现状反向改写目标，也不能把建议写成已实现的能力。沟通要有条理、讲清因果，用具体例子深入浅出地解释。
 
@@ -23,10 +23,10 @@
 
 ### View 与 Projection
 
-- 一个 View 实例对应 GUI 网站或桌面应用中的一个页面，可展示多个业务对象，也可在自身生命周期内切换内容或当前对象；不强制一个 View 永久对应一个业务对象。View 使用 XML + Markdown 呈现，包装为 Messages 中的 User Message；页面概念详见 [设计讨论基线](docs/sdk-runtime-design-v3/00-index.md)。
+- 一个 View 实例对应 GUI 网站或桌面应用中的一个页面，可展示多个业务对象，也可在自身生命周期内切换内容或当前对象；不强制一个 View 永久对应一个业务对象。View 使用 XML + Markdown 呈现，包装为 Messages 中的 User Message。
 - App 作者选择页面在 Messages 中的分区。ViewType 可以声明默认 `region`，创建具体 View 时可以显式指定或覆盖。两处至少有一处选定分区。Host 将 `static` 页放入静态区，以便复用相同的上下文前缀，将 `dynamic` 页放入动态区。两区都呈现最新已提交的内容。
 - App 负责开页和关页。成功观察覆盖该来源的全部已打开页面，容量不足时拒绝开新页。按已定设计，Host 保存折叠状态和 Agent 的备注，Runtime 立即撤销该页在本轮的业务调用及 Ref 资格。折叠页仍可展开，支持独立关闭的页仍可关闭。展开后要等下一轮采用才能恢复资格。因预算只显示提示的页面仍然打开，可以折叠或按原规则关闭。只有本轮展示正文并被采用的页面可接收业务调用和提供 Ref；预算允许后，下一轮采用正文即可恢复。
-- Projection 是应用当前状态的投影。由 AOTUI 产出的 Messages 既表达外部事实，也是 Agent 对这些事实的记忆；Agent 只能通过应用提供的有限操作改变这部分记忆。App 更新业务状态，框架再投影已提交的 View、Ref 和工具能力；不提供对任意对话或其他来源记忆的 CRUD。事实与记忆的定义详见 [设计讨论基线](docs/sdk-runtime-design-v3/00-index.md)。
+- Projection 是应用当前状态的投影。由 AOTUI 产出的 Messages 既表达外部事实，也是 Agent 对这些事实的记忆；Agent 只能通过应用提供的有限操作改变这部分记忆。App 更新业务状态，框架再投影已提交的 View、Ref 和工具能力；不提供对任意对话或其他来源记忆的 CRUD。
 - 同一逻辑 View 在当前投影中只保留最新有效快照。用户对话、操作收据和审计历史有各自用途，不因此删除。
 - View 元数据与正文分开，由唯一呈现边界包装并正确转义。正文不自行携带框架外壳，不用正则猜测或拆除 `<view>`。
 - 应用只管理自己的投影；不能改写用户指令或其他来源的上下文。
@@ -35,7 +35,7 @@
 
 - `view_type` 仅使用 ASCII 字母、数字和下划线，区分大小写，且至少包含一个 ASCII 字母。SDK 和 Core 按同一规则校验。
 - ViewType 声明 `multiplicity`。单实例默认以类型名作为 `view_id`，挂载时可显式指定 `id`。多实例默认使用类型名加编号，例如 `file_detail_1`、`file_detail_2`，编号从 1 开始。
-- 多实例页面的最终 `view_id` 由框架分配，作者可提供 `idPrefix`。分配编号时跳过同一 App 实例中已占用的 ID，提交前仍校验整组页面的 ID 唯一。页面更新或重排时沿用原 ID，关闭后重开会获得新的内部 `viewInstanceId`。App 若要在收据中附上路由 ID，用 `readPreparedViewId(viewType, name)` 从最近健康提交读取唯一匹配页。
+- 多实例页面的最终 `view_id` 由框架分配，作者可提供 `idPrefix`。分配编号时跳过同一 App 实例中已占用的 ID，提交前仍校验整组页面的 ID 唯一。页面更新或重排时沿用原 ID，关闭后重开会获得新的内部 `viewInstanceId`。App 若要在收据中附上路由 ID，用 `readViewId(handle)` 从最近健康提交读取该挂载的 ID。
 - Tool 定义按 **App + ViewType** 共享；每个 View 实例拥有自己的 `context`、状态和局部行为。同类型的多个页面共享一组 Tool Schema，不共享同一个执行上下文。
 - 名称、说明、业务参数 Schema 和实现声明在一处，供类型推导、注册、校验与工具目录复用。当前作者入口为 `defineViewType`，页面提供实例 `context`。
 - 已确认的入口分工是由 Native Tool 与 `run_code` 各自呈现同一份业务契约，Runtime 统一校验本轮目标页、Ref 来源、授权和最终业务参数。入口格式的变化由对应适配器承接。
@@ -49,7 +49,7 @@
 
 - Ref 表达当前观察中可选择的只读 JSON 值；ArrayRef 支持整数组及其元素。它们是数据引用，不是独立工具类别，也不是永久业务身份。
 - 对已通过 Ref 呈现的业务对象，模型无需再抄写 `plan_id`、`phase_id`、`task_id` 等内部 ID。ID 可以留在 App 状态或 Ref payload 中，由 handler 使用。
-- 页面正文可使用局部标记，例如 `[设计](completed_phases[0])`。调用时提供完整 Ref 地址，带点号的键写成 `["display.name"]`。Native Tool、Console（`run_code`）和 `system-inspect_ref` 统一使用 `"$ref.<app_id>.<view_id>.<ref_id>[...path]"`。`"$HOME"`、`"$100"`、`"$.user.name"`、普通对象 `{"$ref": "#/defs/User"}` 和正文中间的地址按原文接收。只有完整业务参数或直接数组元素的字面值以 `$ref.` 开头时，才用 `$$ref.` 转义。
+- 页面正文可使用局部标记，例如 `[设计](completed_phases[0])`。调用时提供完整 Ref 地址，带点号的键写成 `["display.name"]`。Native Tool、Console（`run_code`）和 `system-inspect_ref` 统一使用 `"$ref.<app_id>.<view_id>.<ref_id>[...path]"`。`"$HOME"`、`"$100"`、`"$.user.name"`、普通对象 `{"$ref": "#/defs/User"}` 和正文中间的地址按原文接收。完整业务参数或直接数组元素的字面值如果以一个或多个 `$` 紧跟 `ref.` 开头，就在前面再加一个 `$`。字面量 `$ref.x` 发送为 `$$ref.x`，字面量 `$$ref.x` 发送为 `$$$ref.x`。
 - 顶层 `view_id` 选择执行页面，Ref 地址选择来源页及其 JSON 路径。`private` 限发布它的 View 实例使用，`protected` 限同一 App 实例使用，`public` 可以跨 App 使用。Runtime 根据本轮来源、声明范围及 Host 对接收挂载的许可判断能否传值。路径选择数据。
 - 普通参数接受字面值或获准路径上的兼容 JSON 值。显式 `refParam` 要求真实的已发布整项或有标签的 ArrayRef 元素。Ref 发布必须声明 Schema 并校验值。本轮可见的 Ref 可查看完整声明结构，只有可见的 `public` Ref 可由 Agent 直接读值。
 - Runtime 从调用绑定的原 Observation 解析值。主线程解引用并校验最终参数，Worker 在进入 handler 前核对当前页面挂载、工具激活和本地 Ref 范围，并用本地业务 Schema 复验参数。App 检查对象是否仍存在、归属是否正确，以及业务状态和权限是否允许操作。
@@ -81,7 +81,7 @@
 | 模块 | 应承担的职责 | 边界 |
 | --- | --- | --- |
 | SDK | 作者声明、View 实例、Ref、Tool、投影准备与应用清理登记 | 服务 App 作者，不要求其理解内部 Worker 协议 |
-| Runtime Core | 提交、快照、观察、来源与实例绑定、调用校验及持有释放 | 语义不依赖 Preact、DOM、Node 或某个 Agent Driver |
+| Runtime Core | 提交、快照、观察、来源与实例绑定、调用校验及持有释放 | 语义与渲染、Node 和特定 Agent Driver 解耦 |
 | Runtime 托管层与 SPI | App 实例装配、Worker 通信、执行端口、资源生命周期 | Core 定义共有语义，SPI 组合环境合同，不反向制造依赖 |
 | 呈现适配器与 Source | 将已提交状态转成 View Messages 和实际工具表，衔接观察采用 | 保持同源，不因格式化重建另一份当前状态或授权体系 |
 | Host | Desktop、会话、来源启用、执行策略、模型请求与总上下文预算 | 资源策略归宿主；不以单 App 检查代替整个请求的预算 |
@@ -91,12 +91,11 @@
 
 `@aotui/core` 是单包三入口。根入口提供共享合同、配置与校验，`/producer` 负责生成投影，`/host` 负责观察、调用与托管开页容量计算。SDK 作者入口从根入口取得共有能力。
 
-### SDK：作者合同与两种实现方式
+### SDK：作者合同
 
-- 单包 `@aotui/sdk` 平等支持两条作者路径。根入口提供 Preact，`@aotui/sdk/app` 提供普通 TypeScript。给已有工具编写列表、详情和操作时优先用普通 TS，需要复用页面组件时可用 Preact。两者遵守同一套 View、Ref、工具和生命周期规则。纯 TS 路径以打包后的独立项目验证，编译无需 DOM 类型，运行无需加载 Preact 或 DOM。
-- App 与 SDK 的 Preact 适配保持同一受支持版本、同一模块实例。升级时核对实际提交顺序、hook 链、异常隔离与关闭；不以 DOM 变化或固定延迟冒充渲染提交完成。
-- 当前使用 `prepareProjection` 准备一般更新，`prepareOpeningProjection` 处理可撤回开页。它们不承诺业务事务回滚，也不代替 Host 的观察采用。开页准入与错误恢复的后续设计归 [MEC-02](docs/sdk-runtime-design-v3/04-mechanism-design.md#mec-02)。
-- 参数值域使用 JSON。SDK 用 TypeBox 提供声明与类型推导，Core 按 JSON Schema 2020-12 的受支持子集校验。Tool 参数根是对象，具名业务字段中的 `Type.Unknown()` 或 `{}` 接受有界 JSON。已声明的 Ref 值 Schema 和 `refParam` 值结构需要有明确的根形状，并校验实际值。Provider 能否表达这一声明由 Host 选定的模式与适配器决定。
+- 从纯 TypeScript 的 `@aotui/sdk` 根入口导入 `createApp`、`createView` 和 `defineViewType`。App 声明稳定的 View 句柄，提交由当前业务状态生成的完整 Markdown、Ref 和工具绑定。给工厂传入 `app_name`，与 `package.json` 的 `aotui.app_name` 一致。`generate-aoapp` 从 `aotui` 读取 App 名及可选的 `whatItIs`、`whenToUse`，从包顶层读取标准的 `version`、`description`、`main` 和 `types`。
+- 使用 `prepareProjection` 准备一般更新，使用 `prepareOpeningProjection` 处理开页准入。上一份健康投影在开页容量拒绝后仍可用。App 负责业务状态，Host 负责观察采用。
+- 参数值域使用 JSON。SDK 支持直接声明 JSON Schema、可导出 draft-2020-12 的 Standard JSON Schema v1，以及可选的 TypeBox。Core 按 JSON Schema 2020-12 的受支持子集校验。Tool 参数根是对象，具名业务字段中的 `{}` 或 `Type.Unknown()` 接受有界 JSON。Ref 值 Schema 和 `refParam` 值结构需要有明确的根形状，并校验实际值。Provider 能否表达这一声明由 Host 选定的模式与适配器决定。
 - 当前公共 Schema 不支持 `pattern` 关键字；声明期给出明确诊断。App 普通业务参数可以名为 `pattern`，业务格式验证仍归 App，不因同名而禁用。
 - 公共文档、类型、示例和错误提示构成同一作者合同。评价 SDK 要看 Agent 能否只靠公开入口生成正确 App、修复成本与私有 API 依赖，而非仅看代码行数。
 
@@ -115,8 +114,7 @@
 
 ### 持久化：由 App 自管业务状态
 
-- Core / SDK / Runtime 不再提供内置状态持久化合同（`persistence: true`、`STATE_SESSION_PROTOCOL`、`@aotui/core/persistence`、`CloseReport.persistence` 与 `runtime` 对 `better-sqlite3` 的可选依赖均已移出内核）。
-- App 自行负责业务数据与会话状态的格式、原子落盘、同路径多实例并发保护、收据确认与迁移；关闭时通过通用的 `appCleanup` 生命周期回调等待已发出写入完成并如实暴露保存失败或未知结果。
+- App 自行负责业务数据与会话状态的格式、原子落盘、同路径多实例并发保护、收据确认与迁移；关闭时通过 `registerCleanup({ close })` 等待已发出写入完成并如实暴露保存失败或未知结果。
 - Host 可通过普通 `launchConfig` 按需向 App 透传数据目录或路径配置；Runtime 透明透传，不打开、不加锁、不托管存储资源，也不恢复旧 Observation 或 Ref 的调用资格。
 - 删除内核存储代码不等于删除磁盘上用户已有业务文件；应用升级应保持既有业务库路径兼容（如 `planning-app` 沿用自身 `planning.sqlite`）。
 
@@ -143,7 +141,7 @@
 ### 验证与证据
 
 - 优先覆盖：开页后工具出现、更新只呈现最新 View、对象选择正确、关闭后旧绑定失效、外部变化被识别，以及错误后的恢复。
-- Agent 使用 App 和 Agent 开发 App 是两类验证。日常用同一份真实 Runtime 脚本验证两种作者路径的双文件行为。作者入口或入门说明有重大变化时，再由只读公开 README 与发布类型的 Agent 从零完成同一道题。工程测试、真实模型调用、人工界面验收与跨平台发行结果分别记录。
+- Agent 使用 App 和 Agent 开发 App 是两类验证。日常用真实 Runtime 和打包后的 SDK 验证双文件 App 的行为，并在独立作者项目验证 ES2022 类型和实际加载依赖。作者入口或入门说明有重大变化时，再由只读公开 README 与发布类型的 Agent 从零完成同一道题。工程测试、真实模型调用、人工界面验收与跨平台发行结果分别记录。
 - 区分 Root 静态工具名目录、Host 预览和当轮实际可调用 Tools。前两者不能证明工具已附带到模型请求。
 - 源码、构建产物、实际依赖和消费者应相互对应。公共 API 变更应以实际包消费验证，不用旧 dist、源码路径注入或跳过类型检查冒充干净安装。
 - 只运行与改动有关的必要检查，复用有效证据，不重复无关矩阵。未执行、受阻、推断和实际通过明确区分，不把历史通过数套到新版本。
@@ -166,10 +164,10 @@
 | 项目目标、核心概念、模块关系与研发约束 | 本文件 |
 | App 作者 | [SDK README](sdk/README.md)、[App Builder 技能](.agents/skills/aotui-app-builder/SKILL.md) |
 | Host 集成者与底层适配者 | [Runtime README](runtime/README.md) |
-| SDK / Runtime 长期设计讨论、用户决策与待定方案 | [设计 SSOT v3 索引](docs/sdk-runtime-design-v3/00-index.md)，按概念、系统、模块、机制四类维护，索引标明各议题状态 |
+| 历史设计与验收决策 | Git 历史 `47a1c0480` 及对应的任务记录 |
 
 - SDK、Runtime 各只保留一个简短 README，讲关键入口和无法仅由类型表达的合同；其余让代码、类型和可执行例子表达，不恢复模块内 docs 或把旧指南拼成巨大 README。
-- 项目总纲和跨模块约束以 AGENTS.md 为准；SDK README 维护当前应用开发合同，Runtime README 维护当前宿主集成合同。用户明确要求的 SDK / Runtime 设计议题唯一维护于 `docs/sdk-runtime-design-v3/`，按索引状态区分已确认与待讨论内容；其他入口引用，不建立竞争性的平行规范。主目录 README 保持项目介绍的职责，不承载研发规则和设计讨论记录。
+- 项目总纲和跨模块约束以 AGENTS.md 为准；SDK README 维护当前应用开发合同，Runtime README 维护当前宿主集成合同。主目录 README 保持项目介绍的职责，不承载研发规则和设计讨论记录。
 - 本文件与模块 README 按核心概念与模块组织，区分当前合同和待讨论方向。不要把候选方案或本地验证扩写成已实现能力或通用保证。
 - 文档使用相对链接指向现有源码、类型和可执行例子，包消费者所需的入口必须随包可用；不依赖本机设计目录、临时证据路径或失效的历史文件。
-- 更新本文件时直接修改所属概念或模块的规则。讨论用具体例子比较收益、代价和边界；SDK / Runtime 关键讨论与决定更新对应 SSOT 正文及简短决策记录，只有已确认且适用的结论进入本文件，已生效的使用合同进入对应模块 README。时间线、验收流水和 Commit 清单不追加到开发准则或模块 README。
+- 更新本文件时直接修改所属概念或模块的规则。讨论用具体例子比较收益、代价和边界；已确认且适用的跨模块结论进入本文件。已生效的使用合同进入对应模块 README。时间线、验收流水和 Commit 清单不追加到开发准则或模块 README。

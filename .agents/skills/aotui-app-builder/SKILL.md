@@ -5,21 +5,21 @@ description: Use when designing or implementing an AOTUI application with @aotui
 
 # AOTUI App Builder
 
-Build applications for Agent use. Views present current state. Tools return concise receipts. Start with the [SDK README](../../../sdk/README.md) and run its counter through the [Runtime README](../../../runtime/README.md).
+Build applications for Agent use. Views present current state. Tools return concise receipts. Build the note App in the [SDK README](../../../sdk/README.md) and run it with the Host example in the [Runtime README](../../../runtime/README.md).
 
-Preact Apps use `preact@10.29.1` and share one installed Preact instance with the SDK. Keep `preact` and its subpaths external when bundling. Plain TypeScript Apps can use `@aotui/sdk/app` independently.
+Import `createApp`, `createView`, and `defineViewType` from the TypeScript SDK root `@aotui/sdk`. Declare rules as plain JSON Schema, use Standard JSON Schema v1 that exports draft-2020-12, or add TypeBox as an author dependency. All three use the supported AOTUI Schema subset.
 
 ## Declare the type and provide page context
 
 Use `defineViewType<Context>()({ name, multiplicity, tools })` to declare each tool's description, optional business Schema, and `execute({ input, context })` in one place. Use `defineViewType({ name, multiplicity })` for a type without tools. Choose `single` for one page per App or `multiple` for concurrently open pages of the same type. List the descriptors in the App factory's `viewTypes`.
 
-Each page with tools supplies its own `context`. It can contain page state, setters, or App services. In Preact mount the declared type as JSX or pass it to `StaticView` or `DynamicView`. Supply the page context on that element. In plain TypeScript, keep a stable `createView(type, { region, render })` handle and return body, refs, and context from `render`. Call `prepareProjection({ views })` with all open handles. Use the optional synchronous `enabled(context)` to decide availability for each page. Multi-instance tool calls require the receiving page's XML `view_id`. Single-instance tool calls omit that field. The handler receives business fields and the selected page context.
+Each page with tools supplies its own `context`. It can contain page state, setters, or App services. Keep a stable `createView(type, { region, render })` handle and return body, refs, and context from `render`. Call `prepareProjection({ views })` with all open handles. Use the optional synchronous `enabled(context)` to decide availability for each page. Multi-instance tool calls require the receiving page's XML `view_id`. Single-instance tool calls omit that field. The handler receives business fields and the selected page context.
 
-Use Root to explain the App's workflow. The model request carries available operations and their schemas. See the repository's executable [plain TypeScript App](../../../sdk/tests/fixtures/work-items-plain.ts) and [Preact App](../../../sdk/tests/fixtures/work-items-preact.tsx).
+Use Root to explain the App's workflow. The model request carries available operations and their schemas. [Runnable Work Items App](../../../sdk/tests/fixtures/work-items-plain.ts)
 
 ## App metadata and result records
 
-Keep author metadata in `createApp` or `createTUIApp` once. Build with the SDK and its author peers, then run the SDK's `generate-aoapp <app-dir>` command to derive the manifest from the built factory and package metadata. Registry reads the static manifest. The Desktop opens an installation by `installation_id`. Runtime returns the running `app_id` and binds interactions to the actual instance.
+Pass `app_name` to `createApp` and set the same value in `package.json` at `aotui.app_name`. Put optional `whatItIs` and `whenToUse` in the `aotui` object. `version`, `description`, `main`, and `types` are top-level package fields. After building, run the SDK's `generate-aoapp <app-dir>` command to write the static manifest. Runtime checks the loaded factory against that manifest. The Desktop opens an installation by `installation_id`. Runtime returns the running `app_id` and binds interactions to the actual instance.
 
 ToolResult is discriminated by success. A successful short receipt has success:true and optional JSON object data, without error/effects. A failure requires a plain JSON error record containing code and message, with optional JSON context and short recovery data. Record known recovery details in the receipt. Do not return Error instances, stack/cause, functions or undefined. An unknown outcome is not permission to replay a business command. The current View remains the source of business data, separate from the receipt.
 
@@ -29,15 +29,15 @@ For the standard native Tool adapter choose ASCII letters, digits and underscore
 
 For a business object already published as a Ref, show a meaningful description and its typed local Ref marker. The model passes `$ref.app_id.view_id.local_ref`. Copy the first two parts from the publishing page XML. App handlers can use business IDs carried inside the published data. Runtime resolves against the invocation's adopted Observation; the handler receives recursively readonly business values. IDs can remain inside App state and Ref payloads.
 
-Publish every Ref with its scope and value schema. Use `private` for the owning page, `protected` for pages in the same App instance, or `public` to also allow Tools in other Apps presented in the same model request to select the value. In plain TypeScript use `ref('current', value, { scope: 'protected', refType: 'Note', schema: Note })` or `arrayRef('notes', values, { scope: 'protected', itemType: 'Note', schema: Type.Array(Note) })`. In Preact use the same options with `useDataRef` and `useArrayRef`. Declare an array once and use its element markers to label individual selections.
+Publish every Ref with its scope and value schema. Use `private` for the owning page, `protected` for pages in the same App instance, or `public` to also allow Tools in other Apps presented in the same model request to select the value. Use `ref('current', value, { scope: 'protected', refType: 'Note', schema: Note })` or `arrayRef('notes', values, { scope: 'protected', itemType: 'Note', schema: Type.Array(Note) })`. Declare an array once and use its element markers to label individual selections.
 
-The whole-collection marker can read `[Notes](protected notes: Note[])` and an element marker can read `[Draft](notes[0])`. In App `journal`, View `notes_view`, the element address is `$ref.journal.notes_view.notes[0]`. Use a JSON-quoted member such as `$ref.journal.notes_view["file.name"]` for a literal local name containing a dot. Ordinary named business fields accept a literal or a full Ref address. Use `$$ref.` for a literal `$ref.` prefix. Other leading dollar signs, nested JSON, and text containing `$ref.` in the middle are ordinary data. Use `refParam` only where the app requires a published source.
+The whole-collection marker can read `[Notes](protected notes: Note[])` and an element marker can read `[Draft](notes[0])`. In App `journal`, View `notes_view`, the element address is `$ref.journal.notes_view.notes[0]`. Ref IDs use an identifier. For an object key containing a dot, use a JSON-quoted member after the Ref ID, such as `$ref.journal.notes_view.current["file.name"]`. Ordinary named business fields accept a literal or a full Ref address. Add one leading `$` when a literal argument or direct array element starts with one or more dollar signs followed by `ref.`. Send literal `$ref.x` as `$$ref.x` and literal `$$ref.x` as `$$$ref.x`. Other leading dollar signs, nested JSON, and text containing `$ref.` in the middle are ordinary data. Use `refParam` only where the app requires a published source.
 
 For an ordinary string parameter, the Agent can select a granted field such as `$ref.journal.notes_view.notes[0].title`. Object keys use dot notation or JSON-quoted brackets, and array indices use numbers. A `refParam` parameter requires a whole published Ref or a declared ArrayRef element with its nominal label. Host policy can restrict each visible Ref to particular receiving mounts. The Agent can inspect the declared schema of any visible Ref and directly read a visible public value through `system-inspect_ref`.
 
 ```ts
 import Type from 'typebox';
-import { defineViewType, refParam } from '@aotui/sdk/app';
+import { defineViewType, refParam } from '@aotui/sdk';
 
 const Note = Type.Object({ id: Type.String(), title: Type.String() });
 type Note = Type.Static<typeof Note>;
@@ -75,11 +75,11 @@ The App still checks that resolved objects exist, belong to the intended current
 
 ## Views and instructions
 
-A View is an independent Agent work page. Choose `static` for stable guidance and `dynamic` for changing work. Use ASCII letters, digits and underscores in `view_type`, with at least one letter. A single ViewType can override its ID with `id`. For a multiple ViewType, the framework assigns `<prefix>_<n>` using the type name or the supplied `idPrefix`. Keep mounts and plain TypeScript View handles stable as data changes. In plain TypeScript provide a Markdown `body`. In Preact use sibling pages with semantic text content.
+A View is an independent Agent work page. Choose `static` for stable guidance and `dynamic` for changing work. Use ASCII letters, digits and underscores in `view_type`, with at least one letter. A single ViewType can override its ID with `id`. For a multiple ViewType, the framework assigns `<prefix>_<n>` using the type name or the supplied `idPrefix`. Keep View handles stable as data changes. Return a Markdown `body` from the page’s render function.
 
-Choose a unique `name` within the ViewType when an open receipt needs its `view_id`. After `prepareOpeningProjection` succeeds, call the author context's `readPreparedViewId(viewType, name)`. A missing or ambiguous match returns `undefined`.
+When an open receipt needs a routing ID, call `readViewId(handle)` after successful `prepareOpeningProjection`. The SDK reads the ID of that exact handle from the latest healthy frame.
 
-Submit the raw Markdown body. The Runtime message boundary encodes XML text once, including CR/CRLF, and Host preview decodes it once. Use pre/code for exact file, patch and log text. [View props](../../../sdk/src/components/View.tsx)
+Submit the raw Markdown body. The Runtime message boundary encodes XML text once, including CR/CRLF, and Host preview decodes it once. Use Markdown code fences for exact file, patch and log text. [SDK View API](../../../sdk/README.md)
 
 Keep Root instructions in English unless the application requires another language. Explain:
 
@@ -92,16 +92,14 @@ Keep the Schema, handler, rendered references and recovery guidance in agreement
 
 ## Submission, observation and checks
 
-Use `prepareProjection` for the current App state, including after a business write or a View close. Plain TypeScript supplies every open View handle. Preact supplies a synchronous state update and awaits the real render commit. An invalid ordinary frame retains prior identities for diagnosis and pauses new dispatch until a valid frame is accepted. Preserve a successful write receipt if projection preparation fails. Repair the projection from current App state.
+Use `prepareProjection` for the current App state, including after a business write or a View close. Supply every open View handle. An invalid ordinary frame retains prior identities for diagnosis and pauses new dispatch until a valid frame is accepted. Preserve a successful write receipt if projection preparation fails. Repair the projection from current App state.
 
-Use `prepareOpeningProjection({ views })` in plain TypeScript or `prepareOpeningProjection(update, revert)` through Preact's `useAppRuntimeContext()` for reversible navigation. Plain TypeScript confirms navigation state after the complete candidate is prepared. Preact requires two synchronous callbacks and checks restoration on `OBSERVATION_CAPACITY`. The current Views and their operations remain valid after capacity rejection when navigation is successfully abandoned or restored. `PreparedProjection` describes the local source. The next successful Host observation establishes current View visibility.
+Use `prepareOpeningProjection({ views })` for a tentative open. Update the App's own navigation only after the candidate is accepted. On a capacity rejection, retain the previous projection and tell the Agent which page it can close to make space.
 
-Read the fixed `projectionLimits` from the plain TypeScript author context or `useAppRuntimeContext()` when choosing initial content or an App page size. The frozen values describe the full installed App projection. Use preparation results for actual capacity decisions. The Host budgets the assembled model input and output separately.
+Read the fixed `projectionLimits` from the App author context when choosing initial content or an App page size. The frozen values describe the full installed App projection. Use preparation results for actual capacity decisions. The Host budgets the assembled model input and output separately.
 
 Trusted Hosts prepare candidates and adopt the complete request with `desktop.adoptTurn`. Call the resulting turn with the observation and tool IDs, the business `input`, and a separate `viewId` only for a multi-instance tool. Adopting a new turn revokes old calling eligibility. Publication and diagnostic preview leave adoption to the Host. The Runtime owns observation, invocation and Ref resolution for each actual App instance.
 
 Verify first/last matching View activation, disabled/re-enabled Tools, correct and invalid Ref selections, optional absence, ordering and duplicates, business membership checks, updated View state and final resource release. Test through the matching actual SDK/Runtime packages; visibility or matching version strings alone do not prove compatibility.
 
-Set `persistence: true` in `createApp` or `createTUIApp` when using the SDK state service. Keep only deliberately chosen JSON state there. Before returning a Tool receipt that promises a save, await `persistence.flush()` and check its result.
-
-The [Notes test App](../../../sdk/tests/fixtures/ref-app.tsx) exercises object, whole-list, element and ordered multiple selections, including optional fields.
+The App owns business persistence. Use `launchConfig` for Host-provided paths and `registerCleanup({ close })` to join saves or release resources during shutdown. Confirm a save before the receipt promises that it completed. [IDE session persistence](../../../demo-apps/aotui-ide/README.md)

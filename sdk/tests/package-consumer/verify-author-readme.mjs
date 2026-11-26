@@ -138,10 +138,10 @@ try {
     await writeJson(join(host, 'package.json'), { private: true, type: 'module',
         dependencies: { '@aotui/runtime': manifest.packages.runtime.version } });
     await npmInstall(host);
-    await installedReadme(join(host, 'node_modules/@aotui/runtime'), 'runtime');
+    const runtimeGuide = await installedReadme(join(host, 'node_modules/@aotui/runtime'), 'runtime');
     await installedReadme(join(host, 'node_modules/@aotui/core'), 'core');
     const hostScript = join(host, 'host.mjs');
-    await copyFile(new URL('../fixtures/readme-notes-host.mjs', import.meta.url), hostScript);
+    await writeFile(hostScript, block(runtimeGuide, '## Install an App and make a call', 'js'));
     const dependencyTars = ['sdk', 'core'].map(name => 'tar/' + basename(releaseTar(name)));
 
     for (const route of ['registry', 'tarball']) {
