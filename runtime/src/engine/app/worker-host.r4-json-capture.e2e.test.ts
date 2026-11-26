@@ -1,3 +1,4 @@
+import { committedSnapshot, committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
 import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
@@ -124,26 +125,26 @@ describe('R4 strict JSON capture in a real Worker', () => {
         try {
             const { app, workerScript } = await buildFixture(directory);
             worker = new Worker(workerScript);
-            host = new AppWorkerHost({ policy: policyForSelection(),
+            host = fixtureHost(AppWorkerHost, { policy: policyForSelection(),
                 appId: 'json_capture_app' as any,
                 desktopId: 'json_capture_desktop' as any,
                 appModulePath: app,
-                workerScriptPath: workerScript,
-                existingWorker: worker,
+
                 config: { AOTUI_DATA_DIR: directory },
-            });
+            }, { worker });
             const captures: Capture[] = [];
             const healthNotifications: Array<string | undefined> = [];
             host.onUpdate = reason => healthNotifications.push(reason);
+            const starting = host.start();
             worker.on('message', message => {
                 if (message?.type === 'SNAPSHOT_PREPARED' || message?.type === 'SNAPSHOT_PREPARE_FAILED') {
                     captures.push(message);
                 }
             });
-            await host.start();
+            await starting;
             await host.open();
-            await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready');
-            expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, lastRefCount: 1 });
+            expect(Object.keys(committedSnapshot(host).refs)).toHaveLength(1);
+            expect(captures.filter(message => message.type === 'SNAPSHOT_PREPARED')).toHaveLength(1);
 
             const publishEvent = async (type: string): Promise<Capture> => {
                 const after = sequence(captures.at(-1));
@@ -161,8 +162,8 @@ describe('R4 strict JSON capture in a real Worker', () => {
             if (accessorFailure.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected strict JSON rejection');
             expect(accessorFailure.error.path).toContain('secret');
             expect(accessorFailure.error.message).toContain('Accessors');
-            expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1,
-                published: 1, rejected: 1, lastIssueCode: 'SNAPSHOT_SERIALIZATION_ERROR' });
+            expect(committedState(host)).toMatchObject({ status: 'degraded', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
+            expect(captures.map(message => message.type)).toEqual(['SNAPSHOT_PREPARED', 'SNAPSHOT_PREPARE_FAILED']);
             expect(healthNotifications).toEqual(['projection_failed']);
 
             const oversizedFailure = await publishEvent('oversized');
@@ -170,15 +171,17 @@ describe('R4 strict JSON capture in a real Worker', () => {
                 error: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
             if (oversizedFailure.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected bounded capture rejection');
             expect(oversizedFailure.error.message).toContain('budget');
-            expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 2,
-                rejected: 2, lastIssueCode: 'SNAPSHOT_SERIALIZATION_ERROR', lastIssuePath: oversizedFailure.error.path });
+            expect(committedState(host)).toMatchObject({ status: 'degraded',
+                issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: oversizedFailure.error.path } });
             expect(oversizedFailure.error.path).not.toBe(accessorFailure.error.path);
             expect(healthNotifications).toEqual(['projection_failed', 'projection_failed']);
 
             const recovery = await publishEvent('recover');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');
-            expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 2, unchanged: 0,
-                prepareFailed: 2, lastRefCount: 1 });
+            expect(Object.keys(committedSnapshot(host).refs)).toHaveLength(1);
+            expect(captures.map(message => message.type)).toEqual([
+                'SNAPSHOT_PREPARED', 'SNAPSHOT_PREPARE_FAILED', 'SNAPSHOT_PREPARE_FAILED', 'SNAPSHOT_PREPARED',
+            ]);
             expect(healthNotifications).toEqual(['projection_failed', 'projection_failed', 'projection_recovered']);
 
             const statsResult = await invokeObservedTool(host, 'stats');
@@ -187,7 +190,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             } });
 
             await host.close();
-            expect(host.getSemanticSnapshotReport()?.health).toBe('stopped');
+            expect(committedState(host).status).toBe('stopped');
             expect(host.getResourceReport()).toMatchObject({ interactions: {
                 closed: true, retainedOperations: 0,
             }, appCleanup: { support: 'managed', report: { state: 'completed', issues: [] } } });
@@ -201,11 +204,3 @@ describe('R4 strict JSON capture in a real Worker', () => {
         }
     }, 20_000);
 });
-
-async function waitUntil(predicate: () => boolean): Promise<void> {
-    const deadline = Date.now() + 3_000;
-    while (!predicate()) {
-        if (Date.now() > deadline) throw new Error('Timed out waiting for Worker state');
-        await new Promise(resolveWait => setTimeout(resolveWait, 10));
-    }
-}

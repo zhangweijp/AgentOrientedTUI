@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -34,17 +35,17 @@ function respond(worker: EventEmitter, request: Request) {
     });
 }
 
-function controlledHost(status: WorkerStatus = 'running') {
+function controlledHost(attach = true) {
     const sent: Request[] = [];
     const worker = Object.assign(new EventEmitter(), {
         postMessage(message: Request) { sent.push(message); },
         terminate() { return Promise.resolve(0); },
     });
-    const host = new AppWorkerHost({
+    const host = fixtureHost(AppWorkerHost, {
         appId: 'r1_app' as any, desktopId: 'r1_desktop' as any,
-        appModulePath: 'not-loaded', existingWorker: worker as any, timeout: 1000,
-    });
-    (host as any).status = status;
+        appModulePath: 'not-loaded',
+    }, { attach, worker: worker as any, timeoutMs: 1000 });
+    if (attach) (host as any).status = 'running';
     return { host, worker, sent };
 }
 
@@ -79,7 +80,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
         (['terminate', 'exit', 'error'] as const).map(terminal => ({ method, terminal })));
 
     it.each(terminalCases)('$method rejects after fulfilled transport followed by $terminal', async ({ method, terminal }) => {
-        const { host, worker, sent } = controlledHost();
+        const { host, worker, sent } = controlledHost(method !== 'start');
         if (terminal === 'error') vi.spyOn(console, 'error').mockImplementation(() => {});
         const pending = settle(host[method]());
         try {
@@ -98,43 +99,23 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
         }
     });
 
-    it.each(methods)('a later INIT on the same Worker invalidates an old %s continuation', async method => {
-        const { host, worker, sent } = controlledHost('ready');
-        const old = settle(host[method]());
-        respond(worker, sent[0]);
-        expect((host as any).pendingRequests.size).toBe(0);
-        const fresh = settle(host.start());
+    it.each(methods)('rejects a second INIT without invalidating the accepted %s reply', async method => {
+        const { host, worker, sent } = controlledHost(false);
+        const first = host.start();
+        if (method === 'open') { respond(worker, sent[0]);await first; }
+        const pending = method === 'start' ? first : host.open();
+        const request = sent.at(-1)!;
+        respond(worker, request);
         try {
-            expect((host as any).worker).toBe(worker);
-            if (method === 'start') {
-                expect(sent).toHaveLength(1);
-                expect(await fresh).toMatchObject({ status: 'rejected', message: expect.stringContaining('APP_INSTANCE_REUSE_UNSUPPORTED') });
-                expect(await old).toMatchObject({ status: 'fulfilled' });
-                expect(host.getStatus()).toBe('ready');
-                return;
-            }
-            expect(sent[1].type).toBe('INIT');
-            expect(await old).toMatchObject({ status: 'rejected' });
-            expect(host.getStatus()).toBe('ready');
-            respond(worker, sent[1]);
-            expect(await fresh).toMatchObject({ status: 'fulfilled' });
-            expect(host.getStatus()).toBe('ready');
-        } finally {
-            host.terminate();
-            await fresh;
-        }
-    });
-
-    it('rejects another INIT after an error on the same Host', async () => {
-        const { host, worker, sent } = controlledHost();
-        vi.spyOn(console, 'error').mockImplementation(() => {});
-        worker.emit('error', new Error('Prior failure'));
-        await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
-        expect(sent).toHaveLength(0);expect(host.getStatus()).toBe('error');host.terminate();
+            await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
+            await pending;
+            expect(sent.filter(message => message.type === 'INIT')).toHaveLength(1);
+            expect(host.getStatus()).toBe(method === 'start' ? 'ready' : 'running');
+        } finally { host.terminate(); }
     });
 
     it('keeps managed-ACK transitions and requires a new Host and Worker after close', async () => {
-        const { host, worker, sent } = controlledHost();
+        const { host, worker, sent } = controlledHost(false);
         worker.postMessage = message => {
             sent.push(message);
             queueMicrotask(() => respond(worker, message));
@@ -150,11 +131,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(sent).toHaveLength(count);expect(host.getStatus()).toBe('closed');
             expect((await host.waitForResourceRelease()).worker).toBe('exited');
-            expect(() => new AppWorkerHost({
-                appId: 'r1_app' as any, desktopId: 'r1_desktop' as any,
-                appModulePath: 'not-loaded', existingWorker: worker as any,
-            })).toThrow(expect.objectContaining({ code: 'APP_INSTANCE_REUSE_UNSUPPORTED' }));
-            next = controlledHost().host;
+            next = controlledHost(false).host;
             expect(next.appInstanceId).not.toBe(host.appInstanceId);
         } finally { host.terminate();next?.terminate(); }
     });
@@ -163,11 +140,11 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
 describe('Stage 8 R1: real node:worker_threads response ordering', () => {
     it.each(methods)('%s rejects when a later external message listener synchronously terminates the Worker', async method => {
         const worker = new Worker(workerSource, { eval: true });
-        const host = new AppWorkerHost({
+        const host = fixtureHost(AppWorkerHost, {
             appId: 'r1_real' as any, desktopId: 'r1_desktop' as any,
-            appModulePath: 'not-loaded', existingWorker: worker, timeout: 2000,
-        });
-        (host as any).status = 'running';
+            appModulePath: 'not-loaded',
+        }, { attach: method !== 'start', worker, timeoutMs: 2000 });
+        if (method !== 'start') (host as any).status = 'running';
         const exited = new Promise<number>(resolve => worker.once('exit', resolve));
         const pending = settle(host[method]());
         let pendingAtTermination: number | undefined;
@@ -204,19 +181,18 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             const filename = join(directory, 'worker.cjs');
             await writeFile(filename, workerSource);
             initial = new Worker(filename);
-            host = new AppWorkerHost({
+            host = fixtureHost(AppWorkerHost, {
                 appId: 'r1_restart' as any, desktopId: 'r1_desktop' as any,
-                appModulePath: 'not-loaded', existingWorker: initial,
-                workerScriptPath: filename, timeout: 2000,
-            });
+                appModulePath: 'not-loaded',
+            }, { attach: true, worker: initial, timeoutMs: 2000 });
             const currentHost = host;
             (host as any).status = 'running';
             const old = settle(host.open());
             initial.once('message', () => {
                 currentHost.terminate();
                 closedRestart = settle(currentHost.start());
-                nextHost = new AppWorkerHost({ appId: 'r1_restart' as any, desktopId: 'r1_desktop' as any,
-                    appModulePath: 'not-loaded', workerScriptPath: filename, timeout: 2000 });
+                nextHost = fixtureHost(AppWorkerHost, { appId: 'r1_restart' as any, desktopId: 'r1_desktop' as any,
+                    appModulePath: 'not-loaded', }, { script: filename, timeoutMs: 2000 });
                 fresh = settle(nextHost.start());
                 replacement = (nextHost as any).worker;
             });

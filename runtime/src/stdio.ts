@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
-import type { ActiveTurn, AppInvocation, CandidateScope, InteractionIssue, ObservationCandidate,
+import type { ActiveTurn, CandidateScope, InteractionIssue, ObservationCandidate,
     ProjectionLimitOverrides, RunningApp, TurnSelection, UpdateSignal } from './index.js';
 
 // Keep the protocol on stdout even when an App logs from its Worker.
@@ -107,20 +107,8 @@ function replaceTurn(next?: typeof active) {
     active = next;
 }
 
-function selectApps(params: RecordValue): TurnSelection['apps'] {
-    if (!Array.isArray(params.apps)) error('INVALID_REQUEST', 'Provide the complete apps list.');
-    return params.apps.map((value: unknown) => {
-        const item = record(value, 'an App selection');
-        const candidate = candidates.get(text(item, 'candidate'));
-        if (!candidate) error('CANDIDATE_UNAVAILABLE', 'Prepare a candidate for this Desktop first.');
-        return { candidate, ...(item.windows === undefined ? {} : {
-            windows: item.windows as NonNullable<TurnSelection['apps'][number]['windows']>,
-        }) };
-    });
-}
-
-function scopeFor(params: RecordValue) {
-    return scopes.get(text(params, 'scopeId')) ?? error('CANDIDATE_SCOPE_CLOSED', 'Begin a candidate scope on this connection.');
+function scopeFor(id: string) {
+    return scopes.get(id) ?? error('CANDIDATE_SCOPE_CLOSED', 'Begin a candidate scope on this connection.');
 }
 
 function discardScope(id: string) {
@@ -278,12 +266,12 @@ async function dispatch(method: string, params: RecordValue): Promise<unknown> {
         }
         case 'discardScope': return { cleanupIssues: discardScope(text(params, 'scopeId')) };
         case 'observe': {
-            const scopeId = params.scopeId === undefined ? undefined : text(params, 'scopeId');
-            const batch = scopeId === undefined ? undefined : scopeFor(params);
+            const scopeId = text(params, 'scopeId');
+            const batch = scopeFor(scopeId);
             const running = app(params);
-            const result = batch ? await batch.scope.observe(running) : await running.observe();
+            const result = await batch.scope.observe(running);
             if (result.status === 'rejected') return result;
-            const scopeClosed = scopeId !== undefined && scopes.get(scopeId) !== batch;
+            const scopeClosed = scopes.get(scopeId) !== batch;
             if (closing || scopeClosed || desktop.getRunningApp(running.appId, running.instanceId).status !== 'ready') {
                 reportCleanup(result.candidate.discard());
                 return { status: 'rejected', issue: scopeClosed
@@ -291,42 +279,34 @@ async function dispatch(method: string, params: RecordValue): Promise<unknown> {
                     : { code: 'APP_INTERACTION_UNAVAILABLE', message: 'The original App is closing or unavailable.' } };
             }
             const { observation } = result.candidate;
-            batch?.observed.add(observation.observationId);
+            batch.observed.add(observation.observationId);
             candidates.set(observation.observationId, result.candidate);
             return { status: 'prepared', candidate: observation.observationId, observation };
         }
-        case 'discardObservation': {
-            const id = text(params, 'candidate');
-            if (active?.observations.has(id)) error('OBSERVATION_IN_USE', 'Release or replace the turn owning this observation.');
-            const candidate = candidates.get(id);
-            if (!candidate) error('CANDIDATE_UNAVAILABLE', 'Prepare a candidate for this Desktop first.');
-            candidates.delete(id);
-            return { cleanupIssues: candidate.discard() };
-        }
         case 'presentTurn': {
-            const batch = params.scopeId === undefined ? undefined : scopeFor(params);
+            const batch = scopeFor(text(params, 'scopeId'));
             const result = present(params);
             const selection = result.appSelections.map(({ observationId, windows }) => ({
                 candidate: candidates.get(observationId)!, windows,
             }));
             // Keep only the latest trial per scope; adoption uses exactly the measured mounts and tools.
-            if (batch) batch.presentation = { id: ++presentationSequence, apps: selection, tools: result.tools };
-            return { ...(batch && { presentation: batch.presentation!.id }), views: result.views, desktop: result.desktop, instruction: result.instruction,
+            batch.presentation = { id: ++presentationSequence, apps: selection, tools: result.tools };
+            return { presentation: batch.presentation.id, views: result.views, desktop: result.desktop, instruction: result.instruction,
                 apps: result.appSelections.map(({ observationId, windows }) => ({ candidate: observationId, windows })),
                 tools: result.tools.map(({ name, description, inputSchema, route }) => ({
                     name, description, schema: inputSchema, ...(route && { toolId: route.toolId, observationId: route.observationId }),
                 })), issues: result.issues };
         }
         case 'adoptTurn': {
-            const trial = params.presentation === undefined ? undefined : scopeFor(params).presentation;
-            if (params.presentation !== undefined && (!trial || trial.id !== params.presentation))
+            const trial = scopeFor(text(params, 'scopeId')).presentation;
+            if (!trial || trial.id !== params.presentation)
                 error('PRESENTATION_UNAVAILABLE', 'Present the final measured layout in this scope before adoption.');
-            const selected = trial?.apps ?? selectApps(params);
+            const selected = trial.apps;
             const result = desktop.adoptTurn({ apps: selected });
             if (result.status === 'rejected') return result;
             const id = 'turn-' + ++turnSequence;
             const observations = new Set(selected.map(({ candidate }) => candidate.observation.observationId));
-            replaceTurn({ id, turn: result.turn, observations, tools: trial?.tools ?? [] });
+            replaceTurn({ id, turn: result.turn, observations, tools: trial.tools });
             return { status: 'adopted', turn: id, cleanupIssues: result.cleanupIssues };
         }
         case 'invokeNative': {
@@ -337,16 +317,6 @@ async function dispatch(method: string, params: RecordValue): Promise<unknown> {
             if (candidates.get(invocation.observationId)?.observation.source.instanceId !== instanceId)
                 error('CANDIDATE_UNAVAILABLE', 'Use an observation prepared by this App instance.');
             return current.turn.invoke(appId, invocation);
-        }
-        case 'invoke': {
-            const current = turn(params);
-            const running = app(params);
-            const observationId = text(params, 'observationId');
-            // A closed handle cannot be substituted for the current instance with the same app_id.
-            if (candidates.get(observationId)?.observation.source.instanceId !== running.instanceId)
-                error('CANDIDATE_UNAVAILABLE', 'Use an observation prepared by this App instance.');
-            return current.turn.invoke(running.appId, { observationId, toolId: text(params, 'toolId'),
-                invocationId: text(params, 'invocationId'), ...(params.viewId === undefined ? {} : { viewId: text(params, 'viewId') }), input: record(params.input, 'input') as AppInvocation['input'] });
         }
         case 'inspectRef': {
             const mode = text(params, 'mode');

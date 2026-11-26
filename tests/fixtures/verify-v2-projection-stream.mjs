@@ -7,7 +7,7 @@ import { Worker } from 'node:worker_threads';
 import { createRuntime } from '@aotui/runtime';
 
 const [mode, evidence] = process.argv.slice(2);
-assert.ok(['baseline', 'headless', 'preview'].includes(mode) && evidence);
+assert.ok(['headless', 'preview'].includes(mode) && evidence);
 const state = await mkdtemp(join(import.meta.dirname, 'stream-'));
 const entry = join(state, 'app.mjs'), go = join(state, 'go'), done = join(state, 'done');
 await writeFile(entry, `
@@ -83,11 +83,9 @@ try {
     assert.equal('sourceEpoch' in observation.source || 'producerSeq' in observation.source, false);
     assert.equal(desktop.adoptTurn({ apps: [{ candidate: observed.candidate }] }).status, 'adopted');
     const full = frames.filter(frame => frame.type === 'SNAPSHOT_PREPARED');
-    if (mode !== 'baseline') {
-        assert.equal(full.filter(frame => !frame.requested).length, 1);
-        if (mode === 'headless') assert.equal(full.length, 2);
-        if (mode === 'preview') assert.equal(frames[1]?.type, 'PROJECTION_CURRENT');
-    }
+    assert.equal(full.filter(frame => !frame.requested).length, 1);
+    if (mode === 'headless') assert.equal(full.length, 2);
+    if (mode === 'preview') assert.equal(frames[1]?.type, 'PROJECTION_CURRENT');
     const closed = await runtime.beginClose().completion;
     assert.equal(closed.ok, true);
     await writeFile(resolve(evidence), JSON.stringify({ mode, fullFrames: full.length, fullFrameBytes: full.reduce((sum, item) => sum + item.bytes, 0),

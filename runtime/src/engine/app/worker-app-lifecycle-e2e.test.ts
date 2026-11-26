@@ -4,9 +4,6 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ManagedApp } from './managed-app.js';
-import { defineRuntimeConfig } from '../../spi/config/index.js';
-import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
 
 const repo = resolve(process.cwd(), '..'), url = (file: string) => pathToFileURL(file).href;
 async function capture(file: string, body: string) {
@@ -38,15 +35,29 @@ const factory = createApp({ viewTypes: [RootType], app_name: 'close',
     },
 });
 const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}close(){renderer.close();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private instance detail');}};};export default factory;`);
-    const sandbox = new ManagedApp({ appId: 'app', desktopId: 'd', appModulePath: url(app),
-        workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }), config: { stateFile } }, () => {});
+    const { createRuntime } = await import(url(join(repo, 'runtime/dist/index.js'))) as typeof import('../../index.js');
+    const runtime = createRuntime({ worker: { timeoutMs: 3000, maxWorkers: 1 } });
     try {
-        await sandbox.start();await invokeObservedTool((sandbox as any).host,'save',{value:7},'root_1');const worker = (sandbox as any).host.worker;
-        const close = sandbox.beginClose();expect(sandbox.beginClose()).toBe(close);const report = await close.completion;
-        expect(report).toMatchObject({ state:'settled', resourcesReleased:true, ok:false, worker:'exited' });
-        expect(report).not.toHaveProperty('persistence');
-        expect(report.failures).toEqual([{ stage: 'apps', appId: 'app', desktopId: 'd', codes: ['APP_UNMOUNT_FAILED'] }]);
-        expect(worker.threadId).toBe(-1);expect(JSON.parse(await readFile(stateFile, 'utf8')).value).toBe(7);
-        expect(JSON.stringify(report)).not.toContain('private instance detail');await facts('unmount-'+mode,{report,threadId:worker.threadId});
-    } finally { await sandbox.beginClose().completion;await rm(dir,{recursive:true,force:true}); }
+        const desktop = await runtime.createDesktop('d');
+        const running = await desktop.installDynamicWorkerApp(app, { name: 'close', config: { stateFile } });
+        const prepared = await running.observe();
+        if (prepared.status !== 'prepared') throw Error(prepared.issue.code);
+        const adopted = desktop.adoptTurn({ apps: [{ candidate: prepared.candidate }] });
+        if (adopted.status !== 'adopted') throw Error(adopted.issue.code);
+        const { observationId, tools: [tool] } = prepared.candidate.observation;
+        const invocation = { observationId, invocationId: 'save-once' };
+        expect(await adopted.turn.invoke(running.appId, { ...invocation, toolId: tool.id, viewId: 'root_1', input: { value: 7 } }))
+            .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
+        const close = running.beginClose();expect(running.beginClose()).toBe(close);const report = await close.completion;
+        expect(report).toMatchObject({ state: 'settled', resourcesReleased: true, ok: false, worker: 'exited' });
+        expect(report.failures).toEqual([{ stage: 'apps', appId: 'close', desktopId: 'd', codes: ['APP_UNMOUNT_FAILED'] }]);
+        expect(JSON.parse(await readFile(stateFile, 'utf8')).value).toBe(7);
+        expect(JSON.stringify(report)).not.toContain('private instance detail');
+        const shutdown = await runtime.beginClose().completion;
+        expect(shutdown.workers.report?.total).toBe(0);
+        await facts('unmount-' + mode, { report, workers: shutdown.workers });
+    } finally {
+        await runtime.beginClose().completion;
+        await rm(dir, { recursive: true, force: true });
+    }
 }, 15000);

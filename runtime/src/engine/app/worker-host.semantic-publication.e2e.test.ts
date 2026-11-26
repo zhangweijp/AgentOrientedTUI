@@ -1,3 +1,4 @@
+import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { AppInvocation } from '@aotui/core';
 import { projectCompleteViews } from '@aotui/core/host';
@@ -173,15 +174,14 @@ afterAll(async () => {
 
 async function start(name: string, options: Record<string, unknown> = {}) {
     const worker = new Worker(workerScriptPath);
-    const host = new AppWorkerHost({ policy: publicationPolicy,
+    const host = fixtureHost(AppWorkerHost, { policy: publicationPolicy,
         appId: 'publication_app' as any,
         desktopId: 'desktop' as any,
         appModulePath: appModules.get(name)!,
-        workerScriptPath,
-        existingWorker: worker,
+
         config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
         ...options,
-    });
+    }, { worker });
     const captures: Capture[] = [];
     const updates: any[] = [];
     const messages: any[] = [];
@@ -238,9 +238,7 @@ function latestSnapshot(host: AppWorkerHost): any {
 }
 
 function viewCount(host: AppWorkerHost): number {
-    const report = host.getSemanticSnapshotReport();
-    if (!report) throw new Error('Semantic snapshot receiver is unavailable');
-    return report.lastViewCount ?? 0;
+    return latestSnapshot(host).views.length;
 }
 
 function allViewsPolicy(): AppInteractionPolicy {
@@ -297,7 +295,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         const x = await start('empty');
         await x.host.open();
         expect(latestSnapshot(x.host).views).toEqual([]);
-        expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 1, lastViewCount: 0 });
+        expect(latestSnapshot(x.host)).toMatchObject({ revision: 1, views: [] });
         expect(x.updates).toEqual([]);
 
         const opened = await change(x, 'open');
@@ -361,7 +359,8 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
     it('auto reports a failed projection after a successful mutation and recovers from external state repair', async () => {
         const x = await start('fault');
         await x.host.open();
-        expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, lastViewCount: 1 });
+        expect(viewCount(x.host)).toBe(1);
+        const before = latestSnapshot(x.host).id;
         const fault = await createToolCaller(x.host, 'fault_after_commit', { reason: 'commit then fail to present' });
         const businessResult = await fault.invoke('known-successful-business-effect');
         expect(businessResult).toMatchObject({ kind: 'receipt', receipt: {
@@ -371,7 +370,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         } });
         await vi.waitFor(() => expect(x.captures.at(-1)).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED',
             error: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } }));
-        expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1, published: 1 });
+        expect(committedState(x.host)).toMatchObject({ status: 'degraded', lastGood: { id: before } });
         expect(x.updates.at(-1)).toBe('projection_failed');
 
         const replay = await fault.invoke('reject-old-binding-after-degradation');
@@ -380,7 +379,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         } });
 
         expect(await change(x, 'recover-ref')).toMatchObject({ type: 'SNAPSHOT_PREPARED' });
-        expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 2, prepareFailed: 1 });
+        expect(latestSnapshot(x.host).id).not.toBe(before);
         expect(x.updates.at(-1)).toBe('projection_recovered');
 
         const stats = await createToolCaller(x.host, 'stats', { query: 'business counter' });
@@ -399,19 +398,19 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         const originalInstance = first.host.appInstanceId;
         await first.host.close();
         expect(first.worker.threadId).toBe(-1);
-        expect(first.host.getSemanticSnapshotReport()?.health).toBe('stopped');
+        expect(committedState(first.host).status).toBe('stopped');
 
         const second = await start('empty');
         expect(second.worker).not.toBe(first.worker);
         expect(second.host.appInstanceId).not.toBe(originalInstance);
         await second.host.open();
-        expect(second.host.getSemanticSnapshotReport()).toMatchObject({
-            appId: 'publication_app', instanceId: second.host.appInstanceId, health: 'ready', lastViewCount: 0,
+        expect(latestSnapshot(second.host)).toMatchObject({
+            appId: 'publication_app', instanceId: second.host.appInstanceId, views: [],
         });
         const opened = await change(second, 'open');
         expect(opened.type).toBe('SNAPSHOT_PREPARED');
         expect(opened.type === 'SNAPSHOT_PREPARED' && opened.draft.instanceId).toBe(second.host.appInstanceId);
-        expect(second.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', lastViewCount: 1 });
+        expect(viewCount(second.host)).toBe(1);
         expect(second.updates.at(-1)).toBe('view_updated');
     });
 });

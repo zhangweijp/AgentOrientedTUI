@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { Desktop } from './desktop.js';
-import { createCloseHandle, newCloseState, snapshotClose } from './close-handle.js';
-import type { AppCloseReport } from '../../spi/runtime/close.interface.js';
+import { createRuntime } from '../../index.js';
 import { SignalBus } from './signal-bus.js';
 import { DesktopLogger } from './desktop-logger.js';
 
@@ -19,29 +18,42 @@ it('default empty close is managed, shared and freezes fresh snapshots', async (
 });
 
 it('stops admission and joins the accepted App before cleaning the Desktop', async () => {
-    const state = newCloseState('app');
-    state.apps = { accepted: 1, settled: 0, pending: 1, notVerifiedReleased: 1 };
-    state.resourcesReleased = false;
-    const report = (): AppCloseReport => snapshotClose({ ...structuredClone(state), scope: 'app',
-        desktopId: 'joined', appId: 'draft', instanceId: 'i', worker: state.state === 'settled' ? 'exited' : 'owned' });
-    const child = Promise.withResolvers<AppCloseReport>();
-    const app = { beginClose: vi.fn(() => createCloseHandle(report, child.promise)) };
-    const manager = { stopAdmission: () => ({ apps: [app], accepted: [] }), pendingStarts: 0, clearInactiveInstallations: vi.fn() };
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
     const cleanup = vi.spyOn(DesktopLogger.prototype, 'cleanup');
-    const desktop = new Desktop('joined', { appManager: manager as any });
-    const handle = desktop.beginClose();
-    expect(desktop.beginClose()).toBe(handle);
-    await expect(desktop.openApp('draft')).rejects.toHaveProperty('code', 'DESKTOP_DISPOSED');
-    expect(app.beginClose).toHaveBeenCalledOnce();
-    expect(cleanup).not.toHaveBeenCalled();
-    expect(handle.inspect().apps).toMatchObject({ pending: 1 });
-    state.state = 'settled';
-    state.resourcesReleased = true;
-    state.apps = { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 0 };
-    child.resolve(report());
-    expect(await handle.completion).toMatchObject({ ok: true, apps: { accepted: 1, settled: 1 } });
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(manager.clearInactiveInstallations).toHaveBeenCalledOnce();
+    const runtime = createRuntime({ executionBackends: { delayed: {
+        start(_launch, emit) {
+            return {
+                send({ kind, id }) {
+                    if (kind === 'initialize') { emit({ kind: 'reply', id, status: 'ready' });return; }
+                    if (kind === 'close') {
+                        entered.resolve();
+                        void release.promise.then(() => emit({ kind: 'reply', id, status: 'done', cleanup: { state: 'completed', issues: [] } }));
+                        return;
+                    }
+                    emit({ kind: 'reply', id, status: 'done', ...(kind === 'stop' && { cleanup: { state: 'stopped', issues: [] } }) });
+                },
+                terminate() { emit({ kind: 'exited' }); },
+            };
+        },
+    } } });
+    try {
+        const desktop = await runtime.createDesktop('joined');
+        await desktop.registerPendingApp({ installationId: 'draft', name: 'draft', backend: 'delayed' });
+        await desktop.openApp('draft');
+        const handle = desktop.beginClose();
+        await entered.promise;
+        expect(desktop.beginClose()).toBe(handle);
+        await expect(desktop.openApp('draft')).rejects.toHaveProperty('code', 'DESKTOP_DISPOSED');
+        expect(cleanup).not.toHaveBeenCalled();
+        expect(handle.inspect().apps).toMatchObject({ pending: 1 });
+        release.resolve();
+        expect(await handle.completion).toMatchObject({ ok: true, apps: { accepted: 1, settled: 1 },
+            resourcesReleased: true, cleanup: { signalBus: 'done', logger: 'done' } });
+        expect(cleanup).toHaveBeenCalledOnce();
+    } finally {
+        release.resolve();
+        await runtime.beginClose().completion;
+    }
 });
 
 it('reports logger failure separately and retries its release without repeating signal cleanup', async () => {

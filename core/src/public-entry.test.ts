@@ -39,9 +39,9 @@ it('exports the portable thin root and two specialized sub-entries', () => {
         'captureSnapshotDraftEnvelope', 'captureSnapshotPrepareIssue',
         'createAppInteraction', 'createSnapshotCore', 'createTurnCoordinator', 'encodeRefLiteral', 'formatRefPath',
         'hostedObservationCapacityIssue', 'hostedObservationNamespace',
-        'normalizeProjectionLimits', 'parseRefAddress', 'prepareViewTypeParameters', 'previewCommittedApp',
+        'parseRefAddress', 'prepareViewTypeParameters',
         'projectCompleteViews', 'REF_ADDRESS_PREFIX', 'refPath', 'refConsumerAllowed', 'scopeAllows',
-        'snapshotId', 'viewToolReceiver',
+        'snapshotId',
     ].sort());
 });
 

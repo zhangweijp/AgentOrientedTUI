@@ -22,7 +22,6 @@ export function createAppLifecycle(instanceId: string) {
     }
     function close(): Promise<void> {
         if (completion) return completion;
-        stop(); state = 'pending';
         completion = Promise.resolve().then(async () => {
             await pendingStop;
             try { await owner?.close?.(); }
@@ -31,6 +30,7 @@ export function createAppLifecycle(instanceId: string) {
             if (issues.size) throw Object.assign(new Error('APP_CLEANUP_FAILED'), { code: 'APP_CLEANUP_FAILED' });
         });
         void completion.catch(() => {});
+        stop(); state = 'pending';
         return completion;
     }
     const port: AppLifecyclePort = Object.freeze({ protocol: APP_LIFECYCLE_PROTOCOL, register(callbacks: AppLifecycleCallbacks) {
@@ -45,7 +45,7 @@ export function createAppLifecycle(instanceId: string) {
             throw new Error('APP_LIFECYCLE_INVALID');
         owner = Object.freeze({ stop: fields.stop?.value as AppLifecycleCallbacks['stop'], close: fields.close?.value as AppLifecycleCallbacks['close'] });
         if (stopped) stopOwner();
-        return () => { stop(); void close().catch(() => {}); };
+        return () => { void close(); };
     } });
     return Object.freeze({ port, stop, close, getReport: (): AppCleanupReport => Object.freeze({
         protocol: APP_LIFECYCLE_PROTOCOL, instanceId, state,

@@ -16,7 +16,6 @@ export function buildViewMessageMarkup(view: {
     viewType: string;
     region: ViewRegion;
     markup: string;
-    suffix?: string;
     /** The Ref descriptions from this View's Observation. */
     refs?: readonly ObservedRef[];
 }): string {
@@ -30,5 +29,5 @@ export function buildViewMessageMarkup(view: {
         return '- ' + ref.scope + ' ' + address + ' (' + ref.refType + (ref.array ? '[]' : '') + ')';
     });
     const hints = references?.length ? '\n\nAvailable references\n' + references.join('\n') : '';
-    return `<view ${attrs}>\n${escapeXmlText(view.markup + (view.suffix ?? '') + hints)}\n</view>`;
+    return `<view ${attrs}>\n${escapeXmlText(view.markup + hints)}\n</view>`;
 }

@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { ActiveTurn, AppInvocation } from '@aotui/core';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
@@ -90,9 +91,8 @@ async function start(options: any = {}) {
     const post = worker.postMessage.bind(worker);worker.postMessage = (m: any) => { attempted.push(m);sent.push(m);post(m); };
     worker.stdout?.on('data', (b: any) => logs.push(String(b)));worker.stderr?.on('data', (b: any) => logs.push(String(b)));
     const authorization = policyProbe();
-    const host = new Host({ policy: authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile,
-        existingWorker: worker, timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS,
-        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
+    const host = fixtureHost(Host, { policy: authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile,
+        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } }, { worker, timeoutMs: options.timeout ?? NORMAL_HOST_TIMEOUT_MS });
     worker.on('message', (m: any) => messages.push(m));
     const x: any = { authorization, host, worker, messages, rawMessages, sent, attempted, logs, transform(fn: any) { transform = fn; },
         entries: () => rawMessages.filter(m => m.type === 'REF_V2_HANDLER_ENTER'), handlerEntries: () => rawMessages.filter(m => m.type === 'REF_HANDLER_ENTRY'), guards: () => rawMessages.filter(m => m.type === 'REF_APP_GUARD'), posts: () => sent.filter(invokes), snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };
@@ -110,7 +110,7 @@ async function start(options: any = {}) {
 describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () => {
     beforeAll(async () => {
         const runtime = resolve(process.cwd()), sdk = resolve(runtime, '../sdk');
-        
+
         temporary = await mkdtemp(join(process.env.AOTUI_MIGRATION_TEMP_DIR ?? tmpdir(), 'aotui-ref-migration-'));
         workerFile = join(runtime, 'dist/worker-runtime/index.js');
         Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;

@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
@@ -6,10 +7,10 @@ function inFlightHost() {
     const worker = Object.assign(new EventEmitter(), {
         postMessage: vi.fn(), terminate: vi.fn(() => Promise.resolve(0)),
     });
-    const host = new AppWorkerHost({
+    const host = fixtureHost(AppWorkerHost, {
         appId: 'app_1' as any, desktopId: 'desktop_1' as any,
-        appModulePath: 'not-loaded', existingWorker: worker as any,
-    });
+        appModulePath: 'not-loaded',
+    }, { attach: true, worker: worker as any });
     const request = vi.spyOn(host as any, 'sendRequest').mockResolvedValue(undefined);
     (host as any).status = 'running';
     (host as any).appLifecycleSupport = 'managed';
@@ -89,10 +90,10 @@ describe('Worker Host lifecycle and physical resource release', () => {
         const worker = Object.assign(new EventEmitter(), {
             postMessage: vi.fn(), terminate: vi.fn(() => new Promise<number>(() => {})),
         });
-        const host = new AppWorkerHost({
+        const host = fixtureHost(AppWorkerHost, {
             appId: 'app_1' as any, desktopId: 'desktop_1' as any,
-            appModulePath: 'not-loaded', existingWorker: worker as any,
-        });
+            appModulePath: 'not-loaded',
+        }, { attach: true, worker: worker as any });
         const externalExit = vi.fn();
         worker.once('exit', externalExit);
         host.terminate();

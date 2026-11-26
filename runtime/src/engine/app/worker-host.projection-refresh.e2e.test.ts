@@ -1,3 +1,4 @@
+import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
@@ -99,9 +100,9 @@ afterEach(async () => {
 afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
 
 async function start() {
-    const host = new AppWorkerHost({ policy: policy, appId: 'refresh_app' as any, desktopId: 'desktop' as any,
-        appModulePath: appPath, workerScriptPath: workerPath, existingWorker: new Worker(workerPath),
-        config: { AOTUI_DATA_DIR: directory } });
+    const host = fixtureHost(AppWorkerHost, { policy: policy, appId: 'refresh_app' as any, desktopId: 'desktop' as any,
+        appModulePath: appPath,
+        config: { AOTUI_DATA_DIR: directory } }, { worker: new Worker(workerPath) });
     hosts.push(host); host.onUpdate = vi.fn(); await host.start(); await host.open();
     return { host, turns: workerTurns(host) };
 }
@@ -161,13 +162,14 @@ describe('real SDK Worker observation refresh', () => {
         expect(messages.filter(message => message.type === 'SNAPSHOT_PREPARED')).toEqual([
             expect.objectContaining({ requestId: expect.any(String) }),
         ]);
-        const received = host.getSemanticSnapshotReport()!.prepared;
+        const preparedFrames = () => messages.filter(message => message.type === 'SNAPSHOT_PREPARED').length;
+        const received = preparedFrames();
         expect(await invoke(next, 'read', { record: '$ref.refresh_app.file_1.selected' }))
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 1 } } } } });
-        expect(host.getSemanticSnapshotReport()!.prepared).toBe(received);
+        expect(preparedFrames()).toBe(received);
         const messagesBeforeConfirmation = messages.length;
         const confirmed = await observe(turns);
-        expect(host.getSemanticSnapshotReport()!.prepared).toBe(received);
+        expect(preparedFrames()).toBe(received);
         expect(messages.slice(messagesBeforeConfirmation).filter(message => message.type === 'PROJECTION_CURRENT')).toEqual([
             expect.objectContaining({ requestId: expect.any(String) }),
         ]);
@@ -177,8 +179,9 @@ describe('real SDK Worker observation refresh', () => {
     });
 
     it('reuses confirmed content when nothing changes', async () => {
-        const { host, turns } = await start(); await observe(turns); const id = host.getSemanticSnapshotReport()!.snapshotId;
-        await observe(turns); expect(host.getSemanticSnapshotReport()!.snapshotId).toBe(id);
+        const { host, turns } = await start();
+        const first = await observe(turns), next = await observe(turns);
+        expect(next.observation.source.snapshotId).toBe(first.observation.source.snapshotId);
         expect(host.onUpdate).not.toHaveBeenCalled();
     });
 
@@ -240,7 +243,7 @@ describe('real SDK Worker observation refresh', () => {
             code: 'SNAPSHOT_SERIALIZATION_ERROR', path: 'Ref file.selected $["value"]',
             message: expect.stringContaining('Expected finite JSON data'),
         } });
-        expect(host.getSemanticSnapshotReport()!.health).toBe('degraded');
+        expect(committedState(host).status).toBe('degraded');
         host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'redraw-other' });
         expect(await turns.prepare()).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
         const source = (host as any).snapshotReceiver.core.store.readLatest(host.appId);

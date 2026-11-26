@@ -8,7 +8,6 @@ function fixture() {
         scope: 'runtime', state: 'closing', ok: false, hasFailures: false, resourcesReleased: false, verification: 'managed',
         apps: { accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 }, desktops: { accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 },
         pendingTasks: 0, unverifiedParticipants: 0,
-        resources: { retainedOwners: 0, pendingOperations: 0 },
         workers: { ownership: 'not-owned', report: null },
         cleanup: { signalBus: 'not-owned', logger: 'not-owned' },
         failures: [], failureCount: 0, samplesTruncated: false,
@@ -21,7 +20,7 @@ function fixture() {
 afterEach(() => { vi.useRealTimers();vi.restoreAllMocks(); });
 it('C2-01/03 independent frozen snapshots and deadlines never settle the actual handle', async () => {
     vi.useFakeTimers();const f = fixture(), before = f.handle.inspect();
-    expect(Object.isFrozen(f.handle)).toBe(true);expect(Object.isFrozen(before.resources)).toBe(true);expect(f.handle.inspect()).not.toBe(before);
+    expect(Object.isFrozen(f.handle)).toBe(true);expect(Object.isFrozen(before.apps)).toBe(true);expect(f.handle.inspect()).not.toBe(before);
     const deadline = f.handle.wait({ timeoutMs: 1 });await vi.advanceTimersByTimeAsync(1);expect(await deadline).toMatchObject({ status: 'deadline', report: { state: 'closing', resourcesReleased: false } });
     expect(vi.getTimerCount()).toBe(0);const second = f.handle.wait({ timeoutMs: 300000 });f.finish();
     const final = await f.handle.completion;
@@ -29,7 +28,7 @@ it('C2-01/03 independent frozen snapshots and deadlines never settle the actual 
     expect(f.handle.inspect()).toBe(final);
     expect((await second).report).toBe(final);
     expect((await f.handle.wait()).report).toBe(final);
-    expect(Object.isFrozen(final.resources)).toBe(true);
+    expect(Object.isFrozen(final.apps)).toBe(true);
     expect(before.state).toBe('closing');expect(before.resourcesReleased).toBe(false);expect(vi.getTimerCount()).toBe(0);
 });
 it('C2-02 invalid options are rejected before timers and the seventeenth observer cannot allocate', async () => {
@@ -80,7 +79,6 @@ it('keeps callback failure separate from released resources through Runtime aggr
     expect(child).toMatchObject({ ok: false, hasFailures: true, resourcesReleased: true,
         apps: { settled: 1, notVerifiedReleased: 0 },
         appCleanup: { managedApps: 1, completedApps: 0, failedApps: 1 },
-        resources: { retainedOwners: 0, pendingOperations: 0 },
     });
     expect(child.failures).toEqual([{ stage: 'apps', codes: ['APP_CLOSE_FAILED'], desktopId: 'd', appId: 'a' }]);
 
@@ -95,10 +93,10 @@ it('C2-25 bounded failure samples and Unicode display IDs preserve complete coun
     expect(displayCloseId(raw)).toBe('🙂'.repeat(64));expect(raw).toHaveLength(200);
     const codes: RuntimeCloseReport['failures'][number]['codes'] = ['INSTALL_FAILED', 'APP_CLOSE_FAILED', 'APP_CLOSE_DEADLINE_EXCEEDED', 'RESOURCE_RELEASE_FAILED', 'WORKER_ERROR', 'WORKER_TERMINATION_FAILED', 'WORKER_EXITED_UNEXPECTEDLY', 'APP_UNMOUNT_FAILED'];
     for (let i = 0; i < 100; i++) {
-        const child = newCloseState('app');child.apps = { accepted: 1, settled: 0, pending: 1, notVerifiedReleased: 1 };child.resourcesReleased = false;child.resources.retainedOwners = 1;
+        const child = newCloseState('app');child.apps = { accepted: 1, settled: 0, pending: 1, notVerifiedReleased: 1 };child.resourcesReleased = false;
         addCloseFailure(child, 'apps', [...codes, codes[0]], { desktopId: id + i, appId: id });mergeCloseReport(state, snapshotClose(child));
     }
     const report = snapshotClose(state);expect(report.failureCount).toBe(800);expect(report.failures).toHaveLength(16);expect(report.failures.every(x => x.codes.length <= 8)).toBe(true);expect(report.samplesTruncated).toBe(true);
-    expect(report.apps).toEqual({ accepted: 100, settled: 0, pending: 100, notVerifiedReleased: 100 });expect(report.resources.retainedOwners).toBe(100);expect(report.resourcesReleased).toBe(false);
+    expect(report.apps).toEqual({ accepted: 100, settled: 0, pending: 100, notVerifiedReleased: 100 });expect(report.resourcesReleased).toBe(false);
     expect(Buffer.byteLength(JSON.stringify(report), 'utf8')).toBeLessThanOrEqual(65536);expect(Object.isFrozen(report.failures[0].codes)).toBe(true);
 });

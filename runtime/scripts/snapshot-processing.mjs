@@ -217,12 +217,11 @@ async function micro() {
 }
 
 async function workers() {
-    const { AppWorkerHost } = await import(emitted(runtime, 'engine/app/worker-host.js'));
-    const { createTurnCoordinator } = await import(emitted(corePackage, 'host.js'));
+    const { createRuntime } = await import(emitted(runtime, 'index.js'));
     const directory = await mkdtemp(join(tmpdir(), 'aotui-snapshot-processing-'));
     const modulePath = join(directory, 'app.mjs');
     const source = `
-import { createApp, createView, defineViewType, ref, arrayRef } from ${JSON.stringify(emitted(sdk, 'app.js'))};
+import { createApp, createView, defineViewType, ref, arrayRef } from ${JSON.stringify(emitted(sdk, 'index.js'))};
 const data = ${data.toString()};
 const body = ${body.toString()};
 const File = defineViewType()({ name: 'File', region: 'dynamic', multiplicity: 'multiple', tools: { advance: {
@@ -252,28 +251,27 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
     try {
         const output = [];
         for (const profile of profiles) {
-            const worker = new Worker(new URL(emitted(runtime, 'worker-runtime/index.js')));
-            const host = new AppWorkerHost({ appId, desktopId: 'bench', appModulePath: pathToFileURL(modulePath).href,
-                existingWorker: worker, timeout: 10000, config: { ...profile, AOTUI_DATA_DIR: directory } });
-            let lastMessage, updatedFrames, unchangedFrames, observationBytes, current, closed;
-            let frames = 0;
-            worker.on('message', message => {
-                if (message.type === 'SNAPSHOT_PREPARED') { lastMessage = message; frames++; }
-            });
+            const kernel = createRuntime({ worker: { timeoutMs: 10_000 } });
+            const desktop = await kernel.createDesktop('bench');
+            let lastMessage, updatedFrames, unchangedFrames, unchangedConfirmations, observationBytes, current, closed;
+            let frames = 0, confirmations = 0;
+            const emit = Worker.prototype.emit;
+            // This dedicated benchmark process observes the real Worker transport used by Runtime.
+            Worker.prototype.emit = function (event, ...args) {
+                const message = args[0];
+                if (event === 'message' && message?.type === 'SNAPSHOT_PREPARED') { lastMessage = message;frames++; }
+                if (event === 'message' && message?.type === 'PROJECTION_CURRENT') confirmations++;
+                return emit.call(this, event, ...args);
+            };
             const timings = { prepareMs: [], invokeMs: [], updatedObserveMs: [], updateToObservationMs: [], unchangedObserveMs: [] };
             try {
-                await host.start();
-                await host.open();
-                const ready = host.getAppInteraction();
-                assert.equal(ready.status, 'ready');
-                const client = ready.interaction;
-                const turns = createTurnCoordinator();
+                const app = await desktop.installDynamicWorkerApp(modulePath, { name: appId, config: profile });
                 const observe = async () => {
                     const start = performance.now();
-                    const result = await turns.prepareObservation(client, () => host.getAppInteraction().status === 'ready');
+                    const result = await app.observe();
                     const elapsed = performance.now() - start;
                     assert.equal(result.status, 'prepared', JSON.stringify(result.issue));
-                    const adopted = turns.adoptTurn({ apps: [{ candidate: result.candidate }] });
+                    const adopted = desktop.adoptTurn({ apps: [{ candidate: result.candidate }] });
                     assert.equal(adopted.status, 'adopted', JSON.stringify(adopted.issue));
                     return { observation: result.candidate.observation, turn: adopted.turn, elapsed };
                 };
@@ -303,8 +301,10 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
                     }
                 }
                 updatedFrames = frames - priorFrames;
+                assert.equal(updatedFrames, samples);
+                let priorConfirmations;
                 for (let i = 0; i < warmup + samples; i++) {
-                    if (i === warmup) priorFrames = frames;
+                    if (i === warmup) { priorFrames = frames;priorConfirmations = confirmations; }
                     const next = await observe();
                     assert.equal(next.observation.source.snapshotId, observation.source.snapshotId);
                     ({ observation, turn } = next);
@@ -312,24 +312,23 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
                 }
                 unchangedFrames = frames - priorFrames;
                 observationBytes = jsonBytes(observation);
-                current = { snapshot: host.snapshotReceiver.core.store.inspect(), report: host.getSemanticSnapshotReport() };
-                assert.equal(current.snapshot.heldSnapshots, 0);
-                assert.equal(current.snapshot.heldSnapshotBytes, 0);
+                assert.equal(unchangedFrames, 0);
+                unchangedConfirmations = confirmations - priorConfirmations;
+                assert.equal(unchangedConfirmations, samples);
+                current = observation.source;
                 turn.release();
             } finally {
-                await host.close().catch(() => {});
-                closed = await host.waitForResourceRelease();
+                try { closed = await kernel.beginClose().completion; }
+                finally { Worker.prototype.emit = emit; }
             }
             assert.equal(closed.resourcesReleased, true);
-            assert.equal(closed.appCleanup?.report?.state, 'completed', JSON.stringify(closed));
-            assert.equal(closed.interactions.retainedOperations, 0);
-            const released = host.snapshotReceiver.core.store.inspect();
-            assert.equal(released.currentBytes, 0);
-            assert.equal(released.activeHolds, 0);
-            output.push({ ...profile, frames: { updated: updatedFrames, unchanged: unchangedFrames },
+            assert.equal(closed.appCleanup?.completedApps, 1, JSON.stringify(closed));
+            assert.equal(closed.interactions?.retainedOperations, 0);
+            assert.equal(closed.workers.report?.total, 0);
+            output.push({ ...profile, frames: { updated: updatedFrames, unchanged: unchangedFrames, unchangedConfirmations },
                 bytes: { draftJson: jsonBytes(lastMessage.draft), lastMessageJson: jsonBytes(lastMessage),
                     lastMessageV8: serialize(lastMessage).byteLength, observationJson: observationBytes },
-                current, closed: { worker: closed.worker, resourcesReleased: closed.resourcesReleased, interactions: closed.interactions, snapshot: released },
+                current, closed: { workers: closed.workers, resourcesReleased: closed.resourcesReleased, interactions: closed.interactions },
                 ...Object.fromEntries(Object.entries(timings).map(([name, values]) => [name, summarize(values)])) });
         }
         return output;

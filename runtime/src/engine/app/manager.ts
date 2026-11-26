@@ -1,15 +1,14 @@
 import type { AppID, DesktopID } from '@aotui/core';
-import type { AppDiscoveryInfo, CreateDesktopOptions, RunningApp } from '../../spi/runtime/kernel.interface.js';
+import type { AppDiscoveryInfo, CreateDesktopOptions, IDesktop, RunningApp } from '../../spi/runtime/kernel.interface.js';
 import { createAppId } from '../../spi/core/id-factory.js';
 import { closeError } from '../core/close-handle.js';
 import { ManagedApp } from './managed-app.js';
 import { WorkerCapacity } from './worker-capacity.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
-import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
+import { appInteractionUnavailable, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppWindows, ViewCloseResult, ViewWindowTarget } from '../../spi/runtime/windows.js';
 import type { AppInteractionPolicy } from '@aotui/core';
-import { appInstallFields, captureOptions, capturePolicy, captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
-import type { ProjectionLimits } from '@aotui/core';
+import { appInstallFields, captureInstallationOptions, capturePolicy, type CapturedAppInteractionOptions } from './interaction-config.js';
 import { resolveAppModule } from './manifest.js';
 import type { UpdateSignal } from '../../spi/core/signals.js';
 import type { AppExecutionBackend } from '../../spi/runtime/execution-backend.js';
@@ -18,8 +17,7 @@ import { localCommandBackend } from '../../adapters/local-command-backend.js';
 /**
  * 已安装的 App 信息
  */
-interface InstalledApp extends AppInteractionOptions {
-    readonly projectionLimits: ProjectionLimits;
+interface InstalledApp extends CapturedAppInteractionOptions {
     readonly installationId: string;
     appId?: AppID;
     name: string;
@@ -62,9 +60,9 @@ interface IDesktopInternal {
     logSystem(message: string, level?: 'info' | 'warn' | 'error'): void;
 }
 
-type InstallOptions = Omit<PendingOptions, 'modulePath' | 'name' | 'backend' | 'command'> & { name?: string; policy?: AppInteractionPolicy };
+type InstallOptions = NonNullable<Parameters<IDesktop['installDynamicWorkerApp']>[1]>;
 type StartedApp = Pick<RunningApp, 'appId' | 'instanceId'>;
-type PendingOptions = AppInteractionOptions & {
+type PendingOptions = CapturedAppInteractionOptions & {
         installationId?: string;
         name: string;
         description?: string;
@@ -83,7 +81,6 @@ export class AppManager {
     private readonly nextSequence = new Map<string, number>();
     private installationIdCounter = 0;
     private readonly workerCapacity: WorkerCapacity;
-    private readonly inFlight = new Set<Promise<unknown>>();
     private readonly appTasks = new Map<string, { kind: string; promise: Promise<unknown>; openPolicy?: AppInteractionPolicy }>();
     private accepting = true;
 
@@ -91,7 +88,7 @@ export class AppManager {
         this.workerCapacity = options.workerCapacity ?? new WorkerCapacity((options.runtimeConfig ?? RUNTIME_DEFAULTS).worker.maxWorkers);
     }
     private assertActive(): void { if (!this.accepting) throw closeError('APP_MANAGER_CLOSED'); }
-    private capacity(): void { this.assertActive();if (this.inFlight.size >= 128) throw closeError('LIFECYCLE_CAPACITY_EXCEEDED'); }
+    private capacity(): void { this.assertActive();if (this.appTasks.size >= 128) throw closeError('LIFECYCLE_CAPACITY_EXCEEDED'); }
     private allocateInstallationId(): string {
         while (Number.isSafeInteger(this.installationIdCounter)) {
             const id = 'app_' + this.installationIdCounter++;
@@ -127,8 +124,8 @@ export class AppManager {
         } catch (error) { return Promise.reject(error); }
         let resolve!: (value: T) => void, reject!: (reason: unknown) => void;
         const promise = new Promise<T>((yes, no) => { resolve = yes;reject = no; });
-        const token = { kind, promise, openPolicy };this.appTasks.set(id, token);this.inFlight.add(promise);
-        const release = () => { this.inFlight.delete(promise);if (this.appTasks.get(id) === token) this.appTasks.delete(id); };
+        const token = { kind, promise, openPolicy };this.appTasks.set(id, token);
+        const release = () => { if (this.appTasks.get(id) === token) this.appTasks.delete(id); };
         try { void run().then(value => { release();resolve(value); }, error => { release();reject(error); }); }
         catch (error) { release();reject(error); }
         void promise.catch(() => {});return promise;
@@ -143,12 +140,12 @@ export class AppManager {
         let policy: AppInteractionPolicy | undefined;
         try {
             this.capacity();
-            const captured = captureOptions(options, appInstallFields);
-            policy = capturePolicy(captured?.policy);
-            const { metadata, modulePath } = resolveAppModule(appModulePath, captured?.name);
+            const captured = captureInstallationOptions(options, appInstallFields);
+            policy = capturePolicy(captured.policy);
+            const { metadata, modulePath } = resolveAppModule(appModulePath, captured.name);
             meta = this.registration({ ...captured, name: metadata.app_name, modulePath,
-                description: captured?.description ?? metadata.description,
-                whatItIs: captured?.whatItIs ?? metadata.whatItIs, whenToUse: captured?.whenToUse ?? metadata.whenToUse });
+                description: captured.description ?? metadata.description,
+                whatItIs: captured.whatItIs ?? metadata.whatItIs, whenToUse: captured.whenToUse ?? metadata.whenToUse });
         } catch (error) { return Promise.reject(error); }
         return this.track(meta.installationId, 'install', async () => {
             this.installedApps.set(meta.installationId, meta);
@@ -222,8 +219,6 @@ export class AppManager {
         }
     }
     private registration(options: PendingOptions): InstalledApp {
-        const toolsEnabled = captureToolsEnabled(options);
-        const projectionLimits = captureProjectionLimits(options);
         const name = options.name;
         const installationId = options.installationId ?? this.allocateInstallationId();
         if (!installationId.length || installationId !== installationId.trim()) throw closeError('INSTALL_FAILED');
@@ -238,7 +233,7 @@ export class AppManager {
         return { installationId, name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
             status: 'pending', modulePath: options.modulePath, command: options.command, backend,
             config: options.config,
-            toolsEnabled, projectionLimits };
+            toolsEnabled: options.toolsEnabled, projectionLimits: options.projectionLimits };
     }
     registerPendingApp(options: PendingOptions): string {
         this.assertActive();
@@ -259,10 +254,10 @@ export class AppManager {
             return this.installMeta(meta, captured);
         }, policy);
     }
-    get pendingStarts(): number { return this.inFlight.size; }
+    get pendingStarts(): number { return this.appTasks.size; }
     stopAdmission() {
         this.accepting = false;
-        return { apps: [...this.workers.values()], accepted: [...this.inFlight] };
+        return { apps: [...this.workers.values()], accepted: [...this.appTasks.values()].map(task => task.promise) };
     }
     clearInactiveInstallations(): void {
         for (const [id, meta] of this.installedApps) if (!meta.appId) this.installedApps.delete(id);

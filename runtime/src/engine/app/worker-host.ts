@@ -4,18 +4,17 @@ import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import type { AppCleanupReport } from '../../spi/runtime/app-lifecycle.interface.js';
 
-import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
+import { appInteractionUnavailable, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import { checkWireJson, normalizeProjectionLimits } from '@aotui/core';
 import { captureSnapshotDraftEnvelope, captureSnapshotPrepareIssue, projectCompleteViews,
     type Issue, type SnapshotDraftEnvelope } from '@aotui/core/host';
 import type { AppPreviewResult, InstanceInteraction, PrepareObservationResult, ProjectionLimits, ViewIdentity } from '@aotui/core';
 import type { AppWindows, ViewCloseResult } from '../../spi/runtime/windows.js';
-import { capturePolicy, captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
+import type { CapturedAppInteractionOptions } from './interaction-config.js';
 import { TOOL_REQUEST_LIMITS } from '@aotui/core/producer';
-import type { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
+import { SemanticSnapshotReceiver } from '../../adapters/snapshot/receiver.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionStats,
     InvocationContext, InvocationSource, AppInteractionPolicy } from '@aotui/core';
 import { captureToolInvocationTerminal } from '../../adapters/worker-message-capture.js';
@@ -25,7 +24,7 @@ import type { UpdateSignal } from '../../spi/core/signals.js';
 import type { AppExecutionBackend, AppExecutionIssue } from '../../spi/runtime/execution-backend.js';
 import { startExecutionBackend, type ExecutionConnection, type ExecutionTransport,
     type TransportEvents } from '../../adapters/execution-transport.js';
-import { connectNodeWorker, startNodeWorker } from '../../adapters/node-worker-transport.js';
+import { startNodeWorker } from '../../adapters/node-worker-transport.js';
 
 import type { AppID, DesktopID } from '@aotui/core';
 import { WORKER_DEFAULTS, type WorkerConfig } from '../../spi/config/index.js';
@@ -56,7 +55,7 @@ interface PendingRequest {
 /**
  * AppWorkerHost 配置
  */
-export interface AppWorkerHostConfig extends AppInteractionOptions {
+export interface AppWorkerHostConfig extends CapturedAppInteractionOptions {
     readonly policy?: AppInteractionPolicy;
     appId: AppID;
     desktopId: DesktopID;
@@ -65,14 +64,6 @@ export interface AppWorkerHostConfig extends AppInteractionOptions {
     readonly installationId?: string;
     readonly command?: readonly string[];
     readonly backend?: AppExecutionBackend;
-    /** 
-     * Worker 脚本路径 (可选，默认使用 Runtime 内置 worker-runtime)
-     * [C1 Fix] 不再强制要求传入 SDK 内部路径
-     */
-    workerScriptPath?: string;
-    timeout?: number;  // 请求超时 (ms)
-    /** A fresh dedicated Worker, for adapters that supply the thread themselves. */
-    existingWorker?: Worker;
     workerCapacity?: WorkerCapacity;
     config?: import('@aotui/core').AppLaunchConfig; // Configuration Injection
     runtimeConfig?: { worker: WorkerConfig };
@@ -368,20 +359,18 @@ export class AppWorkerHost {
     // Notify the Desktop when an App publication changes.
     onUpdate?: (reason: UpdateSignal['reason']) => void;
     constructor(config: AppWorkerHostConfig) {
-        const toolsEnabled = captureToolsEnabled(config);
-        const policy = capturePolicy(config.policy) ?? DEFAULT_APP_INTERACTION_POLICY;
-        this.projectionLimits = captureProjectionLimits(config);
+        const policy = config.policy ?? DEFAULT_APP_INTERACTION_POLICY;
+        this.projectionLimits = config.projectionLimits;
         this.appId = config.appId;
         this.desktopId = config.desktopId;
         this.name = config.name;
         this.appModulePath = config.appModulePath;
         this.appInstanceId = randomUUID();
-        this.toolsEnabled = toolsEnabled !== false;
+        this.toolsEnabled = config.toolsEnabled;
         this.snapshotReceiver = new SemanticSnapshotReceiver(String(this.appId), this.appInstanceId);
 
         const workerConfig = config.runtimeConfig?.worker ?? WORKER_DEFAULTS;
-        this.timeout = config.timeout ?? workerConfig.timeoutMs;
-        if (!Number.isSafeInteger(this.timeout) || this.timeout < 1 || this.timeout > 300000) throw new Error('INVALID_INPUT: Worker timeout must be 1–300000 ms');
+        this.timeout = workerConfig.timeoutMs;
 
         this.config = config.config;
         this.workerCapacity = config.workerCapacity;
@@ -396,10 +385,9 @@ export class AppWorkerHost {
                 projectionLimits: this.projectionLimits, toolsEnabled: this.toolsEnabled, timeoutMs: this.timeout,
             }, emit);
         } else {
-            const script = config.workerScriptPath;
             this.startExecution = emit => {
                 if (!this.appModulePath) throw closeError('APP_MODULE_REQUIRED');
-                return startNodeWorker(script, { appId: this.appId, desktopId: this.desktopId, appModulePath: this.appModulePath }, emit);
+                return startNodeWorker(emit);
             };
         }
         this.interaction = this.snapshotReceiver.interaction(policy, { resolve: this.resolveInteractionSource }, {
@@ -407,11 +395,6 @@ export class AppWorkerHost {
             refreshProjection: () => this.refreshAuthority(),
             canExposeTools: () => this.canExecuteTools(),
         });
-        if (config.existingWorker) {
-            this.releaseCapacity = this.workerCapacity?.reserve();
-            try { this.bindExecution(emit => connectNodeWorker(config.existingWorker!, emit)); }
-            catch (error) { this.releaseCapacity?.();throw error; }
-        }
     }
 
     /**
@@ -424,17 +407,15 @@ export class AppWorkerHost {
             throw new Error('Cannot start an App while shutdown is pending');
         }
         try {
-            if (!this.worker) {
-                this.releaseCapacity = this.workerCapacity?.reserve();
-                try {
-                    this.bindExecution(this.startExecution);
-                } catch (error) {
-                    if (!this.worker) {
-                        this.releaseCapacity?.();
-                        this.releaseCapacity = undefined;
-                    }
-                    throw error;
+            this.releaseCapacity = this.workerCapacity?.reserve();
+            try {
+                this.bindExecution(this.startExecution);
+            } catch (error) {
+                if (!this.worker) {
+                    this.releaseCapacity?.();
+                    this.releaseCapacity = undefined;
                 }
+                throw error;
             }
             await this.sendLifecycleRequest({
                 type: 'INIT',
@@ -444,7 +425,6 @@ export class AppWorkerHost {
                 appModulePath: this.appModulePath ?? '',
                 ...(this.name === undefined ? {} : { appName: this.name }),
                 config: this.config, // ✨ Send config to Worker
-                timeoutMs: this.timeout,
                 appInstanceId: this.appInstanceId,
                 projectionLimits: this.projectionLimits,
                 appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, instanceId: this.appInstanceId },
@@ -497,12 +477,6 @@ export class AppWorkerHost {
     getStatus(): WorkerStatus {
         return this.status;
     }
-
-    /** Report projection health and source metadata. */
-    getSemanticSnapshotReport(): SemanticSnapshotReport | null {
-        return this.snapshotReceiver?.report() ?? null;
-    }
-
 
     // ════════════════════════════════════════════════════════════════
     //  App 生命周期
@@ -744,7 +718,6 @@ export class AppWorkerHost {
                     return;
                 }
                 let appCleanupFailed = false;
-                let appCleanupSucceeded = false;
                 const appUnmountFailed = msg.type === 'LIFECYCLE_RESPONSE' && pending.appCleanup === 'APP_CLOSE' &&
                     msg.error?.code === 'APP_UNMOUNT_FAILED';
                 if (pending.init) {
@@ -762,13 +735,10 @@ export class AppWorkerHost {
                 }
                 if (pending.appCleanup) {
                     const report = msg.type === 'LIFECYCLE_RESPONSE' ? captureAppCleanupReport(msg.appCleanup, this.appInstanceId) : null;
-                    const validPhase = report && report.state !== 'active' &&
-                        (pending.appCleanup === 'APP_CLOSE' ? ['completed', 'failed'].includes(report.state) : ['stopped', 'failed'].includes(report.state));
+                    const closing = pending.appCleanup === 'APP_CLOSE';
+                    const validPhase = report && (closing ? ['completed', 'failed'].includes(report.state) : report.state !== 'active');
                     if (validPhase) this.lastAppCleanup = report;
-                    appCleanupSucceeded = !!validPhase && report.issues.length === 0 &&
-                        (pending.appCleanup === 'APP_CLOSE' ? report.state === 'completed' : report.state === 'stopped');
-                    appCleanupFailed = !validPhase || !appCleanupSucceeded ||
-                        pending.appCleanup !== 'APP_CLOSE' && msg.success !== true;
+                    appCleanupFailed = !validPhase || report.issues.length > 0 || !closing && msg.success !== true;
                 }
 
                 clearTimeout(pending.timeout);

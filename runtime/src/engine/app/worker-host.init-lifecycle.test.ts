@@ -1,3 +1,5 @@
+import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
+import { defineRuntimeConfig } from '../../spi/config/index.js';
 import { WORKER_PROTOCOL } from '../../spi/worker-protocol/types.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,8 +28,8 @@ class Channel extends EventEmitter {
 const hosts: AppWorkerHost[] = [];
 function make(options: any = {}) {
     const worker = new Channel();
-    const host = new AppWorkerHost({ appId: 'app_init' as any, desktopId: 'd' as any, appModulePath: 'unused',
-        existingWorker: worker as any, timeout: 100, ...options });
+    const host = fixtureHost(AppWorkerHost, { appId: 'app_init' as any, desktopId: 'd' as any, appModulePath: 'unused',
+        ...options }, { worker: worker as any, timeoutMs: 100 });
     hosts.push(host); return { host, worker };
 }
 const modes = [{ name: 'read-only mode', toolsEnabled: false }, { name: 'tools enabled', toolsEnabled: true }];
@@ -56,11 +58,11 @@ describe('Worker Host owns exactly one application initialization', () => {
             const { host, worker } = make({ toolsEnabled }); const first = host.start(); worker.reply(worker.last); await first;
             if (state !== 'ready') { const opened = host.open(); worker.reply(worker.last); await opened; }
             worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host) });
-            const before = host.getSemanticSnapshotReport(); const capability = host.canExecuteTools();
+            const before = committedState(host); const capability = host.canExecuteTools();
             const listeners = ['message', 'error', 'exit'].map(name => worker.listenerCount(name));
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(worker.messages.filter(m => m.type === 'INIT')).toHaveLength(1);
-            expect(host.getStatus()).toBe(state); expect(host.getSemanticSnapshotReport()).toEqual(before);
+            expect(host.getStatus()).toBe(state); expect(committedState(host)).toEqual(before);
             expect(host.canExecuteTools()).toBe(capability);
             expect(['message', 'error', 'exit'].map(name => worker.listenerCount(name))).toEqual(listeners);
             clean(host);
@@ -81,23 +83,23 @@ describe('Worker Host owns exactly one application initialization', () => {
             if (failure === 'post-throw') worker.postMessage.mockImplementationOnce(message => {
                 worker.messages.push(message); throw new Error('SENTINEL');
             });
-            const savedListener = worker.listeners('message')[0]!;
             const first = host.start().catch(error => error); const init = worker.last;
+            const savedListener = worker.listeners('message')[0]!;
             worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host) });
-            expect(host.getSemanticSnapshotReport()?.health).toBe('ready');
+            expect(committedState(host).status).toBe('ready');
             if (failure === 'response-error') worker.emit('message', { type: 'ERROR_RESPONSE', requestId: init.requestId,
                 success: false, error: { code: 'E_INIT_FAILED', message: 'Initialization failed' } });
             if (failure === 'timeout') await vi.advanceTimersByTimeAsync(101);
             if (failure === 'worker-error') worker.emit('error', new Error('Worker failed'));
             if (failure === 'worker-exit') worker.emit('exit', 0);
             expect(await first).toBeInstanceOf(Error);
-            expect(host.getSemanticSnapshotReport()?.health).toBe('stopped'); const retired = host.getSemanticSnapshotReport();
+            expect(committedState(host).status).toBe('stopped'); const retired = committedState(host);
             savedListener({ type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
                 appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
                 protocol: WORKER_PROTOCOL, toolsEnabled: true, appInstanceId: host.appInstanceId,
                 projectionLimits: init.projectionLimits });
             savedListener({ type: 'SNAPSHOT_PREPARED', draft: draft(host, 2) });
-            expect(host.canExecuteTools()).toBe(false); expect(host.getSemanticSnapshotReport()).toEqual(retired);
+            expect(host.canExecuteTools()).toBe(false); expect(committedState(host)).toEqual(retired);
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(worker.messages.filter(m => m.type === 'INIT')).toHaveLength(1); clean(host);
         });
@@ -147,30 +149,33 @@ describe('Worker Host owns exactly one application initialization', () => {
         await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
         clean(host);
     });
-    it.each(['close', 'close-without-worker', 'terminate', 'error', 'exit'])(
+    it.each(['close', 'terminate'])(
         'refuses the first start after pre-initialization %s', async terminal => {
-            const f = make(terminal === 'close-without-worker' ? { existingWorker: undefined } : {});
+            const f = make();
             vi.spyOn(console, 'error').mockImplementation(() => {}); f.worker.autoReply = true;
             if (terminal.startsWith('close')) await f.host.close();
             if (terminal === 'terminate') f.host.terminate();
-            if (terminal === 'error') f.worker.emit('error', new Error('Prior failure'));
-            if (terminal === 'exit') f.worker.emit('exit', 0);
             await expect(f.host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(f.worker.messages.filter(m => m.type === 'INIT')).toHaveLength(0);
-            expect(f.host.getSemanticSnapshotReport()?.health).toBe('stopped'); clean(f.host);
+            expect(committedState(f.host).status).toBe('stopped'); clean(f.host);
         });
-    it('rejects start while a pre-initialization close is still waiting', async () => {
-        const { host, worker } = make(); const closed = host.close();
-        await expect(host.start()).rejects.toThrow('Cannot start an App while shutdown is pending');
+    it('rejects a second start while closing during initialization', async () => {
+        const { host, worker } = make();
+        const starting = host.start().catch(error => error);
+        const closed = host.close();
+        await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
         worker.autoReply = true;
         if (worker.last?.type === 'APP_STOP') worker.reply(worker.last);
-        await closed; clean(host);
-        expect(worker.messages.filter(m => m.type === 'INIT')).toHaveLength(0);
+        await vi.runAllTimersAsync();
+        await starting;
+        await closed.catch(() => {});
+        clean(host);
+        expect(worker.messages.filter(m => m.type === 'INIT')).toHaveLength(1);
     });
-    it('bounds the constructor timeout configuration', () => {
+    it('bounds the Runtime timeout configuration', () => {
         for (const timeout of [0, -1, NaN, Infinity, 1.5, 300001, 2147483648]) {
-            expect(() => new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused', timeout }))
-                .toThrow('INVALID_INPUT');
+            expect(() => defineRuntimeConfig({ worker: { timeoutMs: timeout } }))
+                .toThrow(expect.objectContaining({ code: 'CONFIG_INVALID' }));
         }
     });
 });

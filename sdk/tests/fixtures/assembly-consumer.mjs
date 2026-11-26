@@ -18,13 +18,26 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
     const registry = createViewOwnedTools(identity.appId, identity.instanceId);
     const projection = new SemanticProjectionCoordinator({ identity: () => identity });
     const controller = new AbortController();
-    let cleanup;
+    let cleanup, cleanupCompletion;
+    let cleanupStopped = false;
+    function stopCleanup() {
+        if (cleanupStopped) return;
+        cleanupStopped = true;
+        cleanup.stop();
+    }
+    function closeCleanup() {
+        if (cleanupCompletion) return cleanupCompletion;
+        cleanupCompletion = Promise.resolve().then(() => cleanup.close());
+        void cleanupCompletion.catch(() => {});
+        stopCleanup();
+        return cleanupCompletion;
+    }
     const context = {
         appId: identity.appId, desktopId, signal: controller.signal, projectionLimits,
         appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, register(owner) {
             assert.equal(cleanup, undefined);
             cleanup = owner;
-            return () => assert.ok(controller.signal.aborted, 'This fixture unmounts its owner only on shutdown');
+            return () => { void closeCleanup(); };
         } },
         defineViewTypes: definitions => { projection.assertWritable(); registry.defineViewTypes(definitions); },
         readViewId: owner => projection.readViewId(owner, registry),
@@ -64,8 +77,8 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
             controller.abort();
             core.lifecycle.stop();
             authority.close();
-            cleanup.stop();
-            try { await authority.whenClosed(); await instance.close(); await cleanup.close(); }
+            stopCleanup();
+            try { await authority.whenClosed(); await instance.close(); await closeCleanup(); }
             finally { projection.close(); registry.dispose(); core.lifecycle.dispose(); }
             const { activeInvocations, activeReads, borrowedSnapshots, observations } = authority.inspect();
             const released = { activeInvocations, activeReads, borrowedSnapshots, observationSlots: observations.observationSlots,

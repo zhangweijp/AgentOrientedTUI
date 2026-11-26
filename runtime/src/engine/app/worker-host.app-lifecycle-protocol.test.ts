@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, expect, it } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
@@ -25,7 +26,7 @@ function fixture(fault?: (request: any, response: any) => any) {
         }
         async terminate() { this.threadId = -1; this.emit('exit', 0); return 0; }
     }();
-    host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: 'unused', existingWorker: worker as any, timeout: 100 });
+    host = fixtureHost(AppWorkerHost, { appId: 'app' as any, desktopId: 'd' as any, appModulePath: 'unused', }, { worker: worker as any, timeoutMs: 100 });
     hosts.push(host); return { host, worker };
 }
 afterEach(async () => { for (const host of hosts.splice(0)) { host.terminate(); await host.waitForResourceRelease(); } });
@@ -35,6 +36,14 @@ it('accepts the callback result without owner counts or resource-proof fields', 
     expect(x.host.getResourceReport().appCleanup?.report).toEqual({ protocol: 'app-lifecycle-v2', instanceId: x.host.appInstanceId,
         state: 'completed', issues: [] });
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
+});
+
+it.each(['pending', 'completed'])('joins a valid App cleanup already %s at APP_STOP', async state => {
+    const x = fixture((request, response) => request.type === 'APP_STOP'
+        ? { ...response, appCleanup: { ...response.appCleanup, state } } : response);
+    await x.host.start(); await x.host.open(); await x.host.close();
+    expect((await x.host.waitForResourceRelease())).toMatchObject({ resourcesReleased: true, worker: 'exited',
+        appCleanup: { report: { state: 'completed', issues: [] } } });
 });
 
 it.each(['wrong-response-type', 'wrong-instance', 'wrong-protocol', 'retired-numeric-version', 'missing-lifecycle-ack'])('rejects %s INIT and retires the Worker', async fault => {

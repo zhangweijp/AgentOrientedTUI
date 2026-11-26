@@ -1,3 +1,4 @@
+import { committedSnapshot, committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
 import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
@@ -133,32 +134,26 @@ describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
         try {
             const { app, workerScript } = await buildFixture(directory);
             worker = new Worker(workerScript);
-            host = new AppWorkerHost({ policy: policyForSelection(),
+            host = fixtureHost(AppWorkerHost, { policy: policyForSelection(),
                 appId: 'nested_app' as any,
                 desktopId: 'nested_desktop' as any,
                 appModulePath: app,
-                workerScriptPath: workerScript,
-                existingWorker: worker,
+
                 config: { AOTUI_DATA_DIR: directory },
-            });
+            }, { worker });
             const captures: Capture[] = [];
             const healthNotifications: Array<string | undefined> = [];
             host.onUpdate = reason => healthNotifications.push(reason);
+            const starting = host.start();
             worker.on('message', message => {
                 if (message?.type === 'SNAPSHOT_PREPARED' || message?.type === 'SNAPSHOT_PREPARE_FAILED') {
                     captures.push(message);
                 }
             });
-            await host.start();
+            await starting;
             await host.open();
-            await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready' &&
-                host!.getSemanticSnapshotReport()?.lastViewCount === 2);
+            expect(committedSnapshot(host).views).toHaveLength(2);
 
-            const readySnapshot = () => {
-                const result = (host as any).snapshotReceiver.core.store.readLatest(host!.appId);
-                if (result.status !== 'ready') throw new Error('Expected a ready Semantic source');
-                return result.snapshot;
-            };
             const sendEvent = async (eventType: string): Promise<Capture> => {
                 const after = sequence(captures.at(-1));
                 const capture = waitForCapture(worker!, captures, after);
@@ -169,7 +164,7 @@ describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
                 return capture;
             };
 
-            const initial = readySnapshot();
+            const initial = committedSnapshot(host);
             expect(initial.views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_1']);
             const parent = initial.views.find((view: any) => view.id === 'parent_1');
             expect(parent.content.value).toContain('PARENT_SECTION');
@@ -185,31 +180,25 @@ describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
                 .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true, data: { owner: 'sibling' } } } } });
 
             expect((await sendEvent('close-sibling')).type).toBe('SNAPSHOT_PREPARED');
-            await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready' &&
-                host!.getSemanticSnapshotReport()?.lastViewCount === 1);
-            expect(readySnapshot().views.map((view: any) => view.id)).toEqual(['parent_1']);
+            expect(committedSnapshot(host).views).toHaveLength(1);
+            expect(committedSnapshot(host).views.map((view: any) => view.id)).toEqual(['parent_1']);
             expect(await invokeObservedTool(host!, 'parent_action', {}, 'parent_1'))
                 .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
 
             expect((await sendEvent('open-sibling')).type).toBe('SNAPSHOT_PREPARED');
-            await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready' &&
-                host!.getSemanticSnapshotReport()?.lastViewCount === 2);
-            expect(readySnapshot().views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_2']);
+            expect(committedSnapshot(host).views).toHaveLength(2);
+            expect(committedSnapshot(host).views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_2']);
 
-            const beforeInvalid = host.getSemanticSnapshotReport()!;
-            const previousGood = readySnapshot();
+            const beforeInvalid = captures.length;
+            const previousGood = committedSnapshot(host);
             const invalid = await sendEvent('duplicate-ref');
             expect(invalid).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED', error: { code: 'SNAPSHOT_INVALID' } });
             if (invalid.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected duplicate Ref rejection');
             expect(invalid.error.message).toContain('Ref IDs must be unique');
             expect(invalid.error.path).toContain('parent');
-            expect(host.getSemanticSnapshotReport()).toMatchObject({
-                health: 'degraded',
-                published: beforeInvalid.published,
-                prepareFailed: beforeInvalid.prepareFailed + 1,
-                rejected: beforeInvalid.rejected + 1,
-                lastIssueCode: 'SNAPSHOT_INVALID',
-                lastViewCount: 2,
+            expect(captures.slice(beforeInvalid)).toEqual([invalid]);
+            expect(committedState(host)).toMatchObject({
+                status: 'degraded', issue: { code: 'SNAPSHOT_INVALID' }, lastGood: { id: previousGood.id },
             });
             expect(healthNotifications.at(-1)).toBe('projection_failed');
             expect(previousGood.views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_2']);
@@ -217,9 +206,8 @@ describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
 
             const recovery = await sendEvent('repair');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');
-            await waitUntil(() => host!.getSemanticSnapshotReport()?.health === 'ready' &&
-                host!.getSemanticSnapshotReport()?.lastViewCount === 2);
-            expect(readySnapshot().views.find((view: any) => view.id === 'parent_1').content.value)
+            expect(committedSnapshot(host).views).toHaveLength(2);
+            expect(committedSnapshot(host).views.find((view: any) => view.id === 'parent_1').content.value)
                 .toContain('PARENT_RECOVERED_MARKER');
             expect(healthNotifications.at(-1)).toBe('projection_recovered');
             expect(await invokeObservedTool(host!, 'parent_action', {}, 'parent_1'))
@@ -239,11 +227,3 @@ describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
         }
     }, 20_000);
 });
-
-async function waitUntil(predicate: () => boolean): Promise<void> {
-    const deadline = Date.now() + 4_000;
-    while (!predicate()) {
-        if (Date.now() > deadline) throw new Error('Timed out waiting for Worker state');
-        await new Promise(resolveWait => setTimeout(resolveWait, 10));
-    }
-}

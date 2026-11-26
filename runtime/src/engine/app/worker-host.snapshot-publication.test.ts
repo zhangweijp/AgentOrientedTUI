@@ -1,3 +1,4 @@
+import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,7 @@ afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 
 function fixture() {
     const directory = mkdtempSync(join(tmpdir(), 'aotui-publication-'));
-    const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'desktop' as any,
+    const host = fixtureHost(AppWorkerHost, { appId: 'app' as any, desktopId: 'desktop' as any,
         appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory } });
     cleanups.push(() => { (host as any).snapshotReceiver.close();rmSync(directory, { recursive: true, force: true }); });
     const send = (message: unknown) => (host as any).handleMessage(message);
@@ -31,36 +32,36 @@ describe('Semantic commit notifications', () => {
 
     it('accepts only this instance’s newer frame without notifying another reader', () => {
         const f = fixture(), observed: unknown[] = [];
-        f.host.onUpdate = () => observed.push(f.host.getSemanticSnapshotReport());
+        f.host.onUpdate = () => observed.push(committedState(f.host));
         f.publish(1);
-        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 1, lastViewCount: 1 });
+        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 1, views: [expect.any(Object)] } });
         f.publish(2);
         expect(observed).toHaveLength(0);
         f.publish(3, 'changed in the same millisecond');
         expect(observed).toHaveLength(0);
-        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2 });
+        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 2 } });
         f.publish(2, 'late');
         f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(4), instanceId: 'foreign' } });
         f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(5), appId: 'foreign' } });
         expect(observed).toHaveLength(0);
-        expect(f.host.getSemanticSnapshotReport()).toMatchObject({
-            health: 'ready', revision: 2, published: 2, rejected: 3, wrongSource: 2,
+        expect(committedState(f.host)).toMatchObject({
+            status: 'ready', snapshot: { revision: 2, views: [{ content: { value: 'changed in the same millisecond' } }] },
         });
     });
 
     it('keeps passive publications fresh without emitting an update', () => {
         const f = fixture(), update = vi.fn();f.host.onUpdate = update;
         f.publish(1, 'passive');
-        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 1 });
+        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 1 } });
         expect(update).not.toHaveBeenCalled();
         f.publish(2, 'passive changed');
-        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ revision: 2 });
+        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 2 } });
         expect(update).not.toHaveBeenCalled();
     });
 
     it('reports one fault while two identical failures are received and accepts an unchanged repair', () => {
         const f = fixture(), health: unknown[] = [];
-        f.host.onUpdate = () => health.push(f.host.getSemanticSnapshotReport()?.health);
+        f.host.onUpdate = () => health.push(committedState(f.host).status);
         f.publish(1);
         const fail = (seq: number) => f.send({ type: 'SNAPSHOT_PREPARE_FAILED', appId: 'app',
             instanceId: f.draft(seq).instanceId, producerSeq: seq, sourceEpoch: seq,
@@ -69,7 +70,7 @@ describe('Semantic commit notifications', () => {
         expect(health).toEqual(['degraded']);
         f.publish(4);
         expect(health).toEqual(['degraded']);
-        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ revision: 1, unchanged: 1 });
+        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 1 } });
     });
 
     it('publishes the last View closing as a legal empty state', () => {
@@ -77,7 +78,7 @@ describe('Semantic commit notifications', () => {
         f.publish(1);
         f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(2), views: [] } });
         expect(update).not.toHaveBeenCalled();
-        expect(f.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastViewCount: 0, lastToolCount: 0 });
+        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 2, views: [], tools: {} } });
     });
 
     it('records unexpected receiver failure instead of silently keeping a usable source', () => {
@@ -87,7 +88,7 @@ describe('Semantic commit notifications', () => {
         try {
             f.publish(1);
             expect(f.host.getStatus()).toBe('error');
-            expect(f.host.getSemanticSnapshotReport()?.health).toBe('stopped');
+            expect(committedState(f.host).status).toBe('stopped');
             expect(update).not.toHaveBeenCalled();
         } finally { log.mockRestore(); }
     });

@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { AppWorkerHost } from './worker-host.js';
@@ -25,14 +26,14 @@ class ControlledWorker extends EventEmitter {
     terminate() { this.terminations++;return this.termination(); }
     exit() { this.threadId = -1;this.emit('exit', 0); }
 }
-const fixture = () => { const worker = new ControlledWorker();const host = new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused', timeout: 1000, existingWorker: worker as any });return { worker, host }; };
+const fixture = () => { const worker = new ControlledWorker();const host = fixtureHost(AppWorkerHost, { appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused', }, { timeoutMs: 1000, worker: worker as any });return { worker, host }; };
 it('after exit detaches only Host listeners and releases its physical capacity once', async () => {
     const worker = new ControlledWorker(), capacity = new WorkerCapacity(1);
     let messages = 0, exits = 0;
     const external = () => { messages++; }, observer = () => { exits++; };
     worker.on('message', external);worker.on('exit', observer);worker.on('error', () => {});
-    const host = new AppWorkerHost({ appId: 'a', desktopId: 'd', appModulePath: '/unused',
-        existingWorker: worker as any, workerCapacity: capacity });
+    const host = fixtureHost(AppWorkerHost, { appId: 'a', desktopId: 'd', appModulePath: '/unused',
+        workerCapacity: capacity }, { worker: worker as any });
     let entered!: () => void;
     const terminating = new Promise<void>(resolve => { entered = resolve; });
     worker.termination = () => { entered();return new Promise(() => {}); };
@@ -69,6 +70,6 @@ it('C1-10/19 fixed issues survive rejected termination and actual later exit', a
     worker.exit();const report = await pending;expect(report.resourcesReleased).toBe(true);expect(report.issues).toContain('WORKER_TERMINATION_FAILED');expect(Object.isFrozen(report)).toBe(true);expect(JSON.stringify(report)).not.toContain('private');
 });
 it('C1-10 a never-created Host releases without constructing a Worker', async () => {
-    const host = new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused' });host.terminate();
+    const host = fixtureHost(AppWorkerHost, { appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused' });host.terminate();
     expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'not-created', resourcesReleased: true });
 });

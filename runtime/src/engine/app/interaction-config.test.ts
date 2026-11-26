@@ -1,41 +1,68 @@
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
-import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
+import { appInstallFields, captureInstallationOptions } from './interaction-config.js';
 import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core';
-import { AppWorkerHost } from './worker-host.js';
-import { AppManager } from './manager.js';
 import { Desktop } from '../core/desktop.js';
 
 const localPath = fileURLToPath(new URL('../../../test/fixtures/pending-app/', import.meta.url));
 
-const hostConfig = { appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused' };
 
-it('captures explicit booleans and leaves the omitted default to the WorkerHost', () => {
-    expect(captureToolsEnabled()).toBeUndefined();
-    expect(captureToolsEnabled({})).toBeUndefined();
-    expect(captureToolsEnabled({ toolsEnabled: undefined })).toBeUndefined();
-    expect(captureToolsEnabled({ toolsEnabled: true })).toBe(true);
-    expect(captureToolsEnabled({ toolsEnabled: false })).toBe(false);
+it('captures Tool availability, including the default', () => {
+    for (const value of [undefined, true, false]) {
+        expect(captureInstallationOptions({ toolsEnabled: value }, appInstallFields).toolsEnabled).toBe(value !== false);
+    }
 });
 
-it('rejects invalid Tool setting descriptors before allocation without running getters', async () => {
+it('rejects invalid Tool setting descriptors at both installation entries without running getters', async () => {
+    const desktop = new Desktop('d');
     let getters = 0;
     const badOptions = [null, 1, 'false', [], {}].map(toolsEnabled => ({ toolsEnabled }));
     badOptions.push(
         Object.defineProperty({}, 'toolsEnabled', { enumerable: true, get() { getters++; return false; } }),
-        Object.defineProperty({}, 'toolsEnabled', { value: false }), Object.create({ toolsEnabled: false }));
-    const manager = new AppManager({ id: 'd', logSystem() {} } as any);
-    for (const input of badOptions) {
-        const merge = (base: object) => Object.defineProperties(Object.setPrototypeOf(base, Object.getPrototypeOf(input)), Object.getOwnPropertyDescriptors(input));
-        for (const run of [() => captureToolsEnabled(input),
-            () => new AppWorkerHost(merge({ ...hostConfig }) as any), () => manager.registerPendingApp(merge({ modulePath: '/unused' }) as any)]) {
-            expect(run).toThrow(expect.objectContaining({ code: 'TOOLS_ENABLED_INVALID' }));
-        }
+        Object.defineProperty({}, 'toolsEnabled', { value: false }),
+        Object.create({ toolsEnabled: false }));
+    for (const option of badOptions) {
+        const options = Object.create(Object.getPrototypeOf(option), {
+            ...Object.getOwnPropertyDescriptors(option),
+            installationId: { value: 'pending', enumerable: true },
+        });
+        const pending = Object.create(Object.getPrototypeOf(options), {
+            ...Object.getOwnPropertyDescriptors(options), localPath: { value: localPath, enumerable: true },
+        });
+        const code = Object.getPrototypeOf(option) === Object.prototype ? 'TOOLS_ENABLED_INVALID' : 'CONFIG_INVALID';
+        await expect(desktop.installDynamicWorkerApp('/unused', options)).rejects.toHaveProperty('code', code);
+        await expect(desktop.registerPendingApp(pending)).rejects.toHaveProperty('code', code);
     }
     expect(getters).toBe(0);
-    expect(manager.listApps()).toEqual([]);
-    expect(manager.registerPendingApp({ modulePath: '/unused', name: 'unused' })).toBe('app_0');
-    manager.clearInactiveInstallations();
+    expect(desktop.listApps()).toEqual([]);
+    await desktop.beginClose().completion;
+});
+
+it.each([
+    ['toolsEnabled', false, { code: 'TOOLS_ENABLED_INVALID' }],
+    ['projectionLimits', { maxViews: 1 }, { code: 'CONFIG_INVALID', context: { path: 'options.projectionLimits' } }],
+] as const)('rejects inherited %s at both public installation entries without reading the getter', async (key, value, issue) => {
+    const desktop = new Desktop('d');
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, key);
+    let reads = 0;
+    let attempts;
+    try {
+        Object.defineProperty(Object.prototype, key, { configurable: true, get() { reads++; return value; } });
+        attempts = Promise.allSettled([
+            desktop.installDynamicWorkerApp('/unused', { name: 'direct' }),
+            desktop.registerPendingApp({ installationId: 'pending', localPath }),
+        ]);
+    } finally {
+        if (original) Object.defineProperty(Object.prototype, key, original);
+        else Reflect.deleteProperty(Object.prototype, key);
+    }
+    try {
+        for (const result of await attempts) expect(result).toMatchObject({ status: 'rejected', reason: issue });
+        expect(reads).toBe(0);
+        expect(desktop.listApps()).toEqual([]);
+    } finally {
+        await desktop.beginClose().completion;
+    }
 });
 
 it('rejects unknown Host options before allocating a Worker or pending App', async () => {
@@ -57,9 +84,9 @@ it('rejects unknown Host options before allocating a Worker or pending App', asy
     await desktop.beginClose().completion;
 });
 
-it('copies just the trusted projection limits and forwards the same frozen effective value', () => {
+it('captures immutable effective projection limits', () => {
     const overrides = { maxViews: 2, metadata: { maxNodes: 30 }, observation: { maxApproxBytes: 4096 } };
-    const limits = captureProjectionLimits({ projectionLimits: overrides });
+    const limits = captureInstallationOptions({ projectionLimits: overrides }, appInstallFields).projectionLimits;
     overrides.maxViews = 3;
     overrides.metadata.maxNodes = 40;
     overrides.observation.maxApproxBytes = 8192;
@@ -68,8 +95,7 @@ it('copies just the trusted projection limits and forwards the same frozen effec
         observation: { ...DEFAULT_PROJECTION_LIMITS.observation, maxApproxBytes: 4096 },
     });
     expect([limits, limits.observation, limits.metadata].every(Object.isFrozen)).toBe(true);
-    expect(captureProjectionLimits({ projectionLimits: limits })).toBe(limits);
-    expect(captureProjectionLimits()).toBe(DEFAULT_PROJECTION_LIMITS);
+    expect(captureInstallationOptions({}, appInstallFields).projectionLimits).toBe(DEFAULT_PROJECTION_LIMITS);
 });
 
 it('rejects out-of-range, unknown and accessor limits before an instance is reserved', async () => {

@@ -13,56 +13,61 @@ const policy = {
     authorize: () => true, canReadReceipt: () => true,
 };
 const execution = { resolve: () => null };
+const state = (receiver: SemanticSnapshotReceiver) => receiver['core'].store.readLatest(receiver.appId);
+function readyId(receiver: SemanticSnapshotReceiver) {
+    const result = state(receiver);
+    if (result.status !== 'ready') throw new Error('Expected a ready snapshot');
+    return result.snapshot.id;
+}
 
 describe('Semantic snapshot acceptance', () => {
     it('reports committed publication, unchanged data, degradation and recovery separately', () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
         expect(receiver.acceptPrepared(draft(1))).toMatchObject({ status: 'published', healthChanged: true });
-        const id = receiver.report().snapshotId;
+        const id = readyId(receiver);
         expect(receiver.acceptPrepared(draft(2))).toMatchObject({ status: 'unchanged', healthChanged: false });
         const failure = (seq: number) => ({ appId: 'app', instanceId: 'instance', producerSeq: seq, sourceEpoch: seq,
             issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' as const, message: 'Capture failed' } });
         expect(receiver.acceptPrepareFailure(failure(3))).toMatchObject({ status: 'rejected', healthChanged: true });
-        expect(receiver.report().health).toBe('degraded');
+        expect(state(receiver).status).toBe('degraded');
         expect(receiver.acceptPrepareFailure(failure(4))).toMatchObject({ status: 'rejected', healthChanged: false });
         expect(receiver.acceptPrepared(draft(5))).toMatchObject({ status: 'unchanged', healthChanged: true });
-        expect(receiver.report()).toMatchObject({ health: 'ready', snapshotId: id });
+        expect(state(receiver)).toMatchObject({ status: 'ready', snapshot: { id } });
         expect(receiver.acceptPrepared(draft(6, 'updated'))).toMatchObject({ status: 'published', healthChanged: false });
         receiver.close();
     });
 
     it('does not replace a valid source or emit a health change for foreign or stale input', () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
-        receiver.acceptPrepared(draft(1));const id = receiver.report().snapshotId;
+        receiver.acceptPrepared(draft(1));const id = readyId(receiver);
         expect(receiver.acceptPrepared({ ...draft(2), instanceId: 'other' })).toMatchObject({
             status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' }, healthChanged: false });
         expect(receiver.acceptPrepared(draft(1))).toMatchObject({
             status: 'rejected', issue: { code: 'SNAPSHOT_SEQUENCE_STALE' }, healthChanged: false });
         const getter = { get appId() { throw new Error('must not execute'); }, instanceId: 'instance' };
         expect(receiver.acceptPrepared(getter)).toMatchObject({ status: 'rejected', healthChanged: false });
-        expect(receiver.report()).toMatchObject({ health: 'ready', snapshotId: id, wrongSource: 2 });
+        expect(state(receiver)).toMatchObject({ status: 'ready', snapshot: { id } });
         receiver.close();
         expect(receiver.acceptPrepared(draft(3))).toMatchObject({ status: 'rejected', issue: { code: 'APP_STOPPED' }, healthChanged: false });
-        expect(receiver.report().health).toBe('stopped');
+        expect(state(receiver).status).toBe('stopped');
     });
 
     it('retains bounded rejection details and recovers only after a valid new capture', () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
         receiver.acceptPrepared(draft(1));
         expect(receiver.acceptPrepared({ ...draft(2), views: null })).toMatchObject({ status: 'rejected', healthChanged: true });
-        expect(receiver.report()).toMatchObject({ health: 'degraded', lastIssueCode: 'SNAPSHOT_INVALID' });
+        expect(state(receiver)).toMatchObject({ status: 'degraded', issue: { code: 'SNAPSHOT_INVALID' } });
         expect(receiver.acceptPrepared(draft(1))).toMatchObject({ status: 'rejected', healthChanged: false });
-        expect(receiver.report().health).toBe('degraded');
+        expect(state(receiver).status).toBe('degraded');
         expect(receiver.acceptPrepared(draft(3))).toMatchObject({ status: 'unchanged', healthChanged: true });
         receiver.close();
     });
 });
 
 describe('receiver-owned interaction lifetime', () => {
-    it('keeps preview independent and permanently stops interaction admission before first use', async () => {
+    it('permanently stops interaction admission before first use', async () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
         receiver.acceptPrepared(draft(1));
-        expect(receiver.preview()).toMatchObject({ status: 'previewed', views: [expect.objectContaining({ id: 'file' })] });
         expect(receiver.getInteractionStats()).toBeNull();
         await receiver.closeInteractions();
         expect(receiver.getInteractionStats()).toBeNull();
@@ -82,7 +87,6 @@ describe('receiver-owned interaction lifetime', () => {
         expect(interaction.adoptObservation(first.observation.observationId)).toEqual({ status: 'adopted' });
         const next = await interaction.observe();
         expect(next.status).toBe('observed');
-        expect(receiver.preview().status).toBe('previewed');
         expect((await interaction.observe()).status).toBe('rejected');
         await receiver.close();
         expect(receiver.getInteractionStats()).toMatchObject({ closed: true, });
@@ -92,7 +96,7 @@ describe('receiver-owned interaction lifetime', () => {
         let time = 0;
         const receiver = new SemanticSnapshotReceiver('app', 'instance', () => time);
         receiver.acceptPrepared(draft(1));
-        const core = (receiver as any).core, id = receiver.report().snapshotId!;
+        const core = (receiver as any).core, id = readyId(receiver)!;
         const interaction = receiver.interaction(policy, execution);
         const first = await interaction.observe();
         if (first.status !== 'observed') throw Error(first.issue.code);
@@ -126,6 +130,6 @@ describe('receiver-owned interaction lifetime', () => {
             .toMatchObject({ kind: 'refused', code: 'OBSERVATION_INTERNAL_ERROR' });
         await receiver.close();
         expect(receiver.getInteractionStats()).toMatchObject({ closed: true, });
-        expect(receiver.report().health).toBe('stopped');
+        expect(state(receiver).status).toBe('stopped');
     });
 });

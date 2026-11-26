@@ -116,9 +116,9 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     try {
         // The Core accepts this Tool name. The stricter native alias rule belongs
         // to Semantic Source, which must isolate only this App at projection time.
-        expect(bad.receiver.report()).toMatchObject({ health: 'ready', published: 1 });
+        const initial = bad.receiver['core'].store.readLatest('bad_app');
+        expect(initial).toMatchObject({ status: 'ready', snapshot: { revision: 1 } });
         expect(bad.registry.getView('workspace_1')?.viewType).toBe('InvalidAlias');
-        expect(JSON.stringify(bad.receiver.report())).not.toContain('AOTUI_TOOL_NAME_INVALID');
 
         const first = await source.getContext();
         contexts.push(first);
@@ -156,7 +156,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         // Repair the declaration in the same live Registry and publish a new
         // accepted Snapshot. The next context must expose its current Tool.
         bad.repairViewType('Workspace');
-        expect(bad.receiver.report()).toMatchObject({ health: 'ready', published: 2 });
+        expect(bad.receiver['core'].store.readLatest('bad_app')).toMatchObject({ status: 'ready', snapshot: { revision: 2 } });
         const recovered = await source.getContext();
         contexts.push(recovered);
         await recovered.adopt!();
