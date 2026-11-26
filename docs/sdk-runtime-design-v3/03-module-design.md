@@ -7,7 +7,7 @@
 <a id="mod-01"></a>
 ## MOD-01 · 跨语言 Host 共用页面呈现原语（消除 XML / Ref 漂移）
 
-- **三维度状态**：问题证实度 `已复现` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `已复现` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已实施待复核`
 
 **已拍板结论（2026-11-25）**：选方案 A，将标准 `<view>`（含 `region`）、`<desktop>` 应用目录、投影后业务 Tools、可选标准 `system-*` 控制工具声明、默认指令以及可直接交给 `adoptTurn()` 的页面名单统一收口到 `@aotui/runtime/adapters` 与 `aotui-stdio` 的无状态共享呈现出口。**同时修正核心窗口资格规则**：正文因预算省略（`hint`）的页面同样暂停业务 Tool 与 Ref 资格，Core 将 `{ receiverViews, refViews }` 合一为单一的 `activeViews`。
 
@@ -40,6 +40,8 @@
    - **归属边界**：这里管的是“调用落在哪个页面实例”；若 `Workspace` 等其他可见页面提供批量操作，涉及哪些文件以及文件是否被外部修改仍由 App 自己判断。对支持独立关闭的页面，鼓励作者声明 `onClose` 以便在 `hint`/`collapsed` 下直接关闭。
    - *(落地时需同步更新 `AGENTS.md` 第 28 行关于预算提示页工具资格的既有表述。)*
 3. **Host 保留的自主权**：哪些 App 对当前会话可见（被过滤 App 的名称、备注与诊断不得出现在目录中）、折叠状态与备注保存、预算降级策略、附加日志/诊断、最终消息分区顺序、Provider 适配与发送时机。
+4. **统一多实例工具入参路由与 `view_id` 拆包**：`@aotui/runtime/adapters` 与 `aotui-stdio` 按**本轮实际提供给模型的工具表**提供统一调用路由/拆包入口，依据 `multiplicity` 自动校验并剥离多实例顶层 `view_id`（单实例拒绝传入 `view_id`），严格沿用原 `appId`、`instanceId`、`observationId`、`toolId` 与 `invocationId`，避免关闭重开同名页后迟到调用误落新页；折叠状态、备注与展开策略仍由 Host 自主管理。
+5. **`aotui-stdio` 并发多路复用与 `desktop.output` 异步事件推送（不新增单 App 排队）**：去掉 [stdio.ts](../../runtime/src/stdio.ts#L216) 外层串行 `await respond(line)` 队头阻塞，按请求 `id` 并发分发并串行写出响应，订阅 `desktop.output` 以无 `id` 服务端事件帧推送 `attention_requested` 等信号；同步更新 [python-host.py](../../runtime/examples/python-host.py#L35) 使其按 `id` 匹配回复并与异步事件分流，**保持单 App 串行执行语义，不新增单 App 调用队列**。
 
 ### 验收标准（待实现后验证）
 
@@ -49,13 +51,16 @@
 | 双文件验证：`A.txt` 展示 `hint`（预算提示），`B.txt` 展示正文 | 共享 `edit` 工具仍可编辑 B；指定 A 为接收页或引用 A 页发布的 Ref 均被拒绝；腾出预算后下一轮采用 A 正文，A 自动恢复编辑与 Ref 资格（无需 `expand`）；`collapsed` 页仍需先 `expand`。 |
 | 空目录、仅管理模式、被过滤 App | 空目录时 `system-open_app` / `system-close_app` 按固定契约可用；被过滤 App 的名称、备注与诊断不出现在 `<desktop>` 与任何输出中。 |
 | 预算试算隔离 | 对同一候选连续试算多个布局，旧轮次仍可按原资格工作；最终采用选定布局对应的 `activeViews`，工具路由仍绑定原观察与原页面实例。 |
+| 多实例工具统一拆包路由 | TS 与 Python 共用统一拆包/路由入口（不再各自手写 `pop("view_id")`），关闭重开同名页后迟到调用不误落新页。 |
+| 跨语言异步提醒（1B 留后；Batch 3 实测通过，待复核） | Python 空闲时可及时收到已订阅 App 的 `requestAttention()`，自主决定是否观察，且不会把提醒误认作普通 RPC 回复。 |
+| 慢调用不阻塞跨 App 撤权（1B 留后；Batch 3 实测通过，待复核） | App A 的慢调用尚未返回时，Host 仍可经同一 `stdio` 连接及时撤销 App B 的页面资格，所有回复按请求 `id` 准确归位。 |
 
 ---
 
 <a id="mod-02"></a>
 ## MOD-02 · 缩短纯转发调用链、将 Console 包装移出 Core、收口校验边界
 
-- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已实施待复核`
 
 **已拍板结论（2026-11-25）**：采纳全部三项减法，并采用**保留 `SemanticSnapshotReceiver` 为内部可独立测试部件**的版本。不削弱任何随时间变化的资格复查。
 
@@ -93,7 +98,7 @@
 <a id="mod-03"></a>
 ## MOD-03 · 稳定外部参数 Schema 合同并逐步松绑 `typebox@1.4.3` 强绑定
 
-- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已选定待验证`
+- **三维度状态**：问题证实度 `代码已证实` ｜ 理想态明确度 `已明确` ｜ 实现方案状态 `已实施待复核`
 
 **已拍板结论（2026-11-25）**：选方案 A，且 `refParam` 选做法 1（直接在现有纯 JSON Schema `properties` 中与普通字段组合，暂缓 `objectSchema()` 及逐字段第三方库识别）。固化跨语言可读的 JSON Schema 2020-12 受支持子集与随包测试向量，`@aotui/sdk` 实现零第三方必装 `peerDependencies`，平等支持纯 JSON Schema、`StandardJSONSchemaV1`（如 Zod v4.2+ / Valibot 转换器）与可选 TypeBox（逐步放宽单一补丁锁死）。
 
