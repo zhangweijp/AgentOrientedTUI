@@ -632,24 +632,25 @@ export class AgentDriverV2 {
             // stop/dispose of the owning session cannot admit a late model call.
             if (!this.running) return;
 
-            this.logger.info('LLM response:', {
-                textLength: response.text.length,
-                toolCallsCount: response.toolCalls.length,
-                finishReason: response.finishReason,
-            });
-
             const assistant = response.assistantMessage ?? (response.toolCalls.length ? {
                 role: 'assistant' as const, content: response.toolCalls.map(call => ({
                     type: 'tool-call' as const, toolName: call.toolName, toolCallId: call.toolCallId, input: call.args,
                 })),
             } : undefined);
+            const content = assistant?.content;
+            const { usage } = response;
+            this.logger.info('LLM response:', {
+                textLength: typeof content === 'string' ? content.length
+                    : content?.reduce((length, part) => length + (part.type === 'text' ? part.text.length : 0), 0) ?? 0,
+                toolCallsCount: response.toolCalls.length,
+                usage: usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens },
+            });
             if (response.toolCalls.length || response.toolMessages?.length) this.toolTurn = turn = createToolTurn();
             if (assistant && this.config.onAssistantMessage) {
                 this.logger.debug('Emitting onAssistantMessage event');
                 this.config.onAssistantMessage(assistant);
             }
 
-            const { usage } = response;
             if (usage && this.config.onLLMUsage) {
                 void (async () => {
                     try { await this.config.onLLMUsage?.(usage); }

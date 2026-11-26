@@ -264,8 +264,8 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
       fixture.models.push({ at: Date.now(), messages: structuredClone(messages), toolNames: Object.keys(tools).sort() });
       record('model-call', { number: fixture.models.length });
       if (fixture.models.length > 4) throw new Error('Unexpected assistant self-wake');
-      if (fixture.models.length === 1) return { text: '', toolCalls: calls, assistantMessage: assistantCall, finishReason: 'tool-calls' };
-      return { text: 'Observed the receipt.', toolCalls: [], assistantMessage: finalAssistant, finishReason: 'stop' };
+      if (fixture.models.length === 1) return { toolCalls: calls, assistantMessage: assistantCall, };
+      return { toolCalls: [], assistantMessage: finalAssistant, };
     });
     try {
       host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);

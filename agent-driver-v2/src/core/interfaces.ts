@@ -140,8 +140,6 @@ export interface AgentDriverV2Config {
     workLoop?: {
         /** 信号防抖时间 (ms)，默认 300 */
         debounceMs?: number;
-        /** ToolCall 超时时间 (ms)，默认 30000 */
-        toolCallTimeoutMs?: number;
     };
 
     /** 
@@ -309,16 +307,12 @@ export interface LLMConfig {
  * LLMResponse - LLM 响应
  */
 export interface LLMResponse {
-    /** 生成的文本 */
-    text: string;
     /** Calls the Driver must dispatch to a Source. */
     toolCalls: Array<{
         toolCallId: string;
         toolName: string;
         args: unknown;
     }>;
-    /** 结束原因 */
-    finishReason: string;
     /** Token 使用情况 */
     usage?: LanguageModelUsage;
     /** Assistant Message (用于构建消息历史) */

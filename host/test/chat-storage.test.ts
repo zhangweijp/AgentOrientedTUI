@@ -28,7 +28,7 @@ it('writes and reloads ModelMessage history through the current Host while leavi
     });
     vi.spyOn(LLMClient.prototype, 'createInputMeasurement').mockResolvedValue(undefined);
     const provider = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({
-        text: 'Stored answer', toolCalls: [], finishReason: 'stop',
+        toolCalls: [],
         assistantMessage: { role: 'assistant', content: [{ type: 'reasoning', text: 'reasoned' }, { type: 'text', text: 'Stored answer' }] },
     });
     let host: Awaited<ReturnType<typeof createHostV2Core>> | undefined;

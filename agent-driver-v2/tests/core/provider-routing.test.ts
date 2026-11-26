@@ -52,7 +52,7 @@ it.each([
     });
     vi.stubGlobal('fetch', fetch);
     const response = await new LLMClient({ provider: { id, baseURL }, model: 'fixture', apiKey: 'test' }).call(messages, {});
-    expect(response).toMatchObject({ text: 'ok', finishReason: incompleteDetails ? 'length' : 'stop',
+    expect(response).toMatchObject({ assistantMessage: { role: 'assistant', content: [{ type: 'text', text: 'ok', providerOptions: { openai: { itemId: item.id } } }] },
         usage: { inputTokens: 11, outputTokens: 7, totalTokens: 18 } });
     expect(response.usage?.raw).toEqual(responsesUsage);
     expect(fetch).toHaveBeenCalledOnce();
@@ -74,7 +74,7 @@ it('uses the Anthropic adapter merge of start and delta usage', async () => {
     const response = await new LLMClient({
         provider: { id: 'anthropic', baseURL: 'https://anthropic.test/v1' }, model: 'fixture', apiKey: 'test',
     }).call(messages, {});
-    expect(response).toMatchObject({ text: 'ok', usage: {
+    expect(response).toMatchObject({ assistantMessage: { role: 'assistant', content: 'ok' }, usage: {
         inputTokens: 11, outputTokens: 7, totalTokens: 18, raw: { ...anthropicStart, ...anthropicDelta },
     } });
     expect(fetch).toHaveBeenCalledOnce();
@@ -93,7 +93,7 @@ it.each([true, false])('keeps the latest Google usageMetadata through later miss
     const response = await new LLMClient({
         provider: { id: 'google', baseURL: 'https://google.test/v1beta' }, model: 'fixture', apiKey: 'test',
     }).call(messages, {});
-    expect(response.text).toBe('ok');
+    expect(response.assistantMessage?.content).toBe('ok');
     if (reported) {
         expect(response.usage).toMatchObject({ inputTokens: 11, outputTokens: 7, totalTokens: 18 });
         expect(response.usage?.raw).toEqual(googleUsage);
@@ -134,7 +134,7 @@ it.each(['gateway/team/model:fast', 'gateway:team/model:fast'])(
         vi.stubGlobal('fetch', fetch);
         const inputBudget = vi.fn(async () => ({ contextWindow: 16_384, maxOutputTokens: 500 }));
         const client = new LLMClient({ provider: { id: 'gateway', baseURL: 'https://gateway.test/v1' }, model, inputBudget });
-        expect((await client.call(messages, {})).text).toBe('ok');
+        expect((await client.call(messages, {})).assistantMessage?.content).toBe('ok');
         expect(inputBudget).toHaveBeenCalledExactlyOnceWith({ providerId: 'gateway', modelId: model });
         expect(fetch).toHaveBeenCalledOnce();
     }

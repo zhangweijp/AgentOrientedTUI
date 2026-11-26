@@ -9,9 +9,8 @@ import type { ContextDrivenSource, AgentState } from '../../src/core/interfaces.
 
 function stubLlmCall(driver: AgentDriverV2) {
     const call = vi.fn().mockResolvedValue({
-        text: 'ok',
+
         toolCalls: [],
-        finishReason: 'stop',
         assistantMessage: {
             role: 'assistant',
             content: 'ok',
@@ -97,9 +96,8 @@ describe('AgentDriver State Machine', () => {
         const call = vi.fn().mockImplementation(async () => {
             await new Promise((resolve) => setTimeout(resolve, 10));
             return {
-                text: 'ok',
+
                 toolCalls: [],
-                finishReason: 'stop',
                 assistantMessage: {
                     role: 'assistant',
                     content: 'ok',

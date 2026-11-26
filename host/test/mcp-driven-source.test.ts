@@ -191,7 +191,7 @@ describe('MCP capture failure and live controls', () => {
             expect(tools.action).toBe(a);
             inspector = await source.getContext();
             a.execute = vi.fn(async () => 'replacement');
-            return { text: '', finishReason: 'tool-calls', toolCalls: [{ toolName: 'action', toolCallId: 'captured', args: {} }] };
+            return { toolCalls: [{ toolName: 'action', toolCallId: 'captured', args: {} }] };
         });
         const result = vi.fn();
         const driver = new AgentDriverV2({ sources: [source], llm: { model: 'controlled-mcp-identity', provider: { id: 'openai' } }, onToolResult: result });
@@ -259,7 +259,7 @@ describe('MCP capture failure and live controls', () => {
             started.resolve();
             if (phase === 'model') await proceed.promise;
             const names = phase === 'model' ? ['mcp-controlled-second'] : ['mcp-controlled-first', 'mcp-controlled-second'];
-            return { text: '', finishReason: 'tool-calls', toolCalls: names.map((toolName, i) => ({ toolName, toolCallId: 'gate-' + i, args: {} })) };
+            return { toolCalls: names.map((toolName, i) => ({ toolName, toolCallId: 'gate-' + i, args: {} })) };
         });
         const result = vi.fn(), error = vi.fn();
         const driver = new AgentDriverV2({ sources: [source], llm: { model: 'controlled-mcp-live', provider: { id: 'openai' } }, onToolResult: result, onRunError: error });

@@ -91,7 +91,7 @@ describe('Driver serial adoption boundary', () => {
             })),
         };
         const call = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({
-            text: '', toolCalls: [{ toolCallId: 'queued', toolName: 'apply', args: {} }], finishReason: 'tool-calls',
+            toolCalls: [{ toolCallId: 'queued', toolName: 'apply', args: {} }],
         });
         driver = new AgentDriverV2({ sources: [source], llm: { model: 'unused', provider: { id: 'openai' }, apiKey: 'unused' },
             workLoop: { debounceMs: 0 }, onToolResult: () => driver.pause(), onRunError });

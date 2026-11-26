@@ -298,13 +298,11 @@ export class LLMClient {
                 } : undefined,
             });
 
-            let text = '';
             if (callbacks?.onTextDelta || callbacks?.onReasoningDelta) {
                 for await (const part of result.fullStream) {
                     switch (part.type) {
                         case 'error': throw part.error;
                         case 'text-delta':
-                            text += part.text;
                             if (part.text) callbacks.onTextDelta?.(part.text);
                             break;
                         case 'reasoning-delta':
@@ -312,20 +310,17 @@ export class LLMClient {
                             break;
                     }
                 }
-            } else {
-                text = await result.text;
             }
 
+            const { messages: history } = await result.response;
             if (requestFailure !== undefined) throw requestFailure;
 
-            const { messages: history } = await result.response;
             const toolMessages = history.filter(message => message.role === 'tool');
             const completed = new Set(toolMessages.flatMap(getToolResultIds));
             const toolCalls = (await result.toolCalls).filter(call => call.providerExecuted !== true && !completed.has(call.toolCallId))
                 .map(call => ({ toolCallId: call.toolCallId, toolName: call.toolName, args: call.input }));
-            const finishReason = await result.finishReason;
             if (toolCalls.length > 0 && streamEnd?.missingDone() &&
-                finishReason === 'other' && (await result.rawFinishReason) === undefined) {
+                (await result.finishReason) === 'other' && (await result.rawFinishReason) === undefined) {
                 throw new Error('The model stream ended without a termination signal. Tool calls require a complete response.');
             }
             const usage = reportedUsage(await result.usage, streamRaw);
@@ -339,22 +334,13 @@ export class LLMClient {
                     assistantMessage = onlyPart.text.trim() ? { ...assistantMessage, content: onlyPart.text } : undefined;
             }
 
-            const response: LLMResponse = {
-                text,
+            return {
                 toolCalls,
-                finishReason: finishReason || 'unknown',
                 ...(usage && { usage }),
                 assistantMessage,
                 ...(toolMessages.length && { toolMessages }),
             };
 
-            this.logger.info('LLM call completed', {
-                textLength: text.length,
-                toolCallCount: toolCalls.length,
-                finishReason: response.finishReason,
-                usage: usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens },
-            });
-            return response;
         } catch (error) {
             if (requestFailure !== undefined) throw requestFailure;
             this.logger.error('LLM call failed', { model: this.config.model, providerId: this.config.provider.id,

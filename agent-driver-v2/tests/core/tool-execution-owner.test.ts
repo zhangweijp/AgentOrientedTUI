@@ -134,8 +134,7 @@ describe('Source tool execution owner', () => {
         expect(original.execute).toBe(execute);
         expect(Object.isFrozen(original)).toBe(true);
         expect(response).toEqual({
-            text: 'Run once.', toolCalls: [{ toolCallId: 'owner-call', toolName: 'counter', args: input }],
-            finishReason: 'tool-calls',
+            toolCalls: [{ toolCallId: 'owner-call', toolName: 'counter', args: input }],
             usage: {
                 inputTokens: 3, outputTokens: 5, totalTokens: 8,
                 inputTokenDetails: { noCacheTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 },
@@ -323,8 +322,7 @@ describe('Source tool execution owner', () => {
         expect(model.doStreamCalls[0].tools).toBeUndefined();
         expect(execute).not.toHaveBeenCalled();
         expect(response.toolCalls).toEqual([]);
-        expect(response.text).toBe('Run once.');
-        expect(response.finishReason).toBe('stop');
+        expect(response.assistantMessage?.content).toMatchObject([{ type: 'reasoning', text: 'Plan once.' }, { type: 'text', text: 'Run once.' }]);
     });
 
     it('releases the Context after a real provider failure without entering the executor', async () => {

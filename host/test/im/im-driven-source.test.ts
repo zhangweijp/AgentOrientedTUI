@@ -662,7 +662,7 @@ describe('IMDrivenSource history initialization', () => {
     const onAssistantMessage = vi.fn()
     const onRunError = vi.fn()
     const model = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({
-      text: 'complete', toolCalls: [], finishReason: 'stop',
+      toolCalls: [],
       usage: {
         inputTokens: 2, outputTokens: 1, totalTokens: 3,
         inputTokenDetails: { noCacheTokens: 2, cacheReadTokens: undefined, cacheWriteTokens: undefined },
