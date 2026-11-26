@@ -98,10 +98,10 @@ async function start(root, id, options = {}) {
 function scope(x) {
     const opened = x.host.getAppInteraction();
     assert.equal(opened.status, 'ready', JSON.stringify(opened));
-    const client = opened.interaction;
     return {
-        preview: client.preview,
-        prepare: () => x.turns.prepareObservation(client, () => x.host.getAppInteraction().status === 'ready'),
+        preview: () => x.host.preview(),
+        prepare: () => x.host.prepareObservation(client =>
+            x.turns.prepareObservation(client, () => x.host.getAppInteraction().status === 'ready')),
         adopt(candidate) {
             const result = x.turns.adoptTurn({ apps: [{ candidate }] });
             if (result.status !== 'adopted') {

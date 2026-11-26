@@ -1,6 +1,6 @@
 import Type from 'typebox';
 import { defineViewType, type ToolResult } from '@aotui/sdk';
-import type { IDEFile, IDESession } from '../core/ide-session.js';
+import type { IDEFile, IDEProjectionState, IDESession } from '../core/ide-session.js';
 
 const closed = { additionalProperties: false } as const;
 const positionSchema = Type.Object({ line: Type.Number(), character: Type.Number() }, closed);
@@ -47,11 +47,12 @@ export async function closeFileDetail(owner: IDESession, file: IDEFile): Promise
 }
 const sessionReady = (owner: IDESession) => owner.live && owner.ready;
 const fileReady = ({ owner }: FileDetailContext) => sessionReady(owner);
-const workspaceReady = (owner: IDESession) => sessionReady(owner) && owner.roots.length > 0;
+type WorkspaceContext = { readonly owner: IDESession; readonly state: IDEProjectionState };
+const workspaceReady = ({ owner, state }: WorkspaceContext) => sessionReady(owner) && state.roots.length > 0;
 
 function workspaceOperation(name: string, viewId = 'workspace', omitData = false) {
-    return async ({ input, context }: { input: Readonly<Record<string, unknown>>; context: IDESession }) =>
-        receipt(name, viewId, await context.invoke(name, input), omitData);
+    return async ({ input, context: { owner } }: { input: Readonly<Record<string, unknown>>; context: WorkspaceContext }) =>
+        receipt(name, viewId, await owner.invoke(name, input), omitData);
 }
 
 async function changeFile({ owner, file }: FileDetailContext, operation: string,
@@ -67,7 +68,7 @@ async function queryFile({ owner, file }: FileDetailContext, operation: string, 
 
 export const RootType = defineViewType({ name: 'Root', multiplicity: 'single', region: 'static' });
 
-export const WorkspaceType = defineViewType<IDESession>()({ name: 'Workspace', multiplicity: 'single', region: 'dynamic', tools: {
+export const WorkspaceType = defineViewType<WorkspaceContext>()({ name: 'Workspace', multiplicity: 'single', region: 'dynamic', tools: {
         search_files_by_pattern: { description: 'Search authorized workspaces by glob pattern and show the current results in SearchResult.',
             inputSchema: Type.Object({ pattern: Type.String({ description: 'Glob pattern to search.' }), cwd: Type.Optional(Type.String({ description: 'Optional directory inside a workspace root.' })) }, closed),
             enabled: workspaceReady,
@@ -95,7 +96,7 @@ export const WorkspaceType = defineViewType<IDESession>()({ name: 'Workspace', m
         },
         batch_edit: { description: 'Apply a bounded ordered list of edits to currently loaded files. Every edit needs filePath, oldString and newString.',
             inputSchema: Type.Object({ edits: Type.Array(opaqueJsonObject()) }, closed),
-            enabled: owner => workspaceReady(owner) && owner.files.size > 0,
+            enabled: context => workspaceReady(context) && context.state.files.size > 0,
             execute: workspaceOperation('batch_edit', 'workspace', true),
         },
         multi_open_dirs: { description: 'Expand the named authorized workspace directories.',
@@ -110,19 +111,19 @@ export const WorkspaceType = defineViewType<IDESession>()({ name: 'Workspace', m
         },
         add_folder_to_workspace: { description: 'Add an authorized absolute directory as a workspace root.',
             inputSchema: Type.Object({ folderPath: Type.String({ description: 'Absolute directory path to authorize.' }) }, closed),
-            enabled: sessionReady,
+            enabled: ({ owner }) => sessionReady(owner),
             execute: workspaceOperation('add_folder_to_workspace'),
         },
         remove_folder_from_workspace: { description: 'Remove an exact workspace root and close files no longer covered by another root.',
             inputSchema: Type.Object({ folderPath: Type.String({ description: 'Exact listed workspace root.' }) }, closed),
-            enabled: owner => sessionReady(owner) && (owner.roots.length > 0 || owner.unavailableRoots.length > 0),
+            enabled: ({ owner, state }) => sessionReady(owner) && (state.roots.length > 0 || state.unavailableRoots.length > 0),
             execute: workspaceOperation('remove_folder_from_workspace'),
         },
         refresh_workspace: { description: 'Reload current workspace trees and expand only their root directories.',
             inputSchema: Type.Object({}, closed),
             enabled: workspaceReady,
-            async execute({ context }) {
-                return receipt('refresh_workspace', 'workspace', await context.invoke('refresh_workspace', {}));
+            async execute({ context: { owner } }) {
+                return receipt('refresh_workspace', 'workspace', await owner.invoke('refresh_workspace', {}));
             },
         },
 } });
