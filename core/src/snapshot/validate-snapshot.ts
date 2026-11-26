@@ -161,7 +161,7 @@ export function validatePreparedSnapshot(
             str(ref.refType, path + '.refType');
             if (ref.scope !== 'private' && ref.scope !== 'protected' && ref.scope !== 'public')
                 fail(path + '.scope', 'Unknown Ref scope');
-            if (key !== refKey(owner, instanceId, id)) fail(path, 'Ref key does not match V2 instance identity');
+            if (key !== refKey(owner, instanceId, id)) fail(path, 'Ref key does not match its owning View mount');
             if (mounted.get(owner)?.instanceId !== instanceId) fail(path, 'Ref has stale or missing View instance');
             const target = obj(ref.target, path + '.target');
             if (target.kind !== 'snapshot-value') fail(path + '.target.kind', 'Unknown Ref target kind');

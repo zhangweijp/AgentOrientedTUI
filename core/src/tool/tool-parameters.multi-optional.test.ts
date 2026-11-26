@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { canonicalJson, compileToolParameters, refKey, utf8Size } from '@aotui/core';
+import { canonicalJson, compileToolParameters, refKey, utf8Size } from '../index.js';
 import {
     createAppInteraction, createSnapshotCore, prepareViewTypeParameters, REF_VALUE_LIMITS,
     RESOLVED_TOOL_ARGUMENT_LIMITS as ARGS,
-} from '@aotui/core/host';
-import { createViewOwnedTools } from '@aotui/core/producer';
+} from '../host.js';
+import { createViewOwnedTools } from '../producer.js';
 
 const ref = (kind = 'Note', payload: any = { type: 'object' }) => ({
     'x-aotui-ref-kind': kind, 'x-aotui-ref-value': payload });

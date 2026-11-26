@@ -1,5 +1,5 @@
 import { compileValueSchema, isRefId, SnapshotDataError, type JsonValue, type RefScope } from '@aotui/core';
-import type { AppFrameRef, createRefCapture, RefCapture, RefValueCheck } from '@aotui/core';
+import type { AppFrameRef, createRefCapture, RefValueCheck } from '@aotui/core';
 import { exportValueSchema, schemaDeclarationError, SchemaExportError } from '../tools/schema-export.js';
 import type { AuthorSchema, JsonSchemaObject, SchemaInput } from '../tools/schema-types.js';
 import type { DeepReadonly } from '../tools/view-type-tool.js';
@@ -78,14 +78,6 @@ export function formatRef(label: string, { id, value, refType, scope, array }: P
 
 const schemas = new WeakMap<AuthorSchema, { valueSchema: JsonSchemaObject; validate: RefValueCheck }>();
 
-function capturedRefValue(viewId: string, id: string, capture: RefCapture): JsonValue {
-    if ('issue' in capture) {
-        const { code, path, message } = capture.issue;
-        throw new SnapshotDataError(code, 'Ref ' + viewId + '.' + id + (path ? ' ' + path : ''), message);
-    }
-    return capture.value;
-}
-
 function validator(schema: AuthorSchema) {
     const existing = schemas.get(schema);
     if (existing) return existing;
@@ -107,21 +99,20 @@ function publicationSchema(id: string, schema: AuthorSchema) {
     }
 }
 
-export type CapturedPublication = Omit<AppFrameRef, 'value'> & { readonly capture: RefCapture };
-
 export function capturePublication(
-    capture: ReturnType<typeof createRefCapture>, { id, value, refType, scope, schema, array }: PublishedRef,
-): CapturedPublication {
+    viewId: string, capture: ReturnType<typeof createRefCapture>, { id, value, refType, scope, schema, array }: PublishedRef,
+): AppFrameRef {
     validateRefMarker(id, refType, scope);
     const contract = publicationSchema(id, schema);
+    const captured = capture(value, array ? item => !Array.isArray(item)
+        ? { path: '$', message: 'ArrayRef requires an array' } : contract.validate(item) : contract.validate);
+    if ('issue' in captured) {
+        const { code, path, message } = captured.issue;
+        throw new SnapshotDataError(code, 'Ref ' + viewId + '.' + id + (path ? ' ' + path : ''), message);
+    }
     return {
         id, scope, ...(refType === undefined ? {} : { refType }),
         ...(array ? { array } : {}), valueSchema: contract.valueSchema,
-        capture: capture(value, array ? captured => !Array.isArray(captured)
-            ? { path: '$', message: 'ArrayRef requires an array' } : contract.validate(captured) : contract.validate),
+        value: captured.value,
     };
-}
-
-export function publishedValue(view: string, { capture, ...metadata }: CapturedPublication): AppFrameRef {
-    return { ...metadata, value: capturedRefValue(view, metadata.id, capture) };
 }

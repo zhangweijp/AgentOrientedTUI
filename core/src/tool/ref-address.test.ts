@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRefAddress } from '@aotui/core/host';
+import { parseRefAddress } from './ref-parameters.js';
 
 describe('qualified Ref address syntax', () => {
     it.each([

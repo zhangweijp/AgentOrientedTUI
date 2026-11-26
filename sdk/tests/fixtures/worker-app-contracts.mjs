@@ -18,62 +18,59 @@ const workRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } 
 facts.workItemsExamples = [];
 try {
  const desktop = await workRuntime.createDesktop('work-items');
- const examples = [['plain', './core-out/work-items-plain.js']];
- for (const [author, example] of examples) {
-  const appId = 'work_' + author;
-  const entry = new URL('./work-' + author + '.mjs', import.meta.url);
-  await fs.writeFile(entry, 'import { workItemsApp } from ' + JSON.stringify(example) + ';\n' +
-    'export default workItemsApp(' + JSON.stringify(appId) + ');\n');
-  const app = await desktop.installDynamicWorkerApp(entry.href, { installationId: appId, name: appId,
-    config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
-  let observation, turn;
-  async function observe() {
-   const end = Date.now() + 15000;
-   for (;;) {
-    const captured = await app.observe();
-    if (captured.status === 'prepared') {
-     const adopted = desktop.adoptTurn({ apps: [{ candidate: captured.candidate }] });
-     assert.equal(adopted.status, 'adopted', JSON.stringify(adopted));
-     observation = captured.candidate.observation;
-     turn = adopted.turn;
-     return observation;
-    }
-    if (Date.now() > end) throw Error('Work Items projection unavailable: ' + JSON.stringify(captured.issue));
-    await new Promise(resolve => setTimeout(resolve, 20));
+ const appId = 'work_plain';
+ const entry = new URL('./work-plain.mjs', import.meta.url);
+ await fs.writeFile(entry, 'import { workItemsApp } from "./core-out/work-items-plain.js";\n' +
+   'export default workItemsApp(' + JSON.stringify(appId) + ');\n');
+ const app = await desktop.installDynamicWorkerApp(entry.href, { installationId: appId, name: appId,
+   config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+ let observation, turn;
+ async function observe() {
+  const end = Date.now() + 15000;
+  for (;;) {
+   const captured = await app.observe();
+   if (captured.status === 'prepared') {
+    const adopted = desktop.adoptTurn({ apps: [{ candidate: captured.candidate }] });
+    assert.equal(adopted.status, 'adopted', JSON.stringify(adopted));
+    observation = captured.candidate.observation;
+    turn = adopted.turn;
+    return observation;
    }
+   if (Date.now() > end) throw Error('Work Items projection unavailable: ' + JSON.stringify(captured.issue));
+   await new Promise(resolve => setTimeout(resolve, 20));
   }
-  try {
-   const first = await observe();
-   const selectedView = first.views.find(view => view.id === selectedViewId);
-   for (const marker of ['(protected selected: Data)', '(protected items: Data[])', '(items[0])']) {
-    assert.ok(selectedView.content.value.includes(marker), marker);
-   }
-   const selections = [
-    [otherViewId, '$ref.' + appId + '.' + otherViewId + '.selected', false],
-    [selectedViewId, '$ref.' + appId + '.' + selectedViewId + '.selected', null],
-    [otherViewId, '$ref.' + appId + '.' + selectedViewId + '.items[0]', 0],
-    [otherViewId, '$ref.' + appId + '.' + selectedViewId + '.items', [0, false, '', null, { nested: [1, [false]] }]],
-   ];
-   for (const [index, [id, selected, expected]] of selections.entries()) {
-    const current = observation ?? await observe();
-    assert.deepEqual(current.views.filter(view => view.type === 'Item').map(view => view.id), [otherViewId, selectedViewId]);
-    const tools = current.tools.filter(tool => tool.name === 'inspect');
-    assert.equal(tools.length, 1);
-    const result = await turn.invoke(appId, { observationId: current.observationId, toolId: tools[0].id,
-     invocationId: 'work-' + index, viewId: id, input: {  selected } });
-    assert.equal(result.receipt?.outcome.status, 'succeeded', JSON.stringify(result));
-    const updated = await observe();
-    const original = await app.readReceipt({ observationId: current.observationId, invocationId: 'work-' + index });
-    assert.deepEqual(original, result);
-    const workspace = updated.views.find(view => view.id === 'workspace_1').content.value;
-    assert.deepEqual(JSON.parse(workspace.trim().split('\n').at(-1)).selected, expected);
-   }
-   facts.workItemsExamples.push({ author, views: [otherViewId, selectedViewId],
-    selectedValues: selections.map(([, , value]) => value) });
-  } finally {
-   turn?.release();
-   assert.equal((await app.beginClose().completion).ok, true);
+ }
+ try {
+  const first = await observe();
+  const selectedView = first.views.find(view => view.id === selectedViewId);
+  for (const marker of ['(protected selected: Data)', '(protected items: Data[])', '(items[0])']) {
+   assert.ok(selectedView.content.value.includes(marker), marker);
   }
+  const selections = [
+   [otherViewId, '$ref.' + appId + '.' + otherViewId + '.selected', false],
+   [selectedViewId, '$ref.' + appId + '.' + selectedViewId + '.selected', null],
+   [otherViewId, '$ref.' + appId + '.' + selectedViewId + '.items[0]', 0],
+   [otherViewId, '$ref.' + appId + '.' + selectedViewId + '.items', [0, false, '', null, { nested: [1, [false]] }]],
+  ];
+  for (const [index, [id, selected, expected]] of selections.entries()) {
+   const current = observation ?? await observe();
+   assert.deepEqual(current.views.filter(view => view.type === 'Item').map(view => view.id), [otherViewId, selectedViewId]);
+   const tools = current.tools.filter(tool => tool.name === 'inspect');
+   assert.equal(tools.length, 1);
+   const result = await turn.invoke(appId, { observationId: current.observationId, toolId: tools[0].id,
+    invocationId: 'work-' + index, viewId: id, input: {  selected } });
+   assert.equal(result.receipt?.outcome.status, 'succeeded', JSON.stringify(result));
+   const updated = await observe();
+   const original = await app.readReceipt({ observationId: current.observationId, invocationId: 'work-' + index });
+   assert.deepEqual(original, result);
+   const workspace = updated.views.find(view => view.id === 'workspace_1').content.value;
+   assert.deepEqual(JSON.parse(workspace.trim().split('\n').at(-1)).selected, expected);
+  }
+  facts.workItemsExamples.push({ author: 'plain', views: [otherViewId, selectedViewId],
+   selectedValues: selections.map(([, , value]) => value) });
+ } finally {
+  turn?.release();
+  assert.equal((await app.beginClose().completion).ok, true);
  }
 } finally {
  const report = await workRuntime.beginClose().completion;

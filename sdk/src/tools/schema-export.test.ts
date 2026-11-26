@@ -4,7 +4,7 @@ import Type from 'typebox';
 import schemaContractVectors from '../../../core/src/tool/schema-contract-vectors.json' with { type: 'json' };
 import { exportToolSchema, exportValueSchema } from './schema-export.js';
 import { defineViewType, refParam } from './view-type-tool.js';
-import { arrayRef, capturePublication, formatRef, publishedValue, ref } from '../app-factory/refs.js';
+import { arrayRef, capturePublication, formatRef, ref } from '../app-factory/refs.js';
 import type { JsonSchemaObject, StandardJSONSchemaV1 } from './schema-types.js';
 
 function standard(declaration: JsonSchemaObject, targets: string[] = []): StandardJSONSchemaV1 {
@@ -353,7 +353,7 @@ it('checks Ref IDs at declaration and uses the converted value Schema for marker
   }
   const published = ref('_person2', payload, options);
   expect(formatRef('小梅', published)).toBe('[小梅](protected _person2: object)');
-  expect(publishedValue('list', capturePublication(createRefCapture(), published))).toMatchObject({
+  expect(capturePublication('list', createRefCapture(), published)).toMatchObject({
     id: '_person2', refType: 'object', value: payload, valueSchema: { type: 'object', properties: { 'display.name': { type: 'string' } } },
   });
   const list = arrayRef('people', [payload], { scope: 'protected', itemType: 'Person',
