@@ -239,47 +239,44 @@ export default createApp({
             return null;
         };
 
-        const updateTask = (
+        const updateTask = async (
             taskId: string,
             updates: { title?: string; description?: string }
         ) => {
-            const run = async () => {
-                const location = findTaskLocation(taskId);
-                if (!location) {
-                    return false;
-                }
-                const { planId, phaseId } = location;
-                const updated = await planningService.updateTask(desktopId, taskId, updates);
-                if (!updated) {
-                    return false;
-                }
-                setPlans((prev: Plan[]) =>
-                    prev.map((plan: Plan) => {
-                        if (plan.id !== planId) {
-                            return plan;
+            const location = findTaskLocation(taskId);
+            if (!location) {
+                return false;
+            }
+            const { planId, phaseId } = location;
+            const updated = await planningService.updateTask(desktopId, taskId, updates);
+            if (!updated) {
+                return false;
+            }
+            setPlans((prev: Plan[]) =>
+                prev.map((plan: Plan) => {
+                    if (plan.id !== planId) {
+                        return plan;
+                    }
+                    const nextPhases = plan.phases.map((phase: Phase) => {
+                        if (phase.id !== phaseId) {
+                            return phase;
                         }
-                        const nextPhases = plan.phases.map((phase: Phase) => {
-                            if (phase.id !== phaseId) {
-                                return phase;
+                        const nextTasks = phase.tasks.map((task: TaskItem) => {
+                            if (task.id !== taskId) {
+                                return task;
                             }
-                            const nextTasks = phase.tasks.map((task: TaskItem) => {
-                                if (task.id !== taskId) {
-                                    return task;
-                                }
-                                return {
-                                    ...task,
-                                    title: updates.title ?? task.title,
-                                    description: updates.description ?? task.description
-                                };
-                            });
-                            return { ...phase, tasks: nextTasks };
+                            return {
+                                ...task,
+                                title: updates.title ?? task.title,
+                                description: updates.description ?? task.description
+                            };
                         });
-                        return { ...plan, phases: nextPhases };
-                    })
-                );
-                return true;
-            };
-            return run();
+                        return { ...phase, tasks: nextTasks };
+                    });
+                    return { ...plan, phases: nextPhases };
+                })
+            );
+            return true;
         };
 
         const deleteTask = async (taskId: string) => {

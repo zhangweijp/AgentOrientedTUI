@@ -24,12 +24,12 @@ Opening files publishes FileDetail Views and makes the IDE's FileDetail Tool set
 
 File contents, search matches and LSP results appear in their current Views. Successful search, LSP and batch Tool results carry receipts rather than duplicate result collections. Receipts point to the actual FileDetail ID while that View remains current; delete/close receipts point to Workspace, and a failed View refresh preserves its warning and points to Workspace for recovery.
 
-See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup. Host usage and outcomes are in the [Runtime README](../../runtime/README.md).
+See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup. See the README shipped with `@aotui/runtime` for Host usage and outcomes.
 
 ## Runtime Requirements
 
 - Node.js 22.13 or newer for the built-in SQLite write reservations.
-- Matching SDK 0.9.0 and Runtime 8.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v7` authoring, native value and Ref parameters, Snapshot 7, and `app-lifecycle-v2`. Runtime checks the `createTUIApp` authoring marker before initialization.
+- Matching SDK 0.9.0 and Runtime 8.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v8` authoring, native value and Ref parameters, Snapshot 8, and `app-lifecycle-v2`. Runtime checks the `createApp` authoring marker before initialization.
 - TypeBox 1.4.3 for the IDE's single-source Tool parameter declarations.
 - Optional local language servers for advanced code intelligence
 

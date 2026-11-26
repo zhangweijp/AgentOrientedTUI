@@ -5,11 +5,9 @@ import { resultListBody } from '../src/tui/ResultListView.js';
 import type { SearchResultItem } from '../src/types.js';
 
 const result = (url: string): SearchResultItem => ({
-    id: url,
     title: url,
     url,
     snippet: '',
-    rank: 1,
 });
 
 function openResultTool(results: SearchResultItem[], onOpenResult: (url: string) => Promise<string>) {

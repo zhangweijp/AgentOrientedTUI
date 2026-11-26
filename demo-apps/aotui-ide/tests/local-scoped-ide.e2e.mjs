@@ -109,11 +109,14 @@ try {
         const started = app.record.events.find(event => event.event === 'starting');
         assert.equal(started.runtimeModule, pathToFileURL(await fs.realpath(path.join(consumer, 'node_modules/@aotui/runtime/dist/index.js'))).href);
         assert.equal(started.ideModule, pathToFileURL(await fs.realpath(path.join(consumer, 'node_modules/@agentina/aotui-ide/dist/index.js'))).href);
+        assert.equal(ready.observation.tools.some(tool => tool.name === 'write_file'), false);
         await app.call(ready.observation, 'multi_open_file', { filePaths: [file] });
         await app.send({ op: 'release', observationId: ready.observation.observationId });
         const opened = await app.observe('workspace', observation => observation.views.some(view => view.content?.value.includes(file)));
-        assert.equal(opened.tools.some(tool => tool.name === 'write_file'), false);
-        const fileView = (await app.send({ op: 'views' })).find(view => view.viewType === 'FileDetail' && view.viewName === 'File: ' + file); assert.ok(fileView);
+        assert.equal(opened.tools.filter(tool => tool.name === 'write_file').length, 1);
+        const views = await app.send({ op: 'views' });
+        for (let i = 0; i < 20; i++) assert.deepEqual(await app.send({ op: 'views' }), views);
+        const fileView = views.find(view => view.viewType === 'FileDetail' && view.viewName === 'File: ' + file); assert.ok(fileView);
         const writable = await app.observe(fileView.viewId);
         const written = await app.call(writable, 'write_file', { content: 'export const answer = 2;\n' });
         assert.equal(await fs.readFile(file, 'utf8'), 'export const answer = 2;\n');
@@ -129,7 +132,7 @@ try {
         assert.equal(hovered.result.receipt.outcome.value.data.view_id, view);
         assert.equal(hovered.result.receipt.outcome.value.data.value, undefined);
         const hoverView = await app.observe(view, observation => observation.views.some(v => v.content?.value.includes('### hover')));
-        const hoverJson = hoverView.views[0].content.value.split('### hover\n')[1].match(/```[^\n]*\n([\s\S]*?)\n```/);
+        const hoverJson = hoverView.views.find(page => page.id === view).content.value.split('### hover\n')[1].match(/```[^\n]*\n([\s\S]*?)\n```/);
         assert.ok(JSON.parse(hoverJson[1]).value);
         await app.send({ op: 'release', observationId: hoverView.observationId });
         const report = await app.close();

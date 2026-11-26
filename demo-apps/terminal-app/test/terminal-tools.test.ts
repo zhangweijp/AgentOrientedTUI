@@ -8,7 +8,6 @@ const terminal = (id: string, status: TerminalSession['status'] = 'idle'): Termi
     id,
     cwd: '/project',
     status,
-    createdAt: '2026-11-02T00:00:00.000Z',
     commands: [],
     outputTail: 20,
 });

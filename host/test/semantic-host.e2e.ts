@@ -39,7 +39,29 @@ let sequence = 0;
 const contexts = new Set<any>();
 const adoptedContexts = new WeakSet<object>();
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const server = http.createServer((_request, response) => {
+const server = http.createServer((request, response) => {
+    if (request.url === '/ascii-svg' || request.url === '/wide-svg') {
+        response.setHeader('content-type', 'image/svg+xml');
+        response.write('<svg><!--');
+        response.write(request.url === '/ascii-svg' ? 'a'.repeat(3 * 1024 * 1024) : '中'.repeat(2 * 1024 * 1024));
+        response.end('--></svg>');
+        return;
+    }
+    if (request.url === '/image' || request.url === '/large-image' || request.url === '/broken-image') {
+        response.setHeader('content-type', 'image/png');
+        if (request.url === '/large-image') {
+            response.write(Buffer.alloc(5 * 1024 * 1024));
+            response.end(Buffer.from('x'));
+        } else if (request.url === '/broken-image') {
+            response.write(Buffer.from('partial'));
+            setImmediate(() => response.destroy());
+        } else {
+            const image = Buffer.alloc(5 * 1024 * 1024);
+            image.write('synthetic image response');
+            response.end(image);
+        }
+        return;
+    }
     response.setHeader('content-type', 'text/html');
     response.end('<h1>SEMANTIC_BROWSER_OK</h1><p>Current page fixture.</p>');
 });
@@ -93,9 +115,9 @@ async function invoke(context: any, name: string, args: unknown, expected = 'suc
     if (expected === 'rejected' || expected === 'failed') assert.ok(result.error, 'Rejected/failed outcomes are errors');
     return result;
 }
-async function call(name: string, args: unknown) {
+async function call(name: string, args: unknown, expected = 'succeeded') {
     const context = await observe();
-    try { return await invoke(context, name, args); }
+    try { return await invoke(context, name, args, expected); }
     finally { release(context); }
 }
 async function eventually(check: (context: any) => boolean, label: string) {
@@ -269,7 +291,8 @@ try {
     const terminalId = (createdTerminal.result as any).view_id;
     assert.equal(instruction(terminal, 'terminal'), terminalInstruction);
     assert.equal(typeof terminalId, 'string');
-    assert.ok(modelViews(terminal.messages).some(page => page.appId === 'terminal' && page.type === 'Terminal' && page.id === terminalId));
+    const currentTerminal = modelViews(terminal.messages).find(page => page.appId === 'terminal' && page.type === 'Terminal' && page.id === terminalId);
+    assert.ok(currentTerminal?.markup.includes(project), 'Terminal starts in the selected project');
     const createdSecond = await invoke(terminal, terminalTool('new_terminal_and_send_command'), { command: "printf 'SECOND_TERMINAL_OK\\n'" });
     const secondId = (createdSecond.result as any).view_id;
     const twoTerminals = await eventually(context => content(context).includes('SECOND_TERMINAL_OK') &&
@@ -330,6 +353,50 @@ try {
     assert.equal(instruction(pageClosed, browserId), browserInstruction);
     assert.ok(!modelViews(pageClosed.messages).some(view => view.appId === browserId && view.type === 'Page'));
     release(pageClosed);
+    const baseURL = `http://127.0.0.1:${address.port}`;
+    assert.equal((await call(fetchPage, { url: baseURL + '/image' })).outcomeStatus, 'succeeded');
+    const imagePage = await observe();
+    assert.match(content(imagePage), /Content Type: image\/png/);
+    assert.match(content(imagePage), /Image fetched successfully/);
+    assert.doesNotMatch(content(imagePage), /data:image\/png|synthetic image response|SEMANTIC_BROWSER_OK/);
+    release(imagePage);
+    for (const route of ['/ascii-svg', '/wide-svg', '/large-image', '/broken-image']) {
+        const failed = await call(fetchPage, { url: baseURL + route, format: 'html' }, 'failed');
+        assert.equal(failed.error?.code, 'FETCH_FAILED');
+        if (route !== '/broken-image') assert.match(failed.error?.message ?? '', /size exceeds 5MB/);
+        const failedPage = await observe();
+        const body = modelViews(failedPage.messages).find(view => view.appId === browserId && view.type === 'Page')?.markup ?? '';
+        assert.match(body, /Status: error/);
+        assert.doesNotMatch(body, /Image fetched successfully/);
+        release(failedPage);
+    }
+    await call(fetchPage, { url: baseURL + '/fixture', format: 'text' });
+    const recovered = await observe();
+    assert.ok(modelViews(recovered.messages).some(view => view.appId === browserId && view.type === 'Page'
+        && view.markup.includes('SEMANTIC_BROWSER_OK')));
+    release(recovered);
+
+    const constrained = await runtime.createDesktop('browser_limit');
+    const installation = await constrained.registerPendingApp({ installationId: 'browser',
+        localPath: path.join(repo, 'demo-apps/lite-browser-app'), projectionLimits: { maxViews: 2 } });
+    const constrainedApp = await constrained.openApp(installation);
+    const constrainedSource = new SemanticAOTUIDrivenSource(constrained);
+    const limited = await constrainedSource.getContext();
+    try {
+        await limited.adopt!();
+        const capacity = await limited.executeTool!(fetchPage, { url: baseURL + '/image' }, 'image-over-capacity');
+        assert.equal(capacity?.error?.code, 'OBSERVATION_CAPACITY');
+        assert.match(capacity?.error?.message ?? '', /does not fit/);
+        const preserved = await constrainedApp.preview();
+        if (preserved.status !== 'previewed') throw Error(preserved.issue.message);
+        assert.deepEqual(preserved.views.map(view => view.type).sort(), ['Root', 'Search']);
+    } finally {
+        await limited.release?.();
+        constrainedSource.dispose();
+        assert.equal((await constrained.beginClose().completion).resourcesReleased, true);
+    }
+    pass('Browser bounds raw bytes and decoded text, recovers after read errors, and preserves pages on capacity rejection');
+
     const browserClosed = await call('system-close_app', { app_id: browserId });
     assert.deepEqual(browserClosed.result, { success: true, app_id: browserId });
     assert.equal(installedBrowser()?.status, 'closed');

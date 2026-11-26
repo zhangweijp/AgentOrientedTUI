@@ -115,12 +115,10 @@ export const runWebSearch = async (
         const payload = await response.text();
         const summary = extractSummary(payload);
         const urls = extractUrls(summary);
-        const results = urls.map((url, index) => ({
-            id: `sr_${index + 1}`,
+        const results = urls.map(url => ({
             title: titleForUrl(url),
             url,
-            snippet: snippetForUrl(summary, url),
-            rank: index + 1
+            snippet: snippetForUrl(summary, url)
         }));
         return { summary, results };
     } finally {
