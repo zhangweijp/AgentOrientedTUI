@@ -14,7 +14,6 @@
       "minimatch@3.1.2": "3.1.4",
       "minimatch@9.0.5": "9.0.7",
       "picomatch@4.0.3": "4.0.4",
-      "preact": "10.29.1",
       "rollup": "^4.60.1",
       "@aotui/core": "link:./core",
       "@aotui/agent-driver-adapter": "link:./agent-driver-adapter",
@@ -26,8 +25,6 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^5.1.3",
     "happy-dom": "^21.0.4",
-    "linkedom": "^0.18.12",
-    "preact": "10.29.1",
     "vitest": "^4.1.12",
     "@aotui/core": "0.1.0",
     "@aotui/agent-driver-adapter": "0.5.0",

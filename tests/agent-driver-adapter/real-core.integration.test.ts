@@ -5,15 +5,15 @@ import { join } from 'node:path';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 import { SemanticSnapshotReceiver } from '../../runtime/src/adapters/snapshot/receiver.js';
-import { Desktop } from '../../runtime/src/engine/core/desktop.js';
-import type { AppManager } from '../../runtime/src/engine/app/manager.js';
+import { createCandidateScope } from '../../runtime/src/engine/core/candidate-scope.js';
+import { createRuntime, type AppExecutionBackend, type AppExecutionProjection, type RunningApp } from '../../runtime/src/index.js';
 import { commitAppFrame, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/core/producer';
 import { compileToolParameters } from '@aotui/core';
 import type { AppDiscoveryInfo, IDesktop } from '../../runtime/src/spi/runtime/kernel.interface.js';
-import type { ExecutionBinding, InvocationContext, AppInteractionPolicy } from '@aotui/core';
+import type { ExecutionBinding, InvocationContext } from '@aotui/core';
 import type { ViewToolInvocationTerminal } from '@aotui/core';
 import type { SnapshotCore } from '@aotui/core';
-import { fixtureProvider } from '../fixtures/batch-two-support.mjs';
+import { fixtureProvider, watchUntil } from '../fixtures/batch-two-support.mjs';
 
 type ReceiverCoreInspection = { core: SnapshotCore };
 
@@ -94,6 +94,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     const policy = { project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true };
     const desktop = {
         id: 'real-core-test-desktop',
+        createCandidateScope,
         adoptTurn: turns.adoptTurn,
         getRunningApp: (appId: string, instanceId: string) => {
             const assembly = assemblies.find(item => item.app.appId === appId && item.app.appInstanceId === instanceId);
@@ -207,6 +208,7 @@ it('sends no candidate HTTP when A closes or remounts inside B verification', as
         let failures = 0;
         const policy = { project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true };
         const desktop = {
+            createCandidateScope,
             adoptTurn: (input: Parameters<typeof turns.adoptTurn>[0]) => {
                 if (duringNextAdoption) atRead = () => {
                     failures++;
@@ -273,33 +275,53 @@ it('sends no candidate HTTP when A closes or remounts inside B verification', as
 
 it('uses the Host App limit even when an adopted request contains more than 128 sources', async () => {
     const maxApps = 150;
-    const assemblies = Array.from({ length: maxApps + 1 }, (_, index) => {
-        const id = 'capacity_' + index;
-        return createApp(id, id, id + '_run', 'Workspace', 'Short page.');
-    });
-    const byId = new Map(assemblies.map(assembly => [assembly.app.appId, assembly]));
-    const desktop = new Desktop('capacity');
-    const manager = (desktop as unknown as { appManager: AppManager }).appManager;
-    let directorySize = 0;
-    const policy: AppInteractionPolicy = {
-        project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true,
+    const frame: AppExecutionProjection = {
+        revision: 1, refs: [], tools: [],
+        views: [{ id: 'workspace', type: 'Workspace', name: 'Workspace', region: 'dynamic',
+            body: 'Short page.', viewInstanceId: 'workspace-mount', tools: [] }],
     };
-    vi.spyOn(manager, 'listApps').mockImplementation(() => assemblies.slice(0, directorySize).map(item => item.app));
-    vi.spyOn(manager, 'isRunningApp').mockImplementation((id, instance) => byId.get(id)?.app.appInstanceId === instance);
-    vi.spyOn(manager, 'getManagedApp').mockImplementation(id => {
-        const app = byId.get(id)?.app;
-        return app ? { appInstanceId: app.appInstanceId } as ReturnType<AppManager['getManagedApp']> : undefined;
-    });
-    const issueClient = vi.spyOn(manager, 'getAppInteraction').mockImplementation((id, instance) => {
-        const assembly = byId.get(id);
-        if (!assembly || assembly.app.appInstanceId !== instance) throw new Error('Unexpected capacity fixture identity');
-        return { status: 'ready', interaction: assembly.receiver.interaction(policy, assembly.execution) };
-    });
+    // Use real Runtime registrations and observations with a lightweight execution backend for the 151 Apps.
+    const observations: string[] = [];
+    const backend: AppExecutionBackend = {
+        start({ instanceId }, emit) {
+            return {
+                send({ kind, id }) {
+                    switch (kind) {
+                        case 'initialize': return emit({ kind: 'reply', id, status: 'ready' });
+                        case 'open':
+                            emit({ kind: 'projection', frame });
+                            return emit({ kind: 'reply', id, status: 'done' });
+                        case 'observe':
+                            observations.push(instanceId);
+                            return emit({ kind: 'projection', id, frame });
+                        case 'stop':
+                            return emit({ kind: 'reply', id, status: 'done', cleanup: { state: 'stopped', issues: [] } });
+                        case 'close':
+                            return emit({ kind: 'reply', id, status: 'done', cleanup: { state: 'completed', issues: [] } });
+                        default: throw new Error('Unexpected execution request for the capacity fixture: ' + kind);
+                    }
+                },
+                terminate: () => emit({ kind: 'exited' }),
+            };
+        },
+    };
+    const receivers = vi.spyOn(SemanticSnapshotReceiver.prototype, 'interaction');
+    const runtime = createRuntime({ executionBackends: { capacity: backend } });
+    const desktop = await runtime.createDesktop('capacity');
+    const issueClient = vi.spyOn(desktop, 'getRunningApp');
     const bind = vi.spyOn(desktop, 'adoptTurn');
     const provider = await fixtureProvider();
     const facts = [];
     try {
-        for (directorySize of [128, 129, 151]) {
+        const apps: RunningApp[] = [];
+        for (const directorySize of [128, 129, maxApps + 1]) {
+            for (let index = apps.length; index < directorySize; index++) {
+                const name = 'capacity_' + index;
+                const installation = await desktop.registerPendingApp({ installationId: name, name, backend: 'capacity' });
+                apps.push(await desktop.openApp(installation));
+            }
+            expect(desktop.listApps()).toHaveLength(directorySize);
+            expect(receivers.mock.contexts).toHaveLength(directorySize);
             const errors: Error[] = [];
             const source = new SemanticAOTUIDrivenSource(desktop, { maxApps, includeInstruction: false });
             const driver = new AgentDriverV2({ sources: [source], llm: {
@@ -308,46 +330,50 @@ it('uses the Host App limit even when an adopted request contains more than 128 
             }, onRunError: error => errors.push(error) });
             bind.mockClear();
             issueClient.mockClear();
+            observations.length = 0;
             const sent = provider.requests.length;
             try {
                 await driver.trigger();
-                await (driver as unknown as { runInFlight?: Promise<void> }).runInFlight;
+                await watchUntil(() => driver.getState() === 'idle');
                 const newRequests = provider.requests.slice(sent);
                 const pages = newRequests.flatMap(request => request.body.messages.filter(({ role, content }) =>
                     role === 'user' && typeof content === 'string' && content.startsWith('<view ')));
+                const adopted = bind.mock.results.filter(result => result.type === 'return' && result.value.status === 'adopted');
                 facts.push({ directorySize, maxApps, issuedClients: issueClient.mock.calls.length,
+                    preparedObservations: observations.length,
                     bindAttempts: bind.mock.calls.map(([request]) => request.apps.length),
-                    bound: bind.mock.results.filter(result => result.type === 'return').length,
+                    bound: adopted.length,
                     requests: newRequests.length, pages: pages.length, errors: errors.map(error => error.message) });
                 if (directorySize > maxApps) {
                     expect(errors.map(error => error.message)).toEqual(['SEMANTIC_APP_CAPACITY']);
                     expect(issueClient).not.toHaveBeenCalled();
+                    expect(observations).toEqual([]);
                     expect(bind).not.toHaveBeenCalled();
                     expect(newRequests).toHaveLength(0);
                 } else {
                     expect(errors).toEqual([]);
+                    expect(issueClient.mock.calls).toEqual(apps.map(app => [app.appId, app.instanceId]));
+                    expect(observations).toEqual(apps.map(app => app.instanceId));
                     expect(bind).toHaveBeenCalledTimes(1);
+                    expect(adopted).toHaveLength(1);
                     expect(bind.mock.calls[0]![0].apps).toHaveLength(directorySize);
                     expect(pages).toHaveLength(directorySize);
                     expect(newRequests).toHaveLength(1);
                 }
                 expect(provider.failures).toEqual([]);
-                for (const { receiver } of assemblies)
-                    expect(receiver.getInteractionStats()?.observations.observations ?? 0).toBe(0);
+                for (const receiver of receivers.mock.contexts)
+                    expect(receiver.getInteractionStats()?.observations).toMatchObject({ observations: 0, reservations: 0 });
             } finally {
                 driver.stop();
                 driver.dispose();
-                source.dispose();
+                await source.dispose();
             }
         }
     } finally {
-        for (const assembly of assemblies) {
-            await assembly.receiver.close();
-            assembly.projection.close();
-            assembly.registry.dispose();
-        }
-        await desktop.beginClose().completion;
+        const close = await runtime.beginClose().completion;
+        receivers.mockRestore();
         await provider.close();
+        expect(close).toMatchObject({ resourcesReleased: true, workers: { report: { total: 0 } } });
         const evidence = process.env.AOTUI_BATCH_TWO_EVIDENCE;
         if (evidence) {
             await mkdir(evidence, { recursive: true });

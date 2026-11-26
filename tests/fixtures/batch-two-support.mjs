@@ -18,7 +18,7 @@ export async function fixtureAppPath(moduleLocation, appName, folder) {
     const modulePath = moduleLocation.startsWith('file:') ? fileURLToPath(moduleLocation) : resolve(moduleLocation);
     await writeFile(join(localPath, 'aoapp.json'), JSON.stringify({
         app_name: appName, version: '0.1.0', entry: { main: modulePath },
-        toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2',
+        toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
     }));
     return localPath;
 }
@@ -105,8 +105,18 @@ export function modelCall(id, name, input) {
     return { id, type: 'function', function: { name, arguments: JSON.stringify(input) } };
 }
 
+export function consoleBindings(body) {
+    const text = (body.messages ?? body.input).filter(message => message.role === 'user').flatMap(({ content }) =>
+        typeof content === 'string' ? [content] : (content ?? []).map(part => part.text))
+        .find(part => part?.startsWith('## Console bindings for this request'));
+    assert.ok(text, 'The request must include the current Console bindings');
+    return text;
+}
+
+export const consoleDeclaration = body => consoleBindings(body).split('\n```ts\n')[1].split('\n```')[0];
+
 // Same deterministic HTTP Provider for both consumers. Hosts assemble and route their respective requests.
-export async function fixtureProvider() {
+export async function fixtureProvider({ captureRaw = false } = {}) {
     let scripted;
     const requests = [];
     const failures = [];
@@ -118,18 +128,19 @@ export async function fixtureProvider() {
             const encoded = Buffer.concat(chunks);
             const body = JSON.parse(encoded);
             const inputBytes = encoded.byteLength;
+            const raw = captureRaw ? { raw: encoded.toString('utf8') } : {};
             const turn = scripted;
             scripted = undefined;
             assert.equal(request.url, turn?.path ?? '/v1/chat/completions');
             await turn?.beforeReply?.(body);
             if (turn?.errorStatus) {
                 const payload = { error: { message: 'Intentional fixture response failure' } };
-                requests.push({ label: turn.label, body, inputBytes, response: payload, status: turn.errorStatus });
+                requests.push({ label: turn.label, body, inputBytes, ...raw, response: payload, status: turn.errorStatus });
                 response.writeHead(turn.errorStatus, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
                 return;
             }
             const sendStream = (frames) => {
-                requests.push({ label: turn?.label, path: request.url, body, inputBytes, response: frames });
+                requests.push({ label: turn?.label, path: request.url, body, inputBytes, ...raw, response: frames });
                 response.writeHead(200, { 'content-type': 'text/event-stream' })
                     .end(frames.map(item => 'data: ' + JSON.stringify(item) + '\n\n').join('') + 'data: [DONE]\n\n');
             };
@@ -155,7 +166,7 @@ export async function fixtureProvider() {
                 sendStream(payload);
             } else {
                 const payload = { choices: [{ message, finish_reason: finish }] };
-                requests.push({ label: turn?.label, body, inputBytes, response: payload });
+                requests.push({ label: turn?.label, path: request.url, body, inputBytes, ...raw, response: payload });
                 response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
             }
         } catch (error) {

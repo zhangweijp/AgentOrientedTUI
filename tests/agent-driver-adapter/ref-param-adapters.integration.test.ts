@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +15,8 @@ describe('Batch 1 refParam business contract and adapter projections', () => {
         const workItem = { id: 'WI-42', title: 'Ship Batch 1', priority: 1 };
         const values = ['$balance', 3.25, false, null, [1, 'mixed', false, null, { leaf: '$raw' }],
             { 'arbitrary-key': { another: [true, null] }, price: '$same' }];
+        const originals = ['$ref.x', '$$ref.x', '$$$ref.x', '正文 $ref.x'];
+        const spellings = ['$$ref.x', '$$$ref.x', '$$$$ref.x', '正文 $ref.x'];
         const runtime = createRuntime({});
         let source: SemanticAOTUIDrivenSource | undefined;
         let current: Awaited<ReturnType<SemanticAOTUIDrivenSource['getContext']>> | undefined;
@@ -37,7 +39,9 @@ describe('Batch 1 refParam business contract and adapter projections', () => {
             const entryPath = join(folder, 'entry.mjs');
             await writeFile(entryPath, `
 import Type from 'typebox';
-import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk/app';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk';
 
 export const WorkItemSchema = Type.Object({
     id: Type.String(),
@@ -46,6 +50,7 @@ export const WorkItemSchema = Type.Object({
 }, { additionalProperties: false });
 let arbitraryCalls = 0;
 let refCalls = 0;
+let writes = 0;
 
 export const BoardType = defineViewType()({
     name: 'Board',
@@ -82,13 +87,24 @@ export const BoardType = defineViewType()({
                     calls: ++arbitraryCalls } };
             },
         },
+        write_text: {
+            description: 'Write exact text.',
+            inputSchema: {
+                type: 'object', properties: { value: { type: 'string', enum: ${JSON.stringify(originals)} } },
+                required: ['value'],
+            },
+            async execute({ input, context }) {
+                await writeFile(join(context.path, 'text-' + ++writes), input.value, 'utf8');
+                return { success: true };
+            },
+        },
     },
 });
 
 export default createApp({
     app_name: 'work_board',
     viewTypes: [BoardType],
-    initialize({ prepareProjection, readPreparedViewId }) {
+    initialize({ prepareProjection, readViewId }) {
         const board = createView(BoardType, {
             idPrefix: 'board',
             region: 'dynamic',
@@ -103,11 +119,11 @@ export default createApp({
                     }),
                     ref('wrong_value', 'text', { scope: 'protected', refType: 'WorkItem', schema: Type.String() }),
                 ],
-                context: {},
+                context: { path: ${JSON.stringify(folder)} },
             }),
         });
         prepareProjection({ views: [board] });
-        if (readPreparedViewId('Board', 'Work board') !== 'board_1') throw new Error('Plain author did not receive the committed View ID');
+        if (readViewId(board) !== 'board_1') throw new Error('Plain author did not receive the committed View ID');
     },
 });
 `);
@@ -157,11 +173,14 @@ export default createApp({
                 description: expect.stringMatching(/WorkItem.*\$ref\.app_id\.view_id\.ref_id/),
             });
 
-            const consoleTool = current.tools.run_code;
-            expect(consoleTool).toBeDefined();
-            expect(consoleTool!.description).toContain('readonly item: AppRefAddress');
-            expect(consoleTool!.description).toContain('readonly body: JsonValue');
-            expect(consoleTool!.description).toContain('work_item');
+            expect(current.tools.run_code).toBeDefined();
+            const bindings = current.messages.filter(message => message.role === 'user' && message.region === 'dynamic' &&
+                typeof message.content === 'string' && message.content.startsWith('## Console bindings for this request'));
+            expect(bindings).toHaveLength(1);
+            const declaration = bindings[0]!.content;
+            expect(declaration).toContain('readonly item: AppRefAddress');
+            expect(declaration).toContain('readonly body: JsonValue');
+            expect(declaration).toContain('work_item');
 
             const rejectedNative = await current.executeTool!(appId + '-assign', {
                 view_id: 'board_1',
@@ -231,6 +250,28 @@ console.log(JSON.stringify({ literalError, inlineError, ok, roundTrips }));
                 calls: 2,
             });
             expect(parsedOutput.roundTrips).toEqual(expected.map(result => ({ ...result, calls: result.calls + values.length })));
+
+            const writeTool = appId + '-write_text';
+            const writeSchema = current.tools[writeTool]!.inputSchema as { jsonSchema: Record<string, any> };
+            expect(writeSchema.jsonSchema.properties.value).toMatchObject({ anyOf: [
+                { enum: spellings }, { type: 'string', pattern: expect.any(String) },
+            ] });
+            expect(declaration).toContain(JSON.stringify(spellings[1]));
+            const rejectedText = await current.executeTool!(writeTool, { view_id: 'board_1', value: 'turbo' }, 'native-bad-text');
+            expect(rejectedText).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'TOOL_INVALID_ARGS' } });
+            for (const [index, value] of spellings.entries()) {
+                expect(await current.executeTool!(writeTool, { view_id: 'board_1', value }, 'text-' + index))
+                    .toMatchObject({ outcomeStatus: 'succeeded' });
+            }
+            const writeFromConsole = await current.executeTool!('run_code', { code: `
+for (const value of ${JSON.stringify(spellings)}) {
+    await tools[${JSON.stringify(writeTool)}]({ view_id: 'board_1', value });
+}
+` }, 'console-edit');
+            expect(writeFromConsole).toMatchObject({ outcomeStatus: 'succeeded' });
+            for (const [index, expected] of [...originals, ...originals].entries())
+                expect(await readFile(join(folder, 'text-' + (index + 1)))).toEqual(Buffer.from(expected));
+            await expect(readFile(join(folder, 'text-9'))).rejects.toHaveProperty('code', 'ENOENT');
         } finally {
             await current?.release?.();
             source?.dispose();

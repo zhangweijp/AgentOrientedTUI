@@ -1,3 +1,4 @@
+import { createCandidateScope } from '../../runtime/src/engine/core/candidate-scope.js';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -12,10 +13,8 @@ import { AppWorkerHost } from '../../runtime/src/engine/app/worker-host.js';
 
 function appSource(): string {
     return `
-        import { h } from 'preact';
-        import { useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, defineViewType, DynamicView } from '@aotui/sdk';
+        import { createApp, createView, defineViewType } from '@aotui/sdk';
         const EmptyType = defineViewType()({ multiplicity: 'multiple', name: 'EmptyType', tools: {
             ping: {
                 description: 'Ping the empty View type.', inputSchema: Type.Object({}, { additionalProperties: false }),
@@ -24,31 +23,30 @@ function appSource(): string {
             set_body: {
                 description: 'Update one View body.',
                 inputSchema: Type.Object({ body: Type.String() }, { additionalProperties: false }),
-                async execute({ input, context: { id, setBodies } }) {
-                    setBodies(current => ({ ...current, [id]: input.body }));
+                async execute({ input, context: { setBody } }) {
+                    setBody(input.body);
                     return { success: true };
                 },
             },
         } });
         const HealthyType = defineViewType({ multiplicity: 'multiple', name: 'HealthyType' });
 
-        function Root() {
-            const [bodies, setBodies] = useState({
-                no_children: null,
-                whitespace: '  \\n  ',
-                conditional: null,
-            });
-
-            const page = (id, child) => h(DynamicView, { idPrefix: id, type: EmptyType, context: { id, setBodies } }, child);
-            return h('div', null, h('main', {}, [
-                h(DynamicView, { idPrefix: 'healthy_view', type: HealthyType }, h('p', {}, 'HEALTHY_SIBLING_BODY')),
-                page('no_children', bodies.no_children === null ? null : h('p', {}, bodies.no_children)),
-                page('whitespace', bodies.whitespace === null ? null : h('span', {}, bodies.whitespace)),
-                page('conditional', bodies.conditional === null ? null : h('p', {}, bodies.conditional)),
-            ]));
-        }
-
-        export default createTUIApp({ viewTypes: [EmptyType, HealthyType], app_name: 'empty_app', component: Root });
+        export default createApp({ viewTypes: [EmptyType, HealthyType], app_name: 'empty_app',
+            initialize({ prepareProjection }) {
+                function page(idPrefix, initial) {
+                    let body = initial;
+                    return createView(EmptyType, { idPrefix, region: 'dynamic', render: () => ({
+                        body, context: { setBody(next) { body = next; publish(); } },
+                    }) });
+                }
+                const views = [
+                    createView(HealthyType, { idPrefix: 'healthy_view', region: 'dynamic', render: () => ({ body: 'HEALTHY_SIBLING_BODY' }) }),
+                    page('no_children', ''), page('whitespace', '  \\n  '), page('conditional', ''),
+                ];
+                function publish() { prepareProjection({ views }); }
+                publish();
+            }
+        });
     `;
 }
 
@@ -56,8 +54,6 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
     const runtime = fileURLToPath(new URL('../../runtime/', import.meta.url));
     const modules = join(directory, 'node_modules');
     await mkdir(modules, { recursive: true });
-    await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
     await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
     await mkdir(join(modules, '@aotui'), { recursive: true });
     await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
@@ -126,12 +122,12 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
             const turns = createTurnCoordinator();
             const desktop = {
                 id: host.desktopId,
-                adoptTurn: turns.adoptTurn,
+                adoptTurn: turns.adoptTurn, createCandidateScope,
                 getRunningApp: () => {
                     const result = host!.getAppInteraction();
                     return result.status === 'ready' ? { status: 'ready', app: {
                         observe: () =>
-                            turns.prepareObservation(result.interaction, () => host!.getAppInteraction().status === 'ready'),
+                            host!.prepareObservation(instance => turns.prepareObservation(instance, () => host!.getAppInteraction().status === 'ready')),
                     } } : result;
                 },
                 listApps: () => [{ installationId: 'empty_app', appId: host!.appId, appInstanceId: host!.appInstanceId, name: 'empty_app', status: 'running' as const }],
@@ -180,10 +176,10 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
                     const snapshot = latestSnapshot(host!);
                     expect(snapshot.revision).toBeGreaterThan(initialRevision + index);
                     expect(snapshot.views.find((view: any) => view.id === 'no_children_1')?.content.value)
-                        .toBe(body ? `\n${body}\n` : '');
+                        .toBe(body);
                 }, { timeout: 4_000 });
                 expect(current.tools['empty_app-ping']).toBeDefined();
-                expect(viewBodyFromMessage(viewMessage(current, 'no_children_1'))).toBe(body ? `\n${body}\n` : '');
+                expect(viewBodyFromMessage(viewMessage(current, 'no_children_1'))).toBe(body);
                 expect(viewMessage(current, 'healthy_view_1')).toContain('HEALTHY_SIBLING_BODY');
                 await current.release?.();
                 context = undefined;

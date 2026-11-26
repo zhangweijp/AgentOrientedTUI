@@ -18,13 +18,9 @@ export function recordCatalogWorkers() {
             const { threadId } = this;
             events.push({ type: 'init', threadId, appId: message.appId, instanceId: message.appInstanceId, module: message.appModulePath });
             launched.add(this);
-            this.on('message', reply => {
-                if (reply.type === 'STATE_STORAGE_REQUEST') events.push({ type: 'storage', threadId,
-                    action: reply.action, address: reply.address, text: reply.text });
-            });
             this.once('exit', code => events.push({ type: 'exit', threadId, code }));
         } else if (launched.has(this) && message?.type === 'VIEW_TOOL_INVOKE') {
-            events.push({ type: 'invoke', threadId: this.threadId, observationId: message.observationId,
+            events.push({ type: 'invoke', threadId: this.threadId,
                 appId: message.appId, instanceId: message.instanceId, name: message.tool.name });
         }
         return post.call(this, message, ...rest);
@@ -49,7 +45,7 @@ export function checkPendingRequest(body) {
     assert.ok(text.includes(autoEntry) && text.includes(manualEntry));
 }
 
-export async function exerciseCatalog(turn, runtime, desktop, workerEvents, nextReadinessCheck) {
+export async function exerciseCatalog(turn, desktop, workerEvents) {
     const viewsAndTools = {}, results = {};
     async function run(label, name, input, beforeReply) {
         const calls = name ? [modelCall(label, name, input)] : [];
@@ -66,13 +62,26 @@ export async function exerciseCatalog(turn, runtime, desktop, workerEvents, next
         return body;
     }
 
-    const first = await run('manual-open', 'system-open_app', { installation_id: manualEntry }, nextReadinessCheck);
+    const first = await run('manual-open', 'system-open_app', { installation_id: manualEntry });
     assert.ok(JSON.stringify(first).includes(manualEntry));
     assert.deepEqual(viewsAndTools['manual-open'].nativeTools.map(tool => tool.name).sort(), [appName + '-lookup', appName + '-save']);
     assert.equal(pages(first).length, 1);
     assert.equal(results['manual-open'].output.value.app_id, appName + '_1');
 
-    const both = await run('save-one', appName + '-save', { text: draftText });
+    const adopt = desktop.adoptTurn;
+    let observationId;
+    desktop.adoptTurn = function (selection) {
+        const result = adopt.call(this, selection);
+        if (result.status === 'adopted') {
+            observationId = selection.apps.find(({ candidate }) => candidate.observation.source.appId === appName)
+                ?.candidate.observation.observationId;
+        }
+        return result;
+    };
+    let both;
+    try { both = await run('save-one', appName + '-save', { text: draftText }); }
+    finally { desktop.adoptTurn = adopt; }
+    assert.ok(observationId, 'The save request adopted the original App observation');
     assert.deepEqual(pages(both).map(page => / app_id="([^"]+)"/.exec(page)?.[1]), [appName, appName + '_1']);
     assert.deepEqual(viewsAndTools['save-one'].nativeTools.map(tool => tool.name).sort(), [
         appName + '-lookup', appName + '-save', appName + '_1-lookup', appName + '_1-save',
@@ -80,12 +89,13 @@ export async function exerciseCatalog(turn, runtime, desktop, workerEvents, next
     const save = workerEvents.find(event => event.type === 'invoke' && event.name === 'save');
     assert.equal(save?.appId, appName);
     const { client } = appClient(desktop, appName);
-    const query = { observationId: save.observationId, invocationId: 'save-one' };
+    const query = { observationId, invocationId: 'save-one' };
     const original = await client.readReceipt(query);
     assert.equal(original.kind, 'receipt', JSON.stringify(original));
     assert.equal(original.receipt.executionPhase, 'entered-returned');
     assert.equal(original.receipt.outcome.status, 'succeeded');
     assert.equal(original.receipt.invocationId, query.invocationId);
+    assert.equal(original.receipt.source.instanceId, save.instanceId);
 
     const updated = await run('read-isolated', appName + '_1-lookup', {});
     assert.ok(pages(updated).some(page => page.includes('app_id="' + appName + '"') && page.includes(draftText)));

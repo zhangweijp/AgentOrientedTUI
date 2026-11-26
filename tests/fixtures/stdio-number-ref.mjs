@@ -1,6 +1,6 @@
 import Type from 'typebox';
 import { threadId } from 'node:worker_threads';
-import { createApp, createView, defineViewType, ref } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, ref } from '@aotui/sdk';
 
 const Page = defineViewType()({ name: 'page', multiplicity: 'single', region: 'dynamic', tools: {
     echo: { description: 'Return the selected integer.',

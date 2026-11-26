@@ -31,7 +31,7 @@ const draft = join(author, 'draft');
 await mkdir(draft);
 const name = 'aotui-catalog-draft';
 await writeFile(join(draft, 'package.json'), JSON.stringify({ name, type: 'module', version: '0.1.0', main: './dist/catalog-draft.js',
-    aotui: { app_name: 'catalog_draft', whatItIs: 'A small draft with its own storage namespace.', persistence: true },
+    aotui: { app_name: 'catalog_draft', whatItIs: 'A small draft with its own storage namespace.' },
     files: ['dist/catalog-draft.js', 'aoapp.json'], dependencies: { '@aotui/sdk': manifest.packages.sdk.version, typebox: '1.4.3' } }));
 await copyFile(join(repo, 'sdk/tests/fixtures/catalog-draft.ts'), join(draft, 'catalog-draft.ts'));
 execFileSync(join(author, 'node_modules/.bin/tsc'), ['--strict', '--exactOptionalPropertyTypes', '--skipLibCheck', 'false', '--target', 'ES2022',

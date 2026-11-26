@@ -3,8 +3,8 @@ import { execFile } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { catalogState, CATALOG, changed, codeCall, peopleAddress, savedResult, sdkDescription, system, TASKS, tool } from './batch-eight-support.mjs';
-import { appClient, journal, modelCall, watchUntil } from './batch-two-support.mjs';
+import { catalogState, CATALOG, changed, codeCall, peopleAddress, savedResult, system, TASKS, tool } from './batch-eight-support.mjs';
+import { appClient, consoleDeclaration, journal, modelCall, watchUntil } from './batch-two-support.mjs';
 
 export const scopedCall = (id, code, imports, reset = false) => reset
     ? modelCall(id, 'run_code', { code, ...(imports === undefined ? {} : { imports }), reset: true }) : codeCall(id, code, imports);
@@ -13,10 +13,9 @@ const email = 'selected@example.test';
 
 async function checkFieldType(consumer, request, fieldType) {
     if (!consumer) return;
-    const text = sdkDescription(request);
     const file = join(consumer, 'actual-scope-' + fieldType + '.ts');
     const other = fieldType === 'number' ? 'string' : 'number';
-    await writeFile(file, text.slice(text.indexOf('type JsonValue =')) + '\nexport {};\n' +
+    await writeFile(file, consoleDeclaration(request) + '\nexport {};\n' +
         'const field = refs.console_catalog.list.people[0].email;\n' +
         'const valid: ' + fieldType + ' = field;\n' +
         '// @ts-expect-error this request has the other field type\nconst invalid: ' + other + ' = field;\n');
@@ -57,6 +56,7 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
         const result = savedResult(reply.message, call.id);
         assert.equal(result.app_id, app, JSON.stringify(result));
     }
+    const addressText = peopleAddress + '[0].email';
     const current = await step('capture a local email and an old handle',
         'const savedEmail = refs.console_catalog.list.people[0].email; const upper = () => savedEmail.toUpperCase(); ' +
         'const oldTool = tools["console_tasks-accept"]; const write = literal => tools["console_tasks-accept"]({items:[],literal}); ' +
@@ -64,7 +64,7 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
         'background.then(async () => { inspect("STALE_OUTPUT"); ' +
         'try { await tools["console_tasks-accept"]({items:[],literal:"stale callback"}); } catch {} ' +
         'try { await oldTool({items:[],literal:"stale handle"}); } catch {} }); ' +
-        'background.then(() => { throw Error("STALE_ASYNC_ERROR"); }); inspect(savedEmail);');
+        'background.then(() => { throw Error("STALE_ASYNC_ERROR"); }); inspect(savedEmail);', { imports: [addressText] });
     assert.deepEqual(current.value.output, [email]);
     const stringTypes = await checkFieldType(consumer, current.body, 'string');
     async function publish(revision, narrowed, field) {
@@ -82,9 +82,9 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
     assert.match(wrong.value.message, /not a function/);
 
     const refused = await step('revocation during request retains the old locals', 'x = 99; await write("must not execute");', {
-        imports: [peopleAddress + '[0].email'], beforeReply: () => publish('scope field withdrawn', true, 41),
+        imports: [addressText], beforeReply: () => publish('scope field withdrawn', true, 41),
     });
-    assert.equal(refused.value.code, 'REF_NOT_VISIBLE');
+    assert.equal(refused.value.code, 'REF_VALUE_PRIVATE');
     assert.equal(refused.value.result, undefined);
     assert.deepEqual(await journal(folder, 'writes'), []);
     const closure = system(namespace + '-close-catalog', 'close_app', { app_id: CATALOG });
@@ -124,21 +124,19 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
         const call = modelCall(namespace + '-' + id.replaceAll(' ', '-'), tool('accept'), { items: [], literal });
         return savedResult((await turn(id, call)).message, call.id);
     };
-    const nativeAddress = await native('native address never selects an REPL variable', '$varStr');
-    assert.equal(nativeAddress.code, 'TOOL_INVALID_ARGS');
-    assert.match(nativeAddress.message, /complete Ref address/);
-    assert.deepEqual((await journal(folder, 'writes')).map(row => row.value.literal), [email, '请复核']);
-    assert.equal((await native('native escape delivers a literal dollar sign', '$$varStr')).saved, true);
+    assert.equal((await native('native dollar text stays literal', '$varStr')).saved, true);
+    assert.deepEqual((await journal(folder, 'writes')).map(row => row.value.literal), [email, '请复核', '$varStr']);
+    assert.equal((await native('native escape delivers literal Ref address text', '$' + addressText)).saved, true);
     assert.equal(saved.body.messages.filter(message => message.role === 'tool' && message.tool_call_id === stale.id).length, 1);
     const opened = system(namespace + '-reopen-catalog', 'open_app', { installation_id: CATALOG });
     assert.equal(savedResult((await turn('reopen source under the same App name', opened)).message, opened.id).app_id, CATALOG);
     const reopened = await step('keep the old copy as the source returns', 'inspect(savedEmail); inspect(typeof refs.console_catalog.list.people);');
     assert.deepEqual(reopened.value.output, [email, 'undefined']);
-    await step('store an address-like string in a local variable', 'varStr = "$ref.console_catalog.list.people[0].email";');
-    const literal = await step('send the string unchanged through a program call', 'await write(varStr);');
+    await step('store an address-like string in a local variable', 'const varStr = ' + JSON.stringify(addressText) + ';');
+    const literal = await step('escape a stored address for a program call', 'await write("$" + varStr);');
     assert.equal(literal.value.subcalls[0].phase, 'entered-returned');
     const writes = await journal(folder, 'writes');
-    assert.deepEqual(writes.map(row => row.value.literal), [email, '请复核', '$varStr', peopleAddress + '[0].email']);
+    assert.deepEqual(writes.map(row => row.value.literal), [email, '请复核', '$varStr', addressText, addressText]);
     const reset = await step('reset starts a new scope', 'inspect(typeof savedEmail); inspect(typeof x); const marker = "after reset";', { imports: [], reset: true });
     assert.deepEqual(reset.value.output, ['undefined', 'undefined']);
     assert.equal(reset.value.scope, 'reset');

@@ -33,12 +33,9 @@ guard(fsp, ['access', 'mkdir', 'open', 'readFile', 'stat', 'readdir', 'writeFile
 syncBuiltinESMExports();
 
 const { createRuntime, readAppManifest } = await import('@aotui/runtime');
-const { createMemoryStateStorage } = await import('@aotui/runtime/adapters/memory-state-storage');
 const { AgentDriverV2 } = await import('@aotui/agent-driver-v2');
 const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
-const memory = createMemoryStateStorage({ maxStoredKeys: 8, maxStoredBytes: 8192, maxRecordBytes: 1024,
-    maxAddressBytes: 1024, maxActiveOwners: 8, maxClaimedNamespaces: 8 });
-const runtime = createRuntime({}, { storageBackend: { open: ({ owner }) => memory.open(owner) } });
+const runtime = createRuntime();
 const desktop = await runtime.createDesktop('catalog-public');
 const provider = await fixtureProvider();
 const history = [], delivered = [], errors = [];
@@ -81,7 +78,7 @@ try {
     const config = { AOTUI_DATA_DIR: state };
     const a = await desktop.registerPendingApp({ installationId: autoEntry, localPath: installed, config });
     const b = await desktop.registerPendingApp({ installationId: manualEntry, localPath: manifest.modulePath,
-        config: { ...config, AOTUI_APP_KEY: explicitStorageKey } });
+        config: { ...config, draftKey: explicitStorageKey } });
     await assert.rejects(desktop.registerPendingApp({ installationId: a, localPath: installed }), { code: 'APP_ALREADY_EXISTS' });
     facts.pending = desktop.listApps();
     assert.deepEqual(facts.pending.map(app => [app.installationId, app.name, app.status, app.appId]), [
@@ -89,7 +86,6 @@ try {
     ]);
     assert.deepEqual(await appEffects(manifest), []);
     assert.deepEqual(workers.events, []);
-    assert.equal(memory.getStats().activeOwners, 0);
 
     const missing = join(state, 'missing'), mismatch = join(state, 'mismatch');
     await fsp.mkdir(missing);
@@ -110,12 +106,12 @@ try {
     });
     assert.deepEqual(savedParts(first.message, opening)[0].output, { type: 'json', value: { success: true, app_id: appName } });
     assert.equal((await appEffects(manifest)).filter(item => item.event === 'initialize').length, 1);
-    facts.delivery = await exerciseCatalog(turn, runtime, desktop, workers.events);
-    assert.equal((await appEffects(manifest)).filter(item => item.event === 'save').length, 1);
-    const storage = workers.events.filter(item => item.type === 'storage' && item.address).map(item =>
-        [item.action, JSON.parse(item.address.namespace), item.address.key]);
-    assert.deepEqual(storage, [['replace', [desktop.id, autoEntry], 'draft'],
-        ['read', [desktop.id, explicitStorageKey], 'draft']]);
+    facts.delivery = await exerciseCatalog(turn, desktop, workers.events);
+    const catalogEffects = await appEffects(manifest);
+    assert.equal(catalogEffects.filter(item => item.event === 'save').length, 1);
+    const storage = catalogEffects.filter(item => item.event === 'save' || item.event === 'lookup').map(item =>
+        [item.event, item.storageKey]);
+    assert.deepEqual(storage, [['save', appName], ['lookup', explicitStorageKey]]);
     facts.storage = storage;
 
     const bad = await desktop.registerPendingApp({ installationId: 'mismatched', localPath: mismatch, config });
@@ -154,12 +150,8 @@ try {
     facts.shutdown = await runtime.beginClose().completion;
     workers.restore();
     await provider.close();
-    facts.memoryAfterClose = memory.getStats();
     if (facts.passed) {
-        const { storage } = memory.open('verify-persisted');
-        const saved = await storage.read({ namespace: JSON.stringify([desktop.id, autoEntry]), key: 'draft' });
-        facts.persisted = JSON.parse(saved.text).value;
-        await storage.release();
+        facts.persisted = await fsp.readFile(join(state, 'catalog-draft', `${desktop.id}-${appName}.txt`), 'utf8');
     }
     mock.restoreAll();
     syncBuiltinESMExports();
@@ -167,6 +159,5 @@ try {
     await fsp.rm(state, { recursive: true, force: true });
 }
 assert.ok(facts.shutdown.ok && facts.shutdown.resourcesReleased);
-assert.equal(facts.memoryAfterClose.activeOwners, 0);
 assert.equal(facts.persisted, draftText);
 assert.equal(workers.events.filter(item => item.type === 'init').length, workers.events.filter(item => item.type === 'exit').length);

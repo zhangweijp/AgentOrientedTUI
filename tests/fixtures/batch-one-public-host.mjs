@@ -49,7 +49,7 @@ try {
     const first = await register('first_installation'), second = await register('Second');
     assert.deepEqual(desktop.listApps().map(app => [app.installationId, app.appId]), [[first, undefined], [second, undefined]]);
     const collisionURL = new URL('./collision.mjs', import.meta.url);
-    await writeFile(collisionURL, `import { createApp } from '@aotui/sdk/app';
+    await writeFile(collisionURL, `import { createApp } from '@aotui/sdk';
 export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize({ prepareProjection }) { prepareProjection({ views: [] }); } });`);
     const collision = (await desktop.installDynamicWorkerApp(collisionURL.href, { name: 'batch_files_1' })).appId;
     const parked = Promise.withResolvers();
@@ -84,7 +84,7 @@ export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize(
     async function send(label, current, calls = [], maxInputBytes = Infinity) {
         const pages = ['static', 'dynamic'].flatMap(region => current.views.filter(view => view.region === region)
             .map(view => buildViewMessageMarkup({
-                appId: current.source.appId, appName, viewId: view.id, viewType: view.type, markup: view.content.value,
+                appId: current.source.appId, appName, viewId: view.id, viewType: view.type, region: view.region, markup: view.content.value,
                 refs: current.refs.filter(ref => ref.viewInstanceId === view.viewInstanceId),
             })));
         const routes = new Map();
@@ -188,12 +188,13 @@ export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize(
     assert.deepEqual(edit.inputSchema.required, ['text']);
     assert.equal(edit.inputSchema.properties.view_id, undefined);
     assert.equal(open.refs.filter(ref => ref.viewId === 'doc_1' && ref.array).length, 1);
-    assert.equal(open.refs.filter(ref => ref.viewId === 'doc_1' && /^lines/.test(ref.refId)).length, 2);
+    assert.deepEqual(open.refs.filter(ref => ref.viewId === 'doc_1' && ['lines', 'quoted'].includes(ref.refId))
+        .map(ref => ref.refId).sort(), ['lines', 'quoted']);
     await success(await send('two-files', open, [modelCall('literal-edit', 'edit', { view_id: 'doc_2', text: '$' + address })]));
     assert.equal(await readFile(join(folder, 'B.txt'), 'utf8'), address);
     const mixedArgs = {
         view_id: 'doc_2',
-        texts: ['first', '$ref.batch_files.doc_1.lines[2]', '$ref.batch_files.doc_1.lines[2]', '$$$varStr', '$ref.batch_files.doc_1["lines[0]"]'],
+        texts: ['first', '$ref.batch_files.doc_1.lines[2]', '$ref.batch_files.doc_1.lines[2]', '$$$varStr', '$ref.batch_files.doc_1.quoted["lines[0]"]'],
         selected: '$ref.batch_files.doc_1.lines[0]', exact: '$$a', count: '$ref.batch_files.doc_1.count',
         options: { $ref: '$opaque' },
     };

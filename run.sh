@@ -6,7 +6,7 @@ cd "$REPO_ROOT"
 source scripts/dev-packages.sh
 
 if [ ! -d node_modules ] || [ ! -d agent-driver-adapter/node_modules ] ||
-    [ ! -d core/node_modules ] || [ ! -d sdk/node_modules/linkedom ]; then
+    [ ! -d core/node_modules ] || [ ! -d sdk/node_modules ]; then
     ./setup.sh
 else
     build_dev_packages

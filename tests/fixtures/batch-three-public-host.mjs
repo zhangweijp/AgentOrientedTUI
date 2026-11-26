@@ -84,10 +84,10 @@ async function independentStep(label) {
         const { candidate } = observed;
         const views = candidate.observation.views.filter(view => !folded.has(view.viewInstanceId))
             .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-        apps.push({ candidate, windows: { receiverViews: views, refViews: views } });
+        apps.push({ candidate, windows: { activeViews: views } });
     }
     const refs = apps.flatMap(({ candidate: { observation }, windows }) => observation.refs.filter(ref =>
-        windows.refViews.some(view => view.viewInstanceId === ref.viewInstanceId)).map(ref => ({ source: observation.source, ref })));
+        windows.activeViews.some(view => view.viewInstanceId === ref.viewInstanceId)).map(ref => ({ source: observation.source, ref })));
     const tools = [];
     const routes = new Map();
     const messages = [{ role: 'user', content: DEFAULT_AOTUI_SYSTEM_INSTRUCTION }];
@@ -96,11 +96,11 @@ async function independentStep(label) {
         for (const view of observation.views) {
             const hidden = folded.has(view.viewInstanceId);
             messages.push({ role: 'user', content: buildViewMessageMarkup({ appId: source.appId, appName: source.appId,
-                viewType: view.type, viewId: view.id, markup: hidden ? 'Collapsed' : view.content.value,
+                viewType: view.type, region: view.region, viewId: view.id, markup: hidden ? 'Collapsed' : view.content.value,
                 refs: hidden ? [] : observation.refs.filter(ref => ref.viewInstanceId === view.viewInstanceId) }) });
         }
         for (const tool of observation.tools) {
-            const receivers = windows.receiverViews.filter(receiver => observation.views.some(view => view.id === receiver.viewId &&
+            const receivers = windows.activeViews.filter(receiver => observation.views.some(view => view.id === receiver.viewId &&
                 view.type === tool.viewType && (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id))));
             if (!receivers.length) continue;
             const name = source.appId + '-' + tool.name;

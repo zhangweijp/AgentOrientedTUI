@@ -44,7 +44,7 @@ async function productSession(name: string, staticB = false, b?: string) {
     const rawInput = { cap: INPUT, other: '' };
     const adoptions: number[] = [];
     const facts: Record<string, unknown> = { history, errors, results, requests: provider.requests, costs: [], adoptions };
-    let forwardNotices = false;
+    let wake: (() => void) | undefined;
     let completed = 0;
     const tracked = (context: DrivenSourceContext): DrivenSourceContext => ({
         ...context,
@@ -58,7 +58,7 @@ async function productSession(name: string, staticB = false, b?: string) {
         llm: { model: 'window-fixture', apiKey: 'test-only', provider: { id: 'window-fixture', baseURL: provider.url },
             inputBudget: () => ({ contextWindow: rawInput.cap + OUTPUT, maxOutputTokens: OUTPUT }) },
         sources: [{ name: source.name, getContext: async () => tracked(await source.getContext()),
-            onUpdate: callback => source.onUpdate(() => { if (forwardNotices) callback(); }) },
+            onUpdate: callback => { wake = callback; return () => { wake = undefined; }; } },
             { name: 'history', onUpdate: () => () => {}, async getContext() { return { messages: history.slice(), tools: {} }; } },
             { name: 'unrelated projection', onUpdate: () => () => {}, async getContext() { return { tools: {}, messages: rawInput.other ?
                 [{ role: 'user' as const, region: 'dynamic' as const, content: rawInput.other, timestamp: Date.now() }] : [] }; } }],
@@ -71,14 +71,12 @@ async function productSession(name: string, staticB = false, b?: string) {
         onStateChange: (_from, to) => { if (to === 'idle') completed++; },
     });
     const drive = async () => { await driver.trigger(); await (driver as unknown as { runInFlight: Promise<void> }).runInFlight; };
-    const notice = async (signal: () => void | Promise<void>) => {
+    const notifyUnchanged = async () => {
         const earlier = completed;
-        forwardNotices = true;
-        try {
-            await signal();
-            await watchUntil(() => completed > earlier);
-            await (driver as unknown as { runInFlight: Promise<void> | null }).runInFlight;
-        } finally { forwardNotices = false; }
+        expect(wake).toBeDefined();
+        wake!();
+        await watchUntil(() => completed > earlier);
+        await (driver as unknown as { runInFlight: Promise<void> | null }).runInFlight;
     };
     const turns = async (label: string, calls: ReturnType<typeof modelCall>[] = [], options?: { text?: string; addUser?: boolean }) => {
         const errorCount = errors.length;
@@ -105,7 +103,7 @@ async function productSession(name: string, staticB = false, b?: string) {
         await writeFile(join(evidence, name + '.json'), JSON.stringify(facts, null, 2));
         expect(facts.shutdown).toMatchObject({ ok: true, resourcesReleased: true, interactions: { retainedOperations: 0 } });
     };
-    return { folder, app, client, desktop, history, provider, source, rawInput, results, errors, facts, turns, drive, notice, adoptions, dispose };
+    return { folder, app, client, desktop, history, provider, source, rawInput, results, errors, facts, turns, drive, notifyUnchanged, adoptions, dispose };
 }
 
 it('reports the once-only write before sealing the result, recovers the newest page and manages real mounts through the HTTP boundary', async () => {
@@ -126,12 +124,12 @@ it('reports the once-only write before sealing the result, recovers the newest p
             expect.objectContaining({ view_id: 'file_A_1', presentation: 'body' }),
             expect.objectContaining({ view_id: 'file_B_1', presentation: 'hint' }),
         ]));
-        expect(report.complete.shared + report.windows.reduce((total: number, row: any) => total + row.full, 0)).toBe(report.complete.estimated);
-        expect(report.presented.shared + report.windows.reduce((total: number, row: any) => total + row.presented, 0)).toBe(report.presented.estimated);
+        expect(report.complete.window_bytes).toBe(report.windows.reduce((total: number, row: any) => total + row.full, 0));
+        expect(report.presented.window_bytes).toBe(report.windows.reduce((total: number, row: any) => total + row.presented, 0));
         const mounted = p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!.views.find(view => view.viewId === 'file_B_1');
         expect(mounted?.region).toBe('static');
         const hinted = await p.turns('open with budget hint', [
-            onFile('denied-hidden-ref', 'echo', 'B', { value: '$ref.window_files.file_B_1.content' }),
+            onFile('denied-hidden-ref', 'echo', 'A', { value: '$ref.window_files.file_B_1.content' }),
             onFile('hinted-receiver', 'echo', 'B', { value: 'echo while hinted' }),
         ]);
         expect(pageFor(hinted.wire, 'B')).toContain('body does not fit');
@@ -140,12 +138,15 @@ it('reports the once-only write before sealing the result, recovers the newest p
         expect(namesOf(hinted.wire).filter((name: string) => name === tool('edit'))).toHaveLength(1);
         expect(namesOf(hinted.wire)).toContain('system-read_window_budget');
         expect(hinted.toolMessage!.content[0].output.value.code).toBe('REF_NOT_VISIBLE');
-        expect(p.results.at(-1)!.raw[1]).toMatchObject({ result: { value: 'echo while hinted' }, outcomeStatus: 'succeeded' });
+        expect(p.results.at(-1)!.raw[1]).toMatchObject({ error: { code: 'TOOL_UNAVAILABLE' }, outcomeStatus: 'rejected' });
+        expect(pageFor(hinted.wire, 'B')).not.toContain('input tokens');
 
         await p.turns('collapse A to make room', [windowAction('note-a', 'collapse_view', 'A', { note: A_NOTE }),
-            onFile('old-a', 'echo', 'A', { value: 'attempt at collapsed A' }), onFile('live-b', 'echo', 'B', { value: 'B stays usable' })]);
+            onFile('old-a', 'echo', 'A', { value: 'attempt at collapsed A' }), onFile('still-hinted-b', 'echo', 'B', { value: 'B stays paused this turn' })]);
         const collapseResults = p.results.at(-1)!.raw;
-        expect(collapseResults.map(result => result.outcomeStatus)).toEqual(['succeeded', 'rejected', 'succeeded']);
+        expect(collapseResults.map(result => result.outcomeStatus)).toEqual(['succeeded', 'rejected', 'rejected']);
+        // Keep the rejection receipts in history and give the next request room for B's body.
+        p.rawInput.cap = INPUT + 4_000;
         const restored = (await p.turns('normal restored request', [
             onFile('restored-ref', 'echo', 'B', { value: '$ref.window_files.file_B_1.content', countOnly: true }),
         ])).wire;
@@ -242,7 +243,7 @@ it('restores the selected View and App bodies without requiring unrelated hinted
     const windows = () => p.desktop.getAppWindows(p.app.appId, p.app.appInstanceId)!;
     const body = (name: string) => windows().views.find(view => view.viewId === `file_${name}_1`)!;
     try {
-        await p.turns('open B, C and A', [openFiles('open-for-expansion', 'B', 'C', 'A')]);
+        await p.turns('open B, C and A', [openFiles('open-for-expansion', 'B', 'C', 'A', 'D')]);
         const collapse = await p.turns('save a place at C and A', [
             windowAction('note-c', 'collapse_view', 'C', { note: 'Return to C' }),
             windowAction('keep-a', 'collapse_view', 'A', { note: A_NOTE }),
@@ -253,14 +254,14 @@ it('restores the selected View and App bodies without requiring unrelated hinted
         const before = p.provider.requests.length;
         const adopted = p.adoptions.length;
         const expanding = await p.turns('expand the small C', [windowAction('restore-c', 'expand_view', 'C'),
-            onFile('not-yet-a-source', 'echo', 'B', { value: '$ref.window_files.file_C_1.content' })]);
+            onFile('not-yet-a-source', 'echo', 'D', { value: '$ref.window_files.file_C_1.content' })]);
         expect(pageFor(expanding.wire, 'C')).toContain('Return to C');
         expect(p.provider.requests.length - before).toBe(1);
         expect(p.adoptions.length - adopted).toBe(1);
         expect(last()[0]).toMatchObject({ outcomeStatus: 'succeeded', result: { view_id: 'file_C_1' } });
         expect(last()[1]).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'REF_NOT_VISIBLE' } });
         expect(body('C')).toMatchObject({ viewInstanceId: mountC });
-        const restored = await p.turns('read C after new adoption', [onFile('now-a-source', 'echo', 'B', { value: '$ref.window_files.file_C_1.content' }),
+        const restored = await p.turns('read C after new adoption', [onFile('now-a-source', 'echo', 'C', { value: '$ref.window_files.file_C_1.content' }),
             onFile('b-still-not-a-source', 'echo', 'C', { value: '$ref.window_files.file_B_1.content' })], { addUser: false });
         expect(pageFor(restored.wire, 'B')).toContain('body does not fit');
         expect(pageFor(restored.wire, 'C')).toMatch(/C-LATEST-WHILE-COLLAPSED[\s\S]+Available references/);
@@ -327,16 +328,13 @@ it('restores the selected View and App bodies without requiring unrelated hinted
     }
 }, 40_000);
 
-it.each(['window_hints', 'management'])('keeps report IDs stable on real idle Source notifications in %s mode', async mode => {
+it.each(['window_hints', 'management'])('keeps report IDs stable on unchanged Host wakeups in %s mode', async mode => {
     const p = await productSession('product-idle-' + mode, true);
     const reportTool = 'system-read_window_budget';
     try {
         await p.turns('open enough pages for report paging', [openFiles('open-idle-fixture', 'B', 'C', 'D', 'E')]);
         const normal = await p.turns('remember C', [windowAction('idle-note-c', 'collapse_view', 'C', { note: 'Unchanged note' })]);
         expect(namesOf(normal.wire)).not.toContain(reportTool);
-        const signal = () => (p.desktop as import('../../runtime/src/engine/core/desktop.js').Desktop).emitSignal({
-            reason: 'attention_requested', appId: p.app.appId, instanceId: p.app.appInstanceId,
-        });
         await updateFile(p.folder, p.client, 'B', 'B-PERSISTENT-HINT ' + 'b'.repeat(45_000), false);
         if (mode === 'management') p.rawInput.other = 'OMIT THIS SOURCE ' + 'x'.repeat(28_000);
         const seed = (await p.turns('freeze the conversation', [], { text: 'frozen fixture history' })).wire;
@@ -346,8 +344,8 @@ it.each(['window_hints', 'management'])('keeps report IDs stable on real idle So
         const count = () => [p.adoptions.length, p.provider.requests.length];
         const before = count();
         const history = JSON.stringify(p.history);
-        await p.notice(signal);
-        await p.notice(signal);
+        await p.notifyUnchanged();
+        await p.notifyUnchanged();
         expect(count()).toEqual(before);
         expect(JSON.stringify(p.history)).toEqual(history);
         const writes = await journal(p.folder, 'writes');
@@ -365,7 +363,7 @@ it.each(['window_hints', 'management'])('keeps report IDs stable on real idle So
         expect(count()).toEqual(failedBefore.map(n => n + 1));
         const failed = p.provider.requests.at(-1)!;
         expect(failed).toMatchObject({ status: 400, label: 'intentional HTTP failure' });
-        await p.notice(signal);
+        await p.notifyUnchanged();
         expect(count()).toEqual(failedBefore.map(n => n + 1));
         p.provider.replyNext({ label: 'explicit retry with identical input', text: 'frozen fixture history' });
         await p.drive();
@@ -402,6 +400,31 @@ it.each(['window_hints', 'management'])('keeps report IDs stable on real idle So
         p.facts.passed = true;
     } finally { await p.dispose(); }
 }, 35_000);
+
+it('lets only the body-visible file receive an edit when its sibling is a budget hint', async () => {
+    const p = await productSession('only-visible-file-writes');
+    try {
+        const original = 'A-HINTED ' + 'a'.repeat(45_000);
+        await writeFile(join(p.folder, 'A.txt'), original);
+        await p.turns('open the two files for edit', [openFiles('open-both', 'A', 'B')]);
+        const edited = await p.turns('edit the visible B and attempt the hinted A', [
+            onFile('denied-hinted-write', 'edit', 'A', { mode: 'short' }),
+            onFile('allowed-visible-write', 'edit', 'B', { mode: 'short' }),
+        ]);
+        expect(pageFor(edited.wire, 'A')).toContain('body does not fit');
+        expect(pageFor(edited.wire, 'A')).not.toMatch(/A-HINTED|Available references|input tokens/);
+        expect(pageFor(edited.wire, 'B')).toMatch(/B-INITIAL[\s\S]+Available references/);
+        expect(namesOf(edited.wire).filter((name: string) => name === tool('edit'))).toHaveLength(1);
+        expect(p.results.at(-1)?.raw).toMatchObject([
+            { outcomeStatus: 'rejected', error: { code: 'TOOL_UNAVAILABLE' } },
+            { outcomeStatus: 'succeeded', result: { saved: true } },
+        ]);
+        expect(await readFile(join(p.folder, 'A.txt'), 'utf8')).toBe(original);
+        expect(await readFile(join(p.folder, 'B.txt'), 'utf8')).toBe('B-EDITED');
+        expect((await journal(p.folder, 'writes')).map(row => row.name)).toEqual(['B']);
+        p.facts.passed = true;
+    } finally { await p.dispose(); }
+}, 20_000);
 
 it.each([false, true])('keeps the original region and identity after an initially oversized open (static B=%s)', async staticB => {
     const p = await productSession('open-' + (staticB ? 'static' : 'dynamic'), staticB, 'B-ON-OPEN ' + 'b'.repeat(8_900));
@@ -465,36 +488,39 @@ it('revokes old mount permissions across collapse and remount while leaving acce
         const desktop = await runtime.createDesktop();
         const id = await start(desktop, folder, false, policy);
         const { app, client } = appClient(desktop, id);
-        const call = (observation: Observation, name: string, invocationId: string, input: object, timeout?: number) =>
-            client.invoke({ observationId: observation.observationId, invocationId, input,
+        const call = (observation: Observation, name: string, invocationId: string, input: object, viewId?: string, timeout?: number) =>
+            client.invoke({ observationId: observation.observationId, invocationId, input, ...(viewId ? { viewId } : {}),
                 toolId: observation.tools.find(tool => tool.name === name)!.id }, timeout);
         const initial: Observation = await observe(client, true);
         expect(await call(initial, 'open_file', 'both', { names: ['A', 'B'] })).toMatchObject({ receipt: { outcome: { status: 'succeeded' } } });
         client.release(initial.observationId);
         const observation: Observation = await observe(client);
         const all = observation.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-        const layout = { receiverViews: all, refViews: all.filter(view => view.viewId !== 'file_B_1') };
+        const layout = { activeViews: all.filter(view => view.viewId !== 'file_B_1') };
         expect(client.adopt(observation.observationId, {
-            receiverViews: [{ viewId: 'file_B_1', viewInstanceId: 'fake' }], refViews: [],
+            activeViews: [{ viewId: 'file_B_1', viewInstanceId: 'fake' }],
         })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INVALID' } });
         expect(client.adopt(observation.observationId, layout)).toMatchObject({ status: 'adopted' });
-        const normalized = client.adopt(observation.observationId, { ...layout, receiverViews: all.slice().reverse() });
+        const normalized = client.adopt(observation.observationId, { activeViews: layout.activeViews.slice().reverse() });
         expect(normalized).toMatchObject({ status: 'adopted' });
-        expect(client.adopt(observation.observationId, { ...layout, refViews: all })).toMatchObject({ status: 'rejected' });
-        expect(await call(observation, 'echo', 'hidden-source', { view_id: 'file_B_1', value: '$ref.window_files.file_B_1.content' })).toMatchObject({
+        expect(client.adopt(observation.observationId, { activeViews: all })).toMatchObject({ status: 'rejected' });
+        expect(await call(observation, 'echo', 'hidden-source', { value: '$ref.window_files.file_B_1.content' }, 'file_A_1')).toMatchObject({
             receipt: { executionPhase: 'not-dispatched', outcome: { code: 'REF_NOT_VISIBLE' } },
+        });
+        expect(await call(observation, 'echo', 'hinted-receiver', { value: 'test' }, 'file_B_1')).toMatchObject({
+            receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' } },
         });
         const views = () => desktop.getAppWindows(app.appId, app.appInstanceId)!.views;
         const a = () => views().find(view => view.viewId.startsWith('file_A_'))!;
         const formerA = { appId: app.appId, instanceId: app.appInstanceId, viewId: a().viewId, viewInstanceId: a().viewInstanceId };
         desktop.revokeWindowAccess(normalized.turn, formerA);
-        expect(await call(observation, 'echo', 'old-after-expand', { view_id: 'file_A_1', value: 'test' })).toMatchObject({
+        expect(await call(observation, 'echo', 'old-after-expand', { value: 'test' }, 'file_A_1')).toMatchObject({
             receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' } },
         });
         const beforeRemount: Observation = await observe(client);
         const remountTurn = client.adopt(beforeRemount.observationId);
         expect(remountTurn.status).toBe('adopted');
-        const pending = call(beforeRemount, 'echo', 'await-former-mount', { view_id: 'file_B_1', value: '$ref.window_files.file_A_1.content' });
+        const pending = call(beforeRemount, 'echo', 'await-former-mount', { value: '$ref.window_files.file_A_1.content' }, 'file_B_1');
         await Promise.race([waiting.promise, pending.then(() => { throw new Error('Expected waiting authorization'); })]);
         desktop.revokeWindowAccess(remountTurn.turn, formerA);
         await updateFile(folder, client, 'A', 'A replaced', true);
@@ -510,7 +536,7 @@ it('revokes old mount permissions across collapse and remount while leaving acce
         const current: Observation = await observe(client);
         const currentTurn = client.adopt(current.observationId);
         expect(currentTurn.status).toBe('adopted');
-        const late = call(current, 'edit', 'late-write', { view_id: 'file_B_1', mode: 'late' }, 100);
+        const late = call(current, 'edit', 'late-write', { mode: 'late' }, 'file_B_1', 100);
         await watchUntil(async () => (await journal(folder, 'writes')).length === 1);
         desktop.revokeWindowAccess(currentTurn.turn, { appId: app.appId, instanceId: app.appInstanceId });
         facts.wait = await late;

@@ -8,7 +8,7 @@ import { createRuntime } from '@aotui/runtime';
 import { createConsoleSource } from './batch-eight-readme.mjs';
 import { catalogState, CATALOG, changed, codeCall, consolePolicy, exerciseConsole, installConsoleFixtures, itemAddress, original,
     peopleAddress, savedResult, TASKS, tool } from './batch-eight-support.mjs';
-import { appClient, fixtureProvider, journal, watchUntil } from './batch-two-support.mjs';
+import { appClient, consoleBindings, fixtureProvider, journal, watchUntil } from './batch-two-support.mjs';
 
 const evidence = process.argv[2];
 const folder = join(dirname(evidence), 'public-state');
@@ -100,41 +100,49 @@ try {
         const result = await running.observe();
         assert.equal(result.status, 'prepared');
         const { candidate } = result;
-        const { views } = candidate.observation;
-        const layout = hint ? { receiverViews: views.map(({ id: viewId, viewInstanceId }) => ({ viewId, viewInstanceId })), refViews: [] } : undefined;
+        const layout = hint ? { activeViews: [] } : undefined;
         const adopted = desktop.adoptTurn({ apps: [{ candidate, windows: layout }] });
         assert.equal(adopted.status, 'adopted');
         return { inputs: adopted.turn, release: () => adopted.turn.release() };
     }
     const full = await bind();
-    const before = await full.inputs.readConsoleInputs();
+    const before = await full.inputs.readPublicRefs();
     assert.equal(before.status, 'ready');
-    assert.equal(before.refs.console_catalog.list.people[0].email, 'selected@example.test');
+    assert.deepEqual(JSON.parse(JSON.stringify(before.refs.find(entry => entry.appId === CATALOG && entry.refId === 'people'))), {
+        appId: CATALOG, viewId: 'list', refId: 'people', path: [], value: [{ email: 'selected@example.test' }, { email: 'sibling@example.test' }],
+    });
+    const selected = await full.inputs.readPublicRefs([peopleAddress + '[0].email']);
+    assert.deepEqual(JSON.parse(JSON.stringify(selected)), { status: 'ready', refs: [
+        { appId: CATALOG, viewId: 'list', refId: 'people', path: [0, 'email'], value: 'selected@example.test' },
+    ] });
     await publish('direct background reorder', changed, false);
-    const reordered = await full.inputs.readConsoleInputs();
+    const reordered = await full.inputs.readPublicRefs();
     assert.deepEqual(reordered, before);
     await publish('direct scope revoked', changed, true);
-    const rejected = await full.inputs.readConsoleInputs();
-    assert.equal(rejected.issue.code, 'REF_NOT_VISIBLE');
-    assert.equal((await full.inputs.readConsoleInputs([peopleAddress + '[0].email'])).issue.code, 'REF_NOT_VISIBLE');
-    assert.deepEqual(Object.keys((await full.inputs.readConsoleInputs([])).refs), []);
-    const retained = await full.inputs.readConsoleInputs([itemAddress]);
+    const rejected = await full.inputs.readPublicRefs();
+    assert.equal(rejected.issue.code, 'REF_VALUE_PRIVATE');
+    assert.equal((await full.inputs.readPublicRefs([peopleAddress + '[0].email'])).issue.code, 'REF_VALUE_PRIVATE');
+    assert.deepEqual((await full.inputs.readPublicRefs([])).refs, []);
+    const retained = await full.inputs.readPublicRefs([itemAddress]);
     assert.equal(retained.status, 'ready');
-    assert.equal(JSON.stringify(retained.refs.console_catalog.list.todos), JSON.stringify(original));
+    assert.equal(JSON.stringify(retained.refs[0].value), JSON.stringify(original));
     assert.equal((await appClient(desktop, CATALOG).running.beginClose().completion).ok, true);
     await catalogState(folder, 'public restored', changed);
     await desktop.openApp(CATALOG);
-    const stale = await full.inputs.readConsoleInputs();
+    const stale = await full.inputs.readPublicRefs();
     assert.equal(stale.issue.code, 'REF_NOT_VISIBLE');
     full.release();
     const hintBinding = await bind(true);
-    const hintedInputs = await hintBinding.inputs.readConsoleInputs();
+    const hintedInputs = await hintBinding.inputs.readPublicRefs();
     assert.equal(hintedInputs.status, 'ready');
-    assert.deepEqual(Object.keys(hintedInputs.refs), []);
-    assert.equal((await hintBinding.inputs.readConsoleInputs([itemAddress])).issue.code, 'REF_NOT_VISIBLE');
+    assert.deepEqual(hintedInputs.refs, []);
+    assert.equal((await hintBinding.inputs.readPublicRefs([itemAddress])).issue.code, 'REF_NOT_VISIBLE');
     hintBinding.release();
-    facts.publicRuntime = { before, reordered, rejected, retained, stale, hintedInputs };
+    facts.publicRuntime = { before, selected, reordered, rejected, retained, stale, hintedInputs };
 
+    await desktop.openApp(TASKS);
+    const writesBefore = await journal(folder, 'writes');
+    const authorizedBefore = hooks.authorized.length;
     const executor = createNodeConsoleExecutor({ timeoutMs: 2_000 });
     let processResult;
     const delayed = new SemanticAOTUIDrivenSource(desktop, {
@@ -147,12 +155,23 @@ try {
     try {
         const context = await delayed.getContext();
         await context.adopt();
-        const result = await context.executeTool('run_code', { code: 'inspect("must not run");' }, 'before-begin');
-        assert.equal(result.error.code, 'REF_NOT_VISIBLE');
+        const code = 'inspect(refs.console_catalog.list.people[0].email); ' +
+            'await tools["console_tasks-accept"]({ items: [], literal: "should never be saved" });';
+        const result = await context.executeTool('run_code', { code }, 'before-begin');
+        assert.equal(result.error.code, 'REF_VALUE_PRIVATE');
         assert.deepEqual(result.result, { output: [], subcalls: [] });
         assert.throws(() => process.kill(processResult.process.pid, 0), { code: 'ESRCH' });
-        facts.beforeBegin = { result: result.error, process: processResult.process };
-    } finally { await delayed.dispose(); }
+        const writesAfter = await journal(folder, 'writes');
+        assert.deepEqual(writesAfter, writesBefore);
+        assert.equal(hooks.authorized.length, authorizedBefore);
+        facts.beforeBegin = { result: result.error, output: result.result.output, subcalls: result.result.subcalls,
+            process: processResult.process, writesBefore: writesBefore.length, writesAfter: writesAfter.length,
+            businessAuthorizations: hooks.authorized.length - authorizedBefore };
+        await context.release();
+    } finally {
+        await delayed.dispose();
+        assert.equal((await appClient(desktop, TASKS).running.beginClose().completion).ok, true);
+    }
 
     await catalogState(folder, 'over budget', original, false, '\n' + 'x'.repeat(25_000));
     await watchUntil(async () => (await appClient(desktop, CATALOG).client.preview()).views?.[0]?.content.value.includes('over budget'));
@@ -163,7 +182,7 @@ try {
     const hintPage = hinted.body.messages.find(message => typeof message.content === 'string' &&
         message.content.startsWith('<view ') && message.content.includes('app_id="console_catalog"'));
     assert.match(hintPage?.content, /Its body does not fit the current model request/);
-    assert.ok(!hinted.body.tools.find(tool => tool.function.name === 'run_code').function.description.includes('readonly todos:'));
+    assert.ok(!consoleBindings(hinted.body).includes('readonly todos:'));
     assert.equal(savedResult(hinted.message, 'hint').code, 'REF_NOT_VISIBLE');
     const hintedDefault = await turn('hidden budget page is not a required import', codeCall('hint-default', 'inspect(Object.keys(refs).length);'));
     const omitted = savedResult(hintedDefault.message, 'hint-default');

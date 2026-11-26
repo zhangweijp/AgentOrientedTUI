@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRuntime } from '@aotui/runtime';
 import { AgentDriverV2, createProviderToolSchemaPolicy } from '@aotui/agent-driver-v2';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import { fixtureProvider, installFixture, journal, modelCall } from './batch-two-support.mjs';
+import { consoleBindings, fixtureProvider, installFixture, journal, modelCall, watchUntil } from './batch-two-support.mjs';
 
 const [folder, providerId] = process.argv.slice(2);
 await mkdir(folder, { recursive: true });
@@ -53,8 +53,9 @@ const policy = {
     authorize({ signal, ...context }) { authorizations.push(context); return true; },
     canReadReceipt: () => true,
 };
-async function turn(label, calls = []) {
-    provider.replyNext({ label, path, calls, ...(claude ? { frames: claudeFrames(calls) } : {}) });
+const functions = body => body.tools.map(tool => claude ? { ...tool, parameters: tool.input_schema } : tool.function);
+async function turn(label, calls = [], beforeReply) {
+    provider.replyNext({ label, path, calls, beforeReply, ...(claude ? { frames: claudeFrames(calls) } : {}) });
     history.push({ role: 'user', content: label, timestamp: Date.now() });
     await driver.trigger();
     await driver.runInFlight;
@@ -62,20 +63,17 @@ async function turn(label, calls = []) {
     assert.deepEqual(provider.failures, []);
     const request = provider.requests.find(request => request.label === label);
     assert.equal(request.path, path);
-    if (claude) {
-        assert.ok(request.body.tools.every(tool => tool.strict === true));
-        assert.ok(request.body.tools.every(tool => tool.name !== 'run_code' && !JSON.stringify(tool.input_schema).includes('"maxItems"')));
-        const messages = JSON.stringify(request.body.messages);
-        assert.ok(messages.includes('Optional tool run_code is unavailable in Claude Messages strict.'));
-        assert.ok(messages.includes('$.properties.imports.anyOf[0].maxItems'));
-        assert.ok(messages.includes('Use non-strict mode to enable run_code.'));
-        assert.deepEqual(Object.fromEntries(request.body.tools.map(tool => [tool.name, tool.input_schema])),
-            JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(selectedTools)
-                .map(([name, tool]) => [name, tool.inputSchema.jsonSchema])))));
-        for (const call of calls) assert.ok(request.body.tools.some(tool => tool.name === call.function.name));
-    }
+    const wire = functions(request.body);
+    assert.ok(wire.every(tool => tool.strict === true));
+    assert.deepEqual(wire.map(({ name, description, parameters }) => [name, description, parameters]),
+        JSON.parse(JSON.stringify(Object.entries(selectedTools).map(([name, tool]) =>
+            [name, tool.description, tool.inputSchema.jsonSchema]))));
+    for (const call of calls) assert.ok(wire.some(tool => tool.name === call.function.name));
     return request.body;
 }
+const result = id => history.filter(message => message.role === 'tool').flatMap(message => message.content)
+    .find(part => part.toolCallId === id)?.output.value;
+const run = (id, code, imports) => modelCall(id, 'run_code', { code, imports, reset: false });
 try {
     if (claude) {
         const model = 'claude-3-haiku-20240307';
@@ -85,25 +83,42 @@ try {
         });
         assert.equal(unsupported.requests, 0);
     }
-    await writeFile(join(folder, 'people.json'), JSON.stringify({
+    const peopleFile = join(folder, 'people.json');
+    const directory = {
         revision: 'strict-trial', people: [{ email: 'strict@example.test', 'display.name': '本机' }],
-    }));
+    };
+    await writeFile(peopleFile, JSON.stringify(directory));
     const modules = name => new URL('./dist/batch-three-' + name + '.js', import.meta.url).href;
     await installFixture(desktop, 'contacts', 'contacts', modules('contacts'), folder, policy);
     await installFixture(desktop, 'mail', 'mail', modules('mail'), folder, policy);
-    await turn('Open the draft', [modelCall('open', 'mail-open_draft', { name: 'Strict' })]);
+    const open = await turn('Open the draft', [modelCall('open', 'mail-open_draft', { name: 'Strict' })]);
     const body = await turn('Use the published priority and inspect its structure', [
         modelCall('priority', 'mail-set_priority', { view_id: 'draft_1', priority: '$ref.contacts.list.score' }),
         modelCall('schema', 'system-inspect_ref', { address: '$ref.contacts.list.people', mode: 'schema' }),
     ]);
-    if (claude) assert.equal(body.tools.length, 11);
-    else assert.ok(body.tools.every(tool => tool.function.strict === true));
-    const tools = Object.fromEntries(body.tools.map(tool => claude ? [tool.name, tool.input_schema]
-        : [tool.function.name, tool.function.parameters]));
+    const tools = Object.fromEntries(functions(body).map(tool => [tool.name, tool.parameters]));
     assert.equal(tools['contacts-store_team'].properties.text.type, 'string');
     assert.deepEqual(tools['mail-set_priority'].properties.priority.anyOf.map(branch => branch.type), ['integer', 'string']);
-    assert.equal(Boolean(tools.run_code), !beta && !claude);
+    assert.match(consoleBindings(body), /"mail-set_priority"/);
+    assert.doesNotMatch(consoleBindings(open), /"mail-set_priority"/);
+    assert.deepEqual(functions(open).find(tool => tool.name === 'run_code'), functions(body).find(tool => tool.name === 'run_code'));
+    assert.deepEqual(tools.run_code.properties.imports.anyOf, [{ type: 'array', items: { type: 'string' } },
+        beta ? { type: 'string', enum: ['default'] } : { type: 'null' }]);
     assert.equal(JSON.parse(await readFile(join(folder, 'Strict.json'), 'utf8')).priority, 7);
+    const scoreAddress = '$ref.contacts.list.score';
+    await turn('Default imports use the captured score', [run('default', 'inspect(refs.contacts.list.score)', beta ? 'default' : null)], async () => {
+        await writeFile(peopleFile + '.next', JSON.stringify({ ...directory, revision: 'new-score', score: 8 }));
+        await rename(peopleFile + '.next', peopleFile);
+        await watchUntil(async () => (await journal(folder, 'contacts-commits')).some(event => event.revision === 'new-score'));
+    });
+    await turn('An explicit empty list reads no public Refs', [run('empty', 'inspect(Object.keys(refs).length)', [])]);
+    await turn('Exactly 256 explicit imports are accepted', [run('full', 'inspect(refs.contacts.list.score)', Array(256).fill(scoreAddress))]);
+    await turn('257 imports fail before executing the program', [run('overflow', 'inspect("must not run")', Array(257).fill(scoreAddress))]);
+    assert.deepEqual(result('default').output, ['7']);
+    assert.deepEqual(result('empty').output, ['0']);
+    assert.deepEqual(result('full').output, ['8']);
+    assert.equal(result('overflow').code, 'CONSOLE_INVALID_INPUT');
+    assert.equal(result('overflow').output, undefined);
     const terminal = await turn('Return the paired execution', []);
     const paired = claude ? terminal.messages.flatMap(message => message.content)
         .filter(part => part.type === 'tool_result' && part.tool_use_id === 'priority')
@@ -118,7 +133,8 @@ try {
     assert.equal(wrote[0].input.priority, 7);
     assert.ok(wrote[0].threadId > 0);
     await writeFile(join(folder, 'result.json'), JSON.stringify({ providerId, requests: provider.requests, authorization: query,
-        receipt, wrote, ...(unsupported ? { unsupported } : {}) }, null, 2));
+        receipt, wrote, console: Object.fromEntries(['default', 'empty', 'full', 'overflow'].map(id => [id, result(id)])),
+        ...(unsupported ? { unsupported } : {}) }, null, 2));
 } finally {
     driver.dispose();
     await source.dispose();

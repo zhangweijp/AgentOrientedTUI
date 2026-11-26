@@ -32,7 +32,7 @@ try {
     async function send(label, selection, calls, { beforeReply, maxInputBytes = Infinity } = {}) {
         const pages = selection.flatMap(({ app, observation }) => observation.views.map(view => {
             const refs = observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId);
-            return buildViewMessageMarkup({ appId: app.appId, appName: app.name, viewId: view.id, viewType: view.type, markup: view.content.value, refs });
+            return buildViewMessageMarkup({ appId: app.appId, appName: app.name, viewId: view.id, viewType: view.type, region: view.region, markup: view.content.value, refs });
         }));
         const routes = new Map();
         const tools = selection.flatMap(({ app, observation }) => observation.tools.map(tool => {

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const { values: options } = parseArgs({ options: {
-    out: { type: 'string' }, 'store-dir': { type: 'string' }, offline: { type: 'boolean' },
+    out: { type: 'string' }, 'store-dir': { type: 'string' }, 'sdk-readme': { type: 'string' }, offline: { type: 'boolean' },
 } });
 assert.ok(path.isAbsolute(options.out ?? ''), 'Use --out with an absolute, new or empty directory');
 assert.ok(options['store-dir'] === undefined || path.isAbsolute(options['store-dir']), 'Use an absolute --store-dir');
@@ -24,7 +24,7 @@ const storeDir = options['store-dir'] ?? path.join(out, 'pnpm-store');
 const logs = path.join(out, 'logs');
 const artifacts = path.join(out, 'artifacts');
 for (const directory of [logs, artifacts]) fs.mkdirSync(directory);
-const packages = ['core', 'runtime', 'sdk', 'agent-driver-v2', 'agent-driver-adapter'];
+const packages = ['core', 'sdk', 'runtime', 'agent-driver-v2', 'agent-driver-adapter'];
 const lifecycleSpec = 'tests/agent-driver-adapter/runtime-lifecycle.integration.test.ts';
 const lifecycleSupport = 'tests/fixtures/batch-two-support.mjs';
 const patchPath = 'patches/provider-utils-4.0.65.patch';
@@ -114,6 +114,11 @@ function freeze() {
         fs.mkdirSync(path.dirname(target), { recursive: true });
         copy(source, target);
     }
+    if (options['sdk-readme']) {
+        const readme = path.resolve(options['sdk-readme']);
+        fs.copyFileSync(readme, path.join(inputs, 'sdk/README.md'));
+        evidence.sdkReadme = { source: readme, sha256: hashFile(readme) };
+    }
     evidence.inputs = { head, dirtySha256: sha(dirty), ...recordInventory(inputs, path.join(out, 'input-files.json')),
         locks: Object.fromEntries(packages.map(pkg => [pkg, hashFile(path.join(inputs, pkg, 'pnpm-lock.yaml'))])),
         driverPatchSha256: hashFile(path.join(inputs, 'agent-driver-v2', patchPath)), runnerSha256: hashFile(fileURLToPath(import.meta.url)) };
@@ -192,7 +197,8 @@ function selectArtifacts() {
     const b = evidence.builds['build-b'];
     assert.equal(a.core.dependencies.typebox, '1.4.3');
     for (const pkg of ['sdk', 'runtime', 'agent-driver-adapter']) assert.equal(a[pkg].dependencies[a.core.name], a.core.version);
-    assert.equal(a.sdk.dependencies[a.runtime.name], undefined);
+    assert.deepEqual(a.sdk.dependencies, { [a.core.name]: a.core.version });
+    assert.equal(a.sdk.peerDependencies, undefined);
     assert.deepEqual(a['agent-driver-adapter'].peerDependencies, {
         [a.runtime.name]: a.runtime.version, [a['agent-driver-v2'].name]: a['agent-driver-v2'].version,
     });
@@ -210,7 +216,6 @@ function selectArtifacts() {
 function consumerInputs(profile, folder) {
     const host = profile === 'host';
     const coreOnly = profile === 'core';
-    const jsx = host || profile === 'author-jsx';
     const selected = (host ? packages : coreOnly ? ['core'] : ['core', 'sdk']).map(pkg => evidence.packages[pkg]);
     const local = Object.fromEntries(selected.map(pkg => [pkg.name, `file:../../${pkg.tar}`]));
     const sdk = packageJson(path.join(inputs, 'sdk'));
@@ -235,7 +240,8 @@ function consumerInputs(profile, folder) {
         'build-a/agent-driver-adapter/node_modules/vitest')), '../vite')).version;
     const direct = host || coreOnly ? local : { [sdk.name]: local[sdk.name] };
     json(path.join(folder, 'package.json'), { private: true, type: 'module',
-        dependencies: { ...direct, ...(!coreOnly && { typebox: sdk.peerDependencies.typebox }), ...(jsx && { preact: sdk.peerDependencies.preact }), ...(host && {
+        dependencies: { ...direct, ...(host && {
+            typebox: sdk.devDependencies.typebox,
             ai: driver.dependencies.ai, zod: driver.devDependencies.zod,
             '@ai-sdk/provider-utils': driver.dependencies['@ai-sdk/provider-utils'],
         }) },
@@ -259,8 +265,9 @@ function verifyResolution(label, folder, profile) {
         packageRoots[delivered.name] = root;
     }
     const graph = JSON.parse(runPnpm(`${label}-dependency-graph`, folder, ['list', '--depth', 'Infinity', '--json']));
-    const forbidden = host ? [] : ['ai', names.runtime, names['agent-driver-v2'], names['agent-driver-adapter'], 'better-sqlite3',
-        ...(coreOnly ? [names.sdk, 'linkedom'] : []), ...(profile === 'author-jsx' ? [] : ['preact'])];
+    const forbidden = ['preact', 'linkedom', 'better-sqlite3', ...(host ? [] : [
+        'ai', 'typebox', 'zod', names.runtime, names['agent-driver-v2'], names['agent-driver-adapter'],
+    ]), ...(coreOnly ? [names.sdk] : [])];
     const resolve = `
       import { realpathSync } from 'node:fs';
       import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -276,14 +283,13 @@ function verifyResolution(label, folder, profile) {
         throw Error('Unexpected dependency: ' + name);
       }
       console.log(JSON.stringify(result));`;
-    const entries = coreOnly ? { core: names.core } : { sdk: `${names.sdk}/app`, sdkCore: names.core };
-    const parents = coreOnly ? {} : { sdkCore: path.join(packageRoots[names.sdk], 'dist/app.js') };
-    if (profile === 'author-jsx') Object.assign(entries, { component: names.sdk, preact: 'preact' });
+    const entries = coreOnly ? { core: names.core } : { sdk: names.sdk, sdkCore: names.core };
+    const parents = coreOnly ? {} : { sdkCore: path.join(packageRoots[names.sdk], 'dist/index.js') };
     if (host) {
         const driver = names['agent-driver-v2'], adapter = names['agent-driver-adapter'];
         Object.assign(entries, { core: names.core, runtime: names.runtime, runtimeCore: names.core,
             adapter, driver, adapterRuntime: names.runtime, adapterDriver: driver,
-            driverAI: 'ai', driverUtils: '@ai-sdk/provider-utils', aiUtils: '@ai-sdk/provider-utils', preact: 'preact' });
+            driverAI: 'ai', driverUtils: '@ai-sdk/provider-utils', aiUtils: '@ai-sdk/provider-utils' });
         Object.assign(parents, { runtimeCore: path.join(packageRoots[names.runtime], 'dist/index.js'),
             adapterRuntime: path.join(packageRoots[adapter], 'dist/index.js'), adapterDriver: path.join(packageRoots[adapter], 'dist/index.js'),
             driverAI: path.join(packageRoots[driver], 'dist/index.js'), driverUtils: path.join(packageRoots[driver], 'dist/index.js') });
@@ -303,15 +309,17 @@ function verifyResolution(label, folder, profile) {
         assert.equal(resolution.entries.adapterDriver, resolution.entries.driver);
         assert.equal(resolution.entries.driverUtils, resolution.entries.aiUtils);
         assert.match(resolution.entries.driverUtils, /provider-utils@4\.0\.65_patch_hash=/);
-    } else {
-        const visit = node => {
-            for (const group of ['dependencies', 'devDependencies', 'optionalDependencies']) for (const [name, child] of Object.entries(node[group] ?? {})) {
-                assert.ok(!forbidden.includes(name) && !name.startsWith('@ai-sdk/'), `Unexpected dependency for ${profile}: ${name}`);
-                visit(child);
-            }
-        };
-        graph.forEach(visit);
     }
+    const visit = (node, owner) => {
+        for (const group of ['dependencies', 'devDependencies', 'optionalDependencies']) for (const [name, child] of Object.entries(node[group] ?? {})) {
+            const allowCoreCompiler = owner === names.core && name === 'typebox';
+            assert.ok((allowCoreCompiler || !forbidden.includes(name)) && (host || !name.startsWith('@ai-sdk/')),
+                `Unexpected dependency for ${profile}: ${name}`);
+            visit(child, name);
+        }
+    };
+    graph.forEach(node => visit(node, node.name));
+
     return { packageRoots, ...resolution, compiler: compiler(`${label}-compiler`, folder) };
 }
 
@@ -389,7 +397,7 @@ try {
     if (ready) for (const name of ['build-a', 'build-b']) build(name);
     const comparable = ready && Object.values(evidence.builds).every(group => packages.every(pkg => group[pkg]));
     const deliverable = stage('compare-and-select', selectArtifacts, !comparable && 'Requires both builds and all package payloads');
-    const profiles = ['core', 'author-plain', 'author-jsx', 'host'];
+    const profiles = ['core', 'author-plain', 'host'];
     if (deliverable) for (const profile of profiles) consumers(profile);
     else for (const profile of profiles) stage(profile, null, 'Requires compared delivery artifacts');
 } catch (error) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { functions, healthyLog, views } from './batch-fourteen-schema.mjs';
-import { journal, modelCall } from './batch-two-support.mjs';
+import { consoleBindings, journal, modelCall } from './batch-two-support.mjs';
 import { savedParts } from './batch-ten-delivery.mjs';
 
 const programme = '$ref.theatre.programme.when';
@@ -21,8 +21,8 @@ export function assertStrictConsole(body, scoped = true) {
     assert.equal(schema.additionalProperties, false);
     assert.deepEqual(schema.required, scoped ? ['code', 'imports', 'reset'] : ['code', 'imports']);
     assert.equal('reset' in schema.properties, scoped);
-    assert.equal(schema.properties.code.pattern, '[\\s\\S]');
-    assert.deepEqual(schema.properties.imports.anyOf, [{ type: 'array', maxItems: 256, items: { type: 'string' } }, { type: 'null' }]);
+    assert.deepEqual(Object.keys(schema.properties.code), ['type', 'description']);
+    assert.deepEqual(schema.properties.imports.anyOf, [{ type: 'array', items: { type: 'string' } }, { type: 'null' }]);
     return tool;
 }
 
@@ -36,9 +36,9 @@ export async function exerciseEmptyConsole(turn, scoped = true) {
     for (const [index, request] of inputs.entries()) {
         const calls = [request];
         const { body, message } = await turn(`empty-${index}`, calls);
-        const tool = assertStrictConsole(body, scoped);
-        assert.match(tool.description, /declare const tools: \{\s*\};/);
-        assert.ok(!tool.description.includes('readonly theatre:'));
+        assertStrictConsole(body, scoped);
+        assert.match(consoleBindings(body), /declare const tools: \{\s*\};/);
+        assert.ok(!consoleBindings(body).includes('readonly theatre:'));
         const result = savedParts(message, calls)[0].output;
         assert.equal(result.type, 'json');
         assert.deepEqual(result.value.output, [index === 2 ? 'undefined' : '3']);
@@ -87,7 +87,8 @@ export async function exercisePolicyWindows(turn, source, captured, manifest, tw
     assert.ok(content.some(view => view.includes('view_id="form_1"') && view.includes('Get tickets later')));
     assert.ok(content.some(view => view.includes('view_id="programme"') && view.includes('Tonight at 20:00')));
     assert.ok(!content.some(view => view.includes(ticket)));
-    assert.ok(!assertStrictConsole(allowed.body).description.includes('"theatre-pick"'));
+    assertStrictConsole(allowed.body);
+    assert.ok(!consoleBindings(allowed.body).includes('"theatre-pick"'));
     assert.equal(savedParts(allowed.message, [read])[0].output.value.ok, true);
     const attempt = [expand('try-unencodable-window', 'form_1')];
     const refused = await turn('policy-expand-form', attempt);
@@ -159,7 +160,7 @@ export async function exerciseStationBudget(turn, mode, manifest, healthy, captu
         const issue = text(received.body), field = mode === 'over' ? 'station' : 'to';
         assert.ok(issue.includes(`$.properties.${field}.enum`) && issue.includes('1001') && issue.includes('1000'), issue);
         assert.ok(!views(received.body).some(view => view.includes('app_id="theatre"')));
-        assert.ok(!tools.run_code.description.includes('"theatre-'));
+        assert.ok(!consoleBindings(received.body).includes('"theatre-'));
     }
     const results = savedParts(received.message, calls);
     assert.ok(results.every(result => result.output.type === 'json'));
