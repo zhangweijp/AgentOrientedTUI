@@ -169,7 +169,7 @@ async function runNpm(facts) {
             name: packageName, version, type: 'module', main: './app.js', files: ['app.js', 'aoapp.json'],
         }));
         await createFile(join(folder, 'aoapp.json'), JSON.stringify({ app_name: appName, version, entry: { main: entry },
-            toolAuthoringProtocol: 'view-type-tools-v7', appLifecycleSupport: 'app-lifecycle-v2' }));
+            toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2' }));
         await createFile(join(folder, 'entry.mjs'), `
 import { createApp, createView, defineViewType } from ${JSON.stringify(sdkEntry)};
 const Notes = defineViewType({ name: 'Notes', multiplicity: 'single', region: 'dynamic' });

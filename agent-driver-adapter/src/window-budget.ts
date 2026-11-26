@@ -26,9 +26,9 @@ export interface WindowBudgetReport {
 }
 export type WindowBudgetContent = Omit<WindowBudgetReport, 'id'>;
 
-export function budgetHint(bytes: number, full: ModelInputMeasurement): string {
+export function budgetHint(full: ModelInputMeasurement): string {
     return 'This View is open. Its body does not fit the current model request. Collapse or close other windows.\n' +
-        `This View uses about ${bytes} input tokens. The complete request needs ${full.estimated}, with ${full.inputLimit} available (short by ${full.estimated - full.inputLimit}).`;
+        `Estimated input cost using ${full.method}: ${full.estimated}. Available budget: ${full.inputLimit}.`;
 }
 
 export function budgetPage(report: WindowBudgetReport, page: number, inline = true) {
@@ -80,8 +80,8 @@ export async function fitModelWindows(
         const report = (cost: ModelInputMeasurement): WindowBudgetContent => ({
             summary: {
                 method: fullCost.method, input_available: available, output_reserved: fullCost.outputReserved,
-                complete: { estimated: fullCost.estimated, margin: fullCost.safety, shared: fullCost.estimated - fullWindowBytes },
-                presented: { estimated: cost.estimated, margin: cost.safety, shared: cost.estimated - currentBytes },
+                complete: { estimated: fullCost.estimated, margin: fullCost.safety, window_bytes: fullWindowBytes },
+                presented: { estimated: cost.estimated, margin: cost.safety, window_bytes: currentBytes },
                 short_by: fullCost.estimated - available,
                 mode: presentation.managementOnly ? 'management' : 'window_hints',
                 actions: ['system-collapse_view', 'system-collapse_app', 'system-close_view', 'system-close_app']

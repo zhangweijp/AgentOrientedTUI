@@ -436,7 +436,9 @@ try {
     const closeReport = await closeHandles[0]!.completion;
     cases.sessionClose = closeReport;
     assert.equal(closeReport.desktopId, shutdownDesktop);
-    assert.equal(closeReport.found, true);
+    assert.equal(closeReport.scope, 'desktop');
+    assert.equal(closeReport.state, 'settled');
+    assert.equal(closeReport.ok, true);
     assert.equal(closeReport.resourcesReleased, true);
     assert.equal(closeReport.hasFailures, false);
     assert.equal(session.state, 'destroyed');

@@ -6,9 +6,10 @@ describe('DesktopManager', () => {
     let mockCatalog: any;
 
     beforeEach(() => {
+        const desktop = { id: 'dt_test', listApps: () => [{ id: 'app' }] };
         mockKernel = {
-            createDesktop: vi.fn().mockResolvedValue('dt_test'),
-            getDesktop: vi.fn().mockReturnValue({ id: 'dt_test', listApps: () => [{ id: 'app' }] }),
+            createDesktop: vi.fn().mockResolvedValue(desktop),
+            getDesktop: vi.fn().mockReturnValue(desktop),
         };
 
         mockCatalog = {

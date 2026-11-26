@@ -3,7 +3,8 @@ import { realpathSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import type { ConsoleInputs, InteractionIssue } from '@aotui/runtime';
+import type { InteractionIssue } from '@aotui/runtime';
+import type { ConsoleInputs } from './inputs.js';
 import type { ToolResult } from '@aotui/agent-driver-v2';
 import { clipText, frame, MAX_CALLS, MAX_LOGS, OUTPUT_BYTES, readFrames, record, VERSION, writeFrame } from './program-wire.js';
 

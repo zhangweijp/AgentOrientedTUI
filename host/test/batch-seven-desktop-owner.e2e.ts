@@ -80,13 +80,13 @@ mock.method(registry, 'installAll', async (desktop: IDesktop, options?: Paramete
 });
 const facts: any = { requests: provider.requests, assembly: [], passed: false };
 
-async function invoke(desktop: IDesktop, name: string, input: object, invocationId: string) {
+async function invoke(desktop: IDesktop, name: string, input: object, invocationId: string, viewId?: string) {
     const { client } = appClient(desktop, APP);
     const observation = await observe(client, true);
     try {
         const tool = observation.tools.find(tool => tool.name === name);
         assert.ok(tool);
-        const result = await client.invoke({ invocationId, observationId: observation.observationId, toolId: tool.id, input });
+        const result = await client.invoke({ invocationId, observationId: observation.observationId, toolId: tool.id, input, ...(viewId ? { viewId } : {}) });
         assert.equal(result.kind, 'receipt');
         assert.equal(result.receipt.outcome.status, 'succeeded');
         return result.receipt;
@@ -264,7 +264,7 @@ try {
     const moduleURL = pathToFileURL(resolve(consumer, 'dist/batch-four-files.js')).href;
     await writeFile(join(directory, 'entry.mjs'), 'export { default } from ' + JSON.stringify(moduleURL) + ';\n');
     await writeFile(join(directory, 'aoapp.json'), JSON.stringify({
-        app_name: APP, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
+        app_name: APP, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
         appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     await desktops.initialize({ appEntries: [{ name: 'files_install', source: 'local:' + directory, enabled: true, autoStart: true }] });
@@ -297,7 +297,7 @@ try {
             assert.equal(rejected.error.errors[1].report, closed);
         }
         assert.equal(runtime.getDesktop(key), successor);
-        const edited = await invoke(successor, 'edit', { view_id: 'file_B_1', mode: 'short' }, 'write-successor-once');
+        const edited = await invoke(successor, 'edit', { mode: 'short' }, 'write-successor-once', 'file_B_1');
         facts.assembly.push({ mode, closed, opened, edited, originalWorker: await journal(folders.get(original), 'lifecycle'),
             error: { message: rejected.error.message, code: rejected.error.code }, writes: await verifyWrite(successor) });
         assert.equal((await successor.beginClose().completion).ok, true);
@@ -315,7 +315,7 @@ try {
     for (const phase of ['first', 'reuse'] as const) {
         facts.startupRollback.im.push(await verifyIMSaveRollback(phase));
     }
-    const unrelatedReceipt = await invoke(unrelated, 'edit', { view_id: 'file_B_1', mode: 'short' }, 'edit-unrelated');
+    const unrelatedReceipt = await invoke(unrelated, 'edit', { mode: 'short' }, 'edit-unrelated', 'file_B_1');
     facts.startupRollback.unrelated = { receipt: unrelatedReceipt, writes: await verifyWrite(unrelated) };
     assert.equal((await unrelated.beginClose().completion).ok, true);
     facts.startupClose = [];

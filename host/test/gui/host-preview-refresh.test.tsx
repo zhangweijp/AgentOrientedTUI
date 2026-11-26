@@ -13,6 +13,7 @@ import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { createAppInteraction, createSnapshotCore, createTurnCoordinator } from '@aotui/core/host';
 import { createViewOwnedTools } from '@aotui/core/producer';
 import type { ExecutionBinding } from '@aotui/core';
+import { createCandidateScope } from '../../../runtime/src/engine/core/candidate-scope.js';
 
 // Existing DI boundaries: no singleton DesktopManager, user database/config,
 // Electron process/IPC, skills scan, MCP server or model is started by this test.
@@ -59,15 +60,19 @@ function assembly(topicId: string, instanceId: string) {
     const gates: Array<ReturnType<typeof deferred>> = [];
     let sequence = 0, businessValue = '';
     const turns = createTurnCoordinator();
-    const getRunningApp = () => ({ status: 'ready' as const, app: { readReceipt: authority.readReceipt,
+    const app = {
+        appId: 'preview_app', instanceId,
+        readReceipt: authority.readReceipt,
         observe: () => turns.prepareObservation(authority, () => true),
-        preview: async () => {
-        const barrier = hold; hold = undefined;
-        const result = await authority.preview();
-        if (barrier) { barrier.started.resolve(); await barrier.resume.promise; }
-        return result;
-    } } });
-    const desktop = { id: topicId, adoptTurn: turns.adoptTurn, getRunningApp,
+        async preview() {
+            const barrier = hold; hold = undefined;
+            const result = await authority.preview();
+            if (barrier) { barrier.started.resolve(); await barrier.resume.promise; }
+            return result;
+        },
+    };
+    const getRunningApp = () => ({ status: 'ready' as const, app });
+    const desktop = { id: topicId, adoptTurn: turns.adoptTurn, createCandidateScope, getRunningApp,
         output: { subscribe: (fn: () => void) => { listeners.add(fn); }, unsubscribe: (fn: () => void) => { listeners.delete(fn); } },
         listApps: () => [{ installationId: 'preview', appId: 'preview_app', appInstanceId: instanceId, name: 'preview_app', status: 'running' }],
         getAppWindows: () => ({ appId: 'preview_app', instanceId,

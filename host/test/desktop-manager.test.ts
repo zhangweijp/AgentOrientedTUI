@@ -14,7 +14,7 @@ describe('DesktopManager', () => {
         desktopManager = new DesktopManager();
         await desktopManager.initialize({ appEntries: [] });
     });
-    afterEach(async () => { await desktopManager.getKernel().shutdown(); });
+    afterEach(async () => { await desktopManager.getKernel().beginClose().completion; });
 
     describe('createDesktop', () => {
         it('creates a Desktop with the reported number of installed Apps', async () => {
@@ -38,7 +38,7 @@ describe('DesktopManager', () => {
 
     it('allows the assembled Desktop owner to close and free its ID', async () => {
         const { desktop } = await desktopManager.createDesktop();
-        expect(await desktop.beginClose().completion).toMatchObject({ intent: 'close', resourcesReleased: true });
+        expect(await desktop.beginClose().completion).toMatchObject({ scope: 'desktop', state: 'settled', resourcesReleased: true });
         expect(desktopManager.getDesktop(desktop.id)).toBeNull();
         const next = await desktopManager.createDesktop(desktop.id);
         expect(next.desktop).not.toBe(desktop);

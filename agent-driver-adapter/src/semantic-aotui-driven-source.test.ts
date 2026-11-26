@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { SemanticAOTUIDrivenSourceOptions } from './semantic-aotui-driven-source.js';
 import type { ActiveTurn, IDesktop, AppDiscoveryInfo, ObservationCandidate, TurnSelection, UpdateSignal } from '@aotui/runtime';
 import type { AppWindows } from '@aotui/runtime';
+import { createCandidateScope } from '../../runtime/src/engine/core/candidate-scope.js';
 import { createProviderToolSchemaPolicy, type MeasureModelRequest } from '@aotui/agent-driver-v2';
 import type { Observation } from '@aotui/core';
 import type { InvocationOutcome, InvocationReceipt, InvokeResult, AppInvocation } from '@aotui/core';
@@ -35,6 +36,7 @@ function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOpt
     const clients: Probe[] = [];
     const owners = new WeakMap<ObservationCandidate, { appId: string; cleanup(): void }>();
     let current: ActiveTurn | undefined;
+    const adoptedCandidates = new WeakSet<ObservationCandidate>();
     function clientFor(appId: string) {
         const results = new Map<string, InvocationReceipt>();
         const release = vi.fn();
@@ -43,7 +45,7 @@ function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOpt
                 const observation = observations.get(appId)!;
                 let removed = false;
                 const discard = () => { if (!removed) { removed = true; release(observation.observationId); } return []; };
-                const candidate: ObservationCandidate = { observation, discard };
+                const candidate: ObservationCandidate = { observation, discard: () => adoptedCandidates.has(candidate) ? [] : discard() };
                 owners.set(candidate, { appId, cleanup: discard });
                 return { status: 'prepared', candidate };
             }),
@@ -56,16 +58,18 @@ function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOpt
         };
     }
     const desktop = {
+        createCandidateScope: vi.fn(createCandidateScope),
         id: 'desktop', listApps: vi.fn(() => installed), getAppWindows: vi.fn((): AppWindows | undefined => undefined),
         adoptTurn: vi.fn((selection: TurnSelection) => {
             const previous = current;
             previous?.release();
             const byApp = new Map(selection.apps.map(({ candidate }) => [owners.get(candidate)!.appId, candidate]));
+            for (const candidate of byApp.values()) adoptedCandidates.add(candidate);
             const turn = {
                 get isCurrent() { return current === turn; },
                 invoke: (appId: string, request: AppInvocation, timeout?: number, signal?: AbortSignal) =>
                     clients.find(client => client.appId === appId)!.client.invoke(request, timeout, signal),
-                readConsoleInputs: async () => ({ status: 'ready', refs: {}, paths: [] }),
+                readPublicRefs: async () => ({ status: 'ready', refs: [] }),
                 release() {
                     if (current === turn) {
                         current = undefined;
@@ -154,6 +158,37 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect((await first.executeTool!(name, {}, 'still-current'))?.outcomeStatus).toBe('succeeded');
         expect((await next.executeTool!(name, {}, 'failed'))?.error?.code).toBe('SEMANTIC_CONTEXT_RELEASED');
         await first.release!(); h.source.dispose();
+    });
+
+    it('reports an adoption cleanup issue and keeps the new turn usable', async () => {
+        const cleanup = { code: 'OBSERVATION_INTERNAL_ERROR', message: 'retirement failed' };
+        const onCleanupIssues = vi.fn();
+        const h = harness([app('one')], { onCleanupIssues });
+        const adopt = h.desktop.adoptTurn.getMockImplementation()!;
+        h.desktop.adoptTurn.mockImplementationOnce(selection => ({ ...adopt(selection), cleanupIssues: [cleanup] }));
+        const context = await consume(h.source);
+        expect(onCleanupIssues).toHaveBeenCalledExactlyOnceWith([cleanup]);
+        expect(await context.executeTool!('one-multi_open_file', {}, 'after-cleanup')).toMatchObject({ outcomeStatus: 'succeeded' });
+        await context.release!();
+        await h.source.dispose();
+    });
+
+    it('retains the original adoption rejection when candidate cleanup also reports failure', async () => {
+        const h = harness();
+        const cleanup = { code: 'OBSERVATION_INTERNAL_ERROR', message: 'release failed' };
+        const scope = createCandidateScope();
+        h.desktop.createCandidateScope.mockReturnValueOnce({
+            ...scope, discard: () => { scope.discard(); return [cleanup]; },
+        });
+        const context = await h.source.getContext();
+        const rejected = { code: 'OBSERVATION_UNAVAILABLE', message: 'gone' };
+        h.desktop.adoptTurn.mockReturnValueOnce({ status: 'rejected', issue: rejected } as never);
+        expect(() => context.adopt!()).toThrow(expect.objectContaining({
+            code: cleanup.code, issues: [cleanup],
+            cause: expect.objectContaining({ code: 'SEMANTIC_ADOPTION_FAILED', cause: rejected }),
+        }));
+        expect(h.clients[0]?.client.release).toHaveBeenCalledOnce();
+        await h.source.dispose();
     });
 
     it('submits the complete list and keeps the old turn on an invalid App candidate', async () => {
@@ -485,6 +520,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(invalid.tools['bad-' + oversized]).toBeUndefined();
         expect(invalid.messages.some(message => String(message.content).includes('current bad revision 1'))).toBe(false);
         expect(invalid.messages.some(message => String(message.content).includes('AOTUI_TOOL_NAME_INVALID'))).toBe(true);
+        await invalid.adopt?.();
         expect(h.clients.find(entry => entry.appId === 'bad')!.client.release).toHaveBeenCalledOnce();
 
         h.observations.set('bad', observation('bad', 2, 'read'));
@@ -561,7 +597,7 @@ it('reuses a budget report without extending its original lifetime', async () =>
         const candidate = await h.source.getContext();
         const plan = await candidate.fitModelBudget!(measure, false);
         const view = plan.context!;
-        const id = String(view.messages.at(-1)?.content).match(/report_id ([a-f0-9-]+)/)?.[1];
+        const id = view.messages.map(message => String(message.content).match(/report_id ([a-f0-9-]+)/)?.[1]).find(Boolean);
         expect(id).toBeDefined();
         await view.adopt!();
         return { view, id };
@@ -585,11 +621,13 @@ it('reuses a budget report without extending its original lifetime', async () =>
     } finally { h.source.dispose(); time.mockRestore(); }
 });
 
-it('keeps the strict Console on a budget hint and omits it on management-only turns', async () => {
+it('withdraws hinted business routes and retains the strict Console until management-only turns', async () => {
     const h = harness([app('one')], { includeInstruction: false });
     const prior = h.observations.get('one')!;
     h.observations.set('one', { ...prior, views: [{ ...prior.views[0]!,
         content: { format: 'markdown-v1', value: 'body '.repeat(800) } }] });
+    h.desktop.getAppWindows.mockReturnValue({ appId: h.installed[0]!.appId!, instanceId: 'one-instance',
+        views: [{ viewId: 'workspace', viewInstanceId: 'one-view', type: 'AnyView', name: 'Workspace', canClose: true, region: 'dynamic' }] });
     const policy = await createProviderToolSchemaPolicy({ model: 'fixture', provider: { id: 'openai', toolSchemaMode: 'strict' } });
     const fit = (messagesBudget: boolean) => h.source.getContext(policy).then(async candidate => {
         const plan = await candidate.fitModelBudget!(async context => {
@@ -599,16 +637,37 @@ it('keeps the strict Console on a budget hint and omits it on management-only tu
         return { candidate, context: plan.context! };
     });
     try {
+        const complete = await h.source.getContext(policy);
+        const bindings = (context: typeof complete) => context.messages.find(message =>
+            String(message.content).startsWith('## Console bindings for this request'));
+        expect(bindings(complete)).toMatchObject({ role: 'user', region: 'dynamic', content: expect.stringContaining('one-multi_open_file') });
+        await complete.release?.();
         const hinted = await fit(true);
         expect(hinted.context.messages.some(message => String(message.content).includes('This View is open.'))).toBe(true);
-        expect(hinted.context.tools['one-multi_open_file']).toBeDefined();
+        expect(hinted.context.tools['one-multi_open_file']).toBeUndefined();
+        expect(bindings(hinted.context)).toBeDefined();
+        expect(String(bindings(hinted.context)!.content)).not.toContain('one-multi_open_file');
+        expect(hinted.context.tools.run_code?.description).toBe(complete.tools.run_code?.description);
+        expect(hinted.context.tools.run_code?.inputSchema).toEqual(complete.tools.run_code?.inputSchema);
+        expect(hinted.context.messages.some(message => String(message.content).includes('input tokens'))).toBe(false);
+        await hinted.context.adopt?.();
+        expect(h.desktop.adoptTurn.mock.calls.at(-1)?.[0].apps).toEqual([]);
         expect(hinted.context.tools.run_code).toBeDefined();
+        const reportId = hinted.context.messages.map(message => String(message.content).match(/report_id ([a-f0-9-]+)/)?.[1]).find(Boolean);
+        expect(reportId).toBeDefined();
+        const reportTool = hinted.context.tools['system-read_window_budget']!;
+        expect((reportTool.inputSchema as any).jsonSchema.properties.page).toEqual({ type: 'integer' });
+        expect(await hinted.context.executeTool!('system-read_window_budget', { report_id: reportId, page: 0 }, 'bad-page'))
+            .toMatchObject({ error: { code: 'WINDOW_BUDGET_REPORT_UNAVAILABLE' } });
+        expect(await hinted.context.executeTool!('system-read_window_budget', { report_id: reportId, page: 1 }, 'valid-page'))
+            .toMatchObject({ outcomeStatus: 'succeeded' });
         hinted.candidate.release?.();
         const management = await fit(false);
         expect(management.context.managementOnly).toBe(true);
         expect(Object.keys(management.context.tools)).toContain('system-open_app');
         expect(management.context.tools.run_code).toBeUndefined();
         expect(management.context.tools['one-multi_open_file']).toBeUndefined();
+        expect(bindings(management.context)).toBeUndefined();
         management.candidate.release?.();
     } finally { await h.source.dispose(); }
 });
@@ -688,7 +747,7 @@ describe('model-visible presentation contract', () => {
             content: { format: 'markdown-v1', value: body } }] });
         const context = await consume(h.source);
         const message = String(context.messages.find(item => String(item.content).startsWith('<view '))?.content);
-        expect(message.split('\n')[0]).toBe('<view view_id="workspace" view_type="AnyView" app_id="one" app_name="one">');
+        expect(message.split('\n')[0]).toBe('<view view_id="workspace" view_type="AnyView" app_id="one" app_name="one" region="dynamic">');
         expect(message).toContain('\n&lt;view id="literal"&gt;body from file&lt;/view&gt;\n</view>');
         expect(message.match(/<view\b/g)).toHaveLength(1);
         await context.release!(); h.source.dispose();
@@ -908,13 +967,15 @@ describe('model-visible presentation contract', () => {
         const current = await h.source.getContext();
         expect(current.tools['healthy-multi_open_file']).toBeDefined();
         expect(current.tools['bad-bad-tool']).toBeUndefined();
-        expect(badClient.release).toHaveBeenCalledWith('bad-observation-2');
+        expect(badClient.release).not.toHaveBeenCalledWith('bad-observation-2');
 
         await previous.executeTool!('bad-multi_open_file', {}, 'prior-binding');
         expect(badClient.invoke).toHaveBeenCalledOnce();
         await previous.release!();
 
-        await current.release!(); h.source.dispose();
+        await current.release!();
+        expect(badClient.release).toHaveBeenCalledWith('bad-observation-2');
+        h.source.dispose();
     });
 
     it.each([63, 64, 65])('validates the full composite length at %i characters', async length => {
