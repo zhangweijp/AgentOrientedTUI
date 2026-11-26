@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { arrayRef, createApp, createView, defineViewType, refParam, type ViewHandle, type ToolResult } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, defineViewType, refParam, type ViewHandle, type ToolResult } from '@aotui/sdk';
 
 const todo = Type.Object({ title: Type.String(), done: Type.Boolean() }, { additionalProperties: false });
 type Writer = { write(label: string, value: object): Promise<ToolResult> };

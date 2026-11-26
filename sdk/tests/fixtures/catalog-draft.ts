@@ -1,7 +1,9 @@
 import { appendFileSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType } from '@aotui/sdk';
 
 const journal = new URL('./catalog-effects.jsonl', import.meta.url);
 function record(event: string, data: object = {}) {
@@ -21,26 +23,34 @@ const Draft = defineViewType<{ save(text: string): Promise<typeof success>; look
 });
 
 export default createApp({
-    app_name: 'catalog_draft', whatItIs: 'A small draft with its own storage namespace.',
-    persistence: true, viewTypes: [Draft],
-    initialize({ launchConfig, persistence, prepareProjection, registerCleanup }) {
-        if (!persistence) throw Error('Draft storage is unavailable');
-        const storage = persistence;
-        const storageKey = launchConfig?.AOTUI_APP_KEY;
-        record('initialize', { storageKey });
+    app_name: 'catalog_draft',
+    viewTypes: [Draft],
+    initialize({ appId, desktopId, launchConfig, prepareProjection, registerCleanup }) {
+        const dataDir = typeof launchConfig?.AOTUI_DATA_DIR === 'string' && launchConfig.AOTUI_DATA_DIR.length > 0
+            ? launchConfig.AOTUI_DATA_DIR : undefined;
+        if (!dataDir) throw Error('Draft data directory is unavailable');
+        const storageKey = typeof launchConfig?.draftKey === 'string' && launchConfig.draftKey.length > 0
+            ? launchConfig.draftKey : appId;
+        const draftFile = join(dataDir, 'catalog-draft', `${desktopId}-${storageKey}.txt`);
+        record('initialize', { storageKey, dataDir });
         let text = 'empty';
         const draft = createView(Draft, {
             id: 'draft', render: () => ({ body: 'Draft: ' + text, context: {
                 async save(next) {
-                    await storage.save('draft', next);
+                    await mkdir(join(dataDir, 'catalog-draft'), { recursive: true });
+                    await writeFile(draftFile, next, 'utf8');
                     record('save', { storageKey, text: next });
                     text = next;
                     publish();
                     return success;
                 },
                 async lookup() {
-                    const saved = await storage.load('draft');
-                    text = typeof saved === 'string' ? saved : 'missing';
+                    try {
+                        text = await readFile(draftFile, 'utf8');
+                    } catch (error) {
+                        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+                        text = 'missing';
+                    }
                     record('lookup', { storageKey });
                     publish();
                     return success;

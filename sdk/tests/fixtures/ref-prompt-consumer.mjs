@@ -80,7 +80,7 @@ try {
   await mkdir(broken, { recursive: true });
   await writeFile(new URL('index.mjs', broken), "export { broken as default } from '../full-out/ref-prompt-app.js';\n");
   await writeFile(new URL('aoapp.json', broken), JSON.stringify({
-    app_name: 'refs', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
+    app_name: 'refs', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
     appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './index.mjs' },
   }));
   const brokenId = await desktop.registerPendingApp({ installationId: 'broken_refs', localPath: fileURLToPath(broken) });
@@ -90,10 +90,9 @@ try {
   while (cause.cause) cause = cause.cause;
   diagnostic = { status: 'failed', issue: { code: cause.code, message: cause.message } };
   const detail = diagnostic.issue.message;
-  assert.match(detail, /Ref Hooks must be used inside|useArrayRef/);
+  assert.match(detail, /Ref ID|Ref id|Ref name/);
   assert.doesNotMatch(detail, /dir\/a\.txt/);
-  assert.match(detail, /useArrayRef.*"items"/);
-  assert.match(detail, /child component of <StaticView>, <DynamicView>/);
+  assert.match(cause.path ?? detail, /items\.0/);
 
   const app = await desktop.installDynamicWorkerApp(new URL('./full-out/ref-prompt-app.js', import.meta.url).href,
     { installationId: 'refs_install', name: 'refs' });

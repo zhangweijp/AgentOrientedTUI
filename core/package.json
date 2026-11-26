@@ -18,10 +18,7 @@
       "types": "./dist/host.d.ts",
       "import": "./dist/host.js"
     },
-    "./persistence": {
-      "types": "./dist/persistence.d.ts",
-      "import": "./dist/persistence.js"
-    }
+    "./schema-contract-vectors.json": "./src/tool/schema-contract-vectors.json"
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
@@ -29,7 +26,7 @@
     "test:run": "vitest run",
     "prepack": "npm run build 1>&2"
   },
-  "files": ["dist", "examples/public-core.ts"],
+  "files": ["dist", "examples/public-core.ts", "src/tool/schema-contract-vectors.json"],
   "license": "Apache-2.0",
   "publishConfig": { "access": "public" },
   "dependencies": { "acorn": "8.19.0", "typebox": "1.4.3" },

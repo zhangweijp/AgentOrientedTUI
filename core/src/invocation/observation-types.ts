@@ -24,8 +24,7 @@ export interface ObservationRegistryOptions {
 export interface ReservationHandle { readonly reservation: true }
 export interface ViewIdentity { readonly viewId: string; readonly viewInstanceId: string }
 export interface ObservationWindowSelection {
-    readonly receiverViews: readonly ViewIdentity[];
-    readonly refViews: readonly ViewIdentity[];
+    readonly activeViews: readonly ViewIdentity[];
 }
 export interface RefIdentity extends ViewIdentity { readonly refId: string }
 export interface RefConsumer extends ViewIdentity { readonly appId: string; readonly instanceId: string }

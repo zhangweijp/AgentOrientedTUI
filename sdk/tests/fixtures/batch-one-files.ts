@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Type from 'typebox';
-import { arrayRef, createApp, createView, defineViewType, formatRef, ref, refParam, type ToolResult } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, defineViewType, formatRef, ref, refParam, type ToolResult } from '@aotui/sdk';
 
 type FileName = 'A.txt' | 'B.txt';
 type FileContext = {
@@ -118,7 +118,8 @@ export default createApp({
                 const hidden = ref('hidden', 'private data', { scope: 'private', schema: Type.String() });
                 const lines = arrayRef('lines', Array.from({ length: 100 }, (_, i) => 'line ' + i),
                     { schema: Type.Array(Type.String()), scope: 'protected', itemType: 'Line' });
-                const quoted = ref('lines[0]', 'literal bracket name', { scope: 'protected', schema: Type.String() });
+                const quoted = ref('quoted', { 'lines[0]': 'literal bracket name' },
+                    { scope: 'protected', schema: Type.Object({ 'lines[0]': Type.String() }) });
                 const count = ref('count', 7, { scope: 'protected', schema: Type.Integer() });
                 return {
                     body: [name, formatRef(text[name], content), formatRef('Line list', lines), formatRef('First line', lines, 0),

@@ -1,4 +1,4 @@
-import { isInstanceName, isViewTypeName, MARKDOWN_VIEW_FORMAT, SNAPSHOT_SCHEMA_VERSION } from './types.js';
+import { isInstanceName, isRefId, isViewTypeName, MARKDOWN_VIEW_FORMAT, SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import { canonicalJson, checkJsonLimits, copyJson, SnapshotDataError, utf8Size } from './json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS, REF_VALUE_LIMITS, VIEW_METADATA_BYTES, refKey } from './snapshot-support.js';
 import { compileCapturedToolParameters, compileValueSchema } from '../tool/tool-parameters.js';
@@ -154,7 +154,8 @@ export function validatePreparedSnapshot(
             const ref = obj(value, path);
             exact(ref, ['id', 'ownerViewId', 'ownerViewInstanceId', 'refType', 'scope', 'target', 'valueSchema',
                 ...(Object.hasOwn(ref, 'array') ? ['array'] : [])], path);
-            const id = str(ref.id, path + '.id');
+            const id = ref.id;
+            if (!isRefId(id)) fail(path + '.id', 'Ref ID must match [A-Za-z_][A-Za-z0-9_]*.');
             const owner = str(ref.ownerViewId, path + '.ownerViewId');
             const instanceId = str(ref.ownerViewInstanceId, path + '.ownerViewInstanceId');
             str(ref.refType, path + '.refType');

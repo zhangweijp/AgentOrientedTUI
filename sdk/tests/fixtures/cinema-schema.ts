@@ -1,6 +1,6 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import Type from 'typebox';
-import { createApp, createView, defineViewType, ref, refParam, type JsonValue, type ToolResult } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, ref, refParam, type JsonValue, type ToolResult } from '@aotui/sdk';
 
 const seat = Type.Tuple([Type.String({ description: 'Row' }), Type.Integer({ minimum: 1, description: 'Seat number' })]);
 type Seat = readonly [string, number];

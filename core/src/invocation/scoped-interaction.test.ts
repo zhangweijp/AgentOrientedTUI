@@ -284,7 +284,7 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     function rebindTool() { prepare(false); }
     function remountAll() { pages = [{idPrefix:'v',type:'File',owner:{}}]; }
     function refs(value: JsonValue = options.payload ?? { version: 'S1' }) {
-        return Object.fromEntries(owners.flatMap(owner => (owner.viewId === 'v_1' ? ['visible', 'hidden'] : ['visible-v1', 'hidden-v1']).map(id => [refKey(owner.viewId, owner.viewInstanceId, id), { valueSchema: fixtureJsonSchema, scope: 'protected',
+        return Object.fromEntries(owners.flatMap(owner => (owner.viewId === 'v_1' ? ['visible', 'hidden'] : ['visible_v1', 'hidden_v1']).map(id => [refKey(owner.viewId, owner.viewInstanceId, id), { valueSchema: fixtureJsonSchema, scope: 'protected',
             id, ownerViewId: owner.viewId, ownerViewInstanceId: owner.viewInstanceId, refType: options.refType ?? 'File',
             target: { kind: 'snapshot-value' as const, payload: value },
         }])));

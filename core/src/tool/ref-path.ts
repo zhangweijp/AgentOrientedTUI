@@ -3,6 +3,16 @@ import { REF_VALUE_LIMITS, refKey } from '../snapshot/snapshot-support.js';
 import type { RefConsumer } from '../invocation/observation-types.js';
 
 export const REF_ADDRESS_PREFIX = '$ref.';
+const refLiteralPrefix = /^\$+ref\./;
+
+export function encodeRefLiteral(value: string): string {
+    return refLiteralPrefix.test(value) ? '$' + value : value;
+}
+
+export function decodeRefLiteral(value: string): string {
+    return value.startsWith('$$') && refLiteralPrefix.test(value) ? value.slice(1) : value;
+}
+
 export const MAX_REF_ADDRESS_BYTES = 4096;
 export const MAX_REF_PATH_SEGMENTS = REF_VALUE_LIMITS.maxDepth;
 type JsonObject = Readonly<Record<string, JsonValue>>;

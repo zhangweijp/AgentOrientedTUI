@@ -13,6 +13,9 @@ export function isInstanceName(value: unknown): value is string {
 export function isViewTypeName(value: unknown): value is string {
     return typeof value === 'string' && /[A-Za-z]/.test(value) && !/[^A-Za-z0-9_]/.test(value);
 }
+export function isRefId(value: unknown): value is string {
+    return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
 /**
  * Runtime Core semantic snapshot types.
  *
@@ -232,6 +235,8 @@ export interface SnapshotCommitter {
 
 export interface SnapshotLifecycle {
     dispose(): void;
+    /** Revoke the current projection while preserving the open App identity. */
+    invalidatePublication(issue: SnapshotIssue): void;
     /** Must be called by the trusted Runtime owner, never from producer payload. */
     stop(): void;
 }

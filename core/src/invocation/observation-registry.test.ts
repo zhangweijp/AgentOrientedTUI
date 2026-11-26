@@ -650,3 +650,126 @@ describe('B2-Q01 lifecycle identity capability', () => {
         expect(registry.close()).toMatchObject({ observationSlots: 0 });
     });
 });
+
+describe('MOD-01 activeViews window eligibility', () => {
+    const identity = (view: Observation['views'][number]) => ({ viewId: view.id, viewInstanceId: view.viewInstanceId });
+
+    it('defaults omitted windows to all views and limits both tools and Refs to activeViews subset or empty []', () => {
+        const f = fixture({ views: 2, refs: 1, tools: 1 });
+        const [v1, v2] = f.source.views.map(identity) as [ReturnType<typeof identity>, ReturnType<typeof identity>];
+
+        const all = f.observe(f.grant(), false);
+        expect(f.registry.adoptObservation(all.observationId)).toEqual({ status: 'adopted' });
+        expect(f.registry.isRefView(all.observationId, v1)).toBe(true);
+        expect(f.registry.isRefView(all.observationId, v2)).toBe(true);
+        expect(f.registry.resolveTool({ observationId: all.observationId, toolId: all.tools[0]!.id, viewId: 'v_1' })).toMatchObject({
+            status: 'found',
+            visibleRefs: expect.arrayContaining([expect.objectContaining({ viewId: 'v_1' }), expect.objectContaining({ viewId: 'v_2' })]),
+        });
+
+        const subset = f.observe(f.grant(), false);
+        expect(f.registry.adoptObservation(subset.observationId, { activeViews: [v2] })).toEqual({ status: 'adopted' });
+        expect(f.registry.isRefView(subset.observationId, v1)).toBe(false);
+        expect(f.registry.isRefView(subset.observationId, v2)).toBe(true);
+        expect(code(f.registry.resolveTool({ observationId: subset.observationId, toolId: subset.tools[0]!.id, viewId: 'v_1' }))).toBe('TOOL_UNAVAILABLE');
+        expect(f.registry.resolveTool({ observationId: subset.observationId, toolId: subset.tools[0]!.id, viewId: 'v_2' })).toMatchObject({
+            status: 'found',
+            visibleRefs: [{ viewId: 'v_2', viewInstanceId: v2.viewInstanceId, refId: 'r0' }],
+        });
+
+        const empty = f.observe(f.grant(), false);
+        expect(f.registry.adoptObservation(empty.observationId, { activeViews: [] })).toEqual({ status: 'adopted' });
+        expect(f.registry.isRefView(empty.observationId, v1)).toBe(false);
+        expect(f.registry.isRefView(empty.observationId, v2)).toBe(false);
+        expect(code(f.registry.resolveTool({ observationId: empty.observationId, toolId: empty.tools[0]!.id, viewId: 'v_2' }))).toBe('TOOL_UNAVAILABLE');
+        zero(f);
+    });
+
+    it('rejects legacy { receiverViews, refViews }, duplicates, unmounted/mismatched views, and getters', () => {
+        const f = fixture({ views: 2, refs: 1, tools: 1 });
+        const [v1, v2] = f.source.views.map(identity) as [ReturnType<typeof identity>, ReturnType<typeof identity>];
+        const obs = f.observe(f.grant(), false);
+        let getterReads = 0;
+
+        const invalidInputs: Array<[unknown, string]> = [
+            [{ receiverViews: [v1], refViews: [v1] }, '$.windows'],
+            [{}, '$.windows'],
+            [{ activeViews: [v1], extra: [] }, '$.windows'],
+            [null, '$.windows'],
+            [{ activeViews: {} }, '$.activeViews'],
+            [{ activeViews: [v1, v1] }, '$.activeViews'],
+            [{ activeViews: [{ viewId: 'v_1', viewInstanceId: v2.viewInstanceId }] }, '$.activeViews'],
+            [{ activeViews: [{ viewId: 'v_missing', viewInstanceId: 'missing-mount' }] }, '$.activeViews'],
+            [{ get activeViews() { getterReads++; return [v1]; } }, '$.windows'],
+        ];
+        for (const [windows, expectedPath] of invalidInputs) {
+            expect(f.registry.adoptObservation(obs.observationId, windows)).toMatchObject({
+                status: 'rejected',
+                issue: { code: 'OBSERVATION_INVALID', path: expectedPath },
+            });
+        }
+        expect(getterReads).toBe(0);
+        expect(f.registry.adoptObservation(obs.observationId, { activeViews: [v1, v2] })).toEqual({ status: 'adopted' });
+        zero(f);
+    });
+
+    it('reuses candidate selection with omitted or reordered identical set and rejects set changes', () => {
+        const f = fixture({ views: 2, refs: 1, tools: 1 });
+        const [v1, v2] = f.source.views.map(identity) as [ReturnType<typeof identity>, ReturnType<typeof identity>];
+        const obs = f.observe(f.grant(), false);
+
+        expect(f.registry.adoptObservation(obs.observationId, { activeViews: [v1, v2] })).toEqual({ status: 'adopted' });
+        expect(f.registry.adoptObservation(obs.observationId)).toEqual({ status: 'adopted' });
+        expect(f.registry.adoptObservation(obs.observationId, { activeViews: [v2, v1] })).toEqual({ status: 'adopted' });
+
+        for (const changed of [{ activeViews: [v1] }, { activeViews: [] }]) {
+            expect(f.registry.adoptObservation(obs.observationId, changed)).toMatchObject({
+                status: 'rejected',
+                issue: { code: 'OBSERVATION_INVALID', path: '$.windows' },
+            });
+        }
+        zero(f);
+    });
+
+    it('rechecks toolBindings and refs for every view in activeViews while ignoring excluded views', () => {
+        const f = fixture({ views: 2, refs: 1, tools: 1 });
+        const [v1, v2] = f.source.views.map(identity) as [ReturnType<typeof identity>, ReturnType<typeof identity>];
+
+        // Exclude v1: changes to v1 (tool disabled + ref narrowed) do NOT fail adoption of activeViews: [v2].
+        const obsOnlyV2 = f.observe(f.grant(), false);
+        const planOnlyV2 = f.registry.prepareAdoption(obsOnlyV2.observationId, { activeViews: [v2] });
+        expect(planOnlyV2.status).toBe('ready');
+        if (planOnlyV2.status !== 'ready') throw Error('Expected ready plan');
+        expect(planOnlyV2.plan.visibleRefs.map(ref => ref.viewId)).toEqual(['v_2']);
+
+        f.rebindTool(0, 0);
+        const disabledV1Snapshot = f.draft();
+        const v1RefKey = refKey(v1.viewId, v1.viewInstanceId, 'r0');
+        f.publish({
+            ...disabledV1Snapshot,
+            refs: {
+                ...disabledV1Snapshot.refs,
+                [v1RefKey]: { ...disabledV1Snapshot.refs[v1RefKey]!, scope: 'private' },
+            },
+        });
+        expect(planOnlyV2.plan.recheck()).toBeUndefined();
+        planOnlyV2.plan.install();
+        expect(f.registry.resolveTool({ observationId: obsOnlyV2.observationId, toolId: obsOnlyV2.tools[0]!.id, viewId: 'v_2' }).status).toBe('found');
+
+        // Include v2 in activeViews, then disable v2's toolBinding before recheck -> fails OBSERVATION_WINDOW_CHANGED.
+        const obsFresh = f.observe(f.grant(f.core.store.readLatest('app').status === 'ready'
+            ? (f.core.store.readLatest('app') as { snapshot: typeof f.source }).snapshot : f.source), false);
+        const planWithV2 = f.registry.prepareAdoption(obsFresh.observationId, { activeViews: [v2] });
+        expect(planWithV2.status).toBe('ready');
+        if (planWithV2.status !== 'ready') throw Error('Expected ready plan');
+        f.rebindTool(1, 0);
+        f.publish();
+        expect(planWithV2.plan.recheck()).toMatchObject({ code: 'OBSERVATION_WINDOW_CHANGED', path: '$.windows' });
+
+        // Revoking a view mid-turn removes both ref and tool eligibility for that view only.
+        f.registry.revokeWindows(v2);
+        expect(f.registry.isRefView(obsOnlyV2.observationId, v2)).toBe(false);
+        expect(code(f.registry.resolveTool({ observationId: obsOnlyV2.observationId, toolId: obsOnlyV2.tools[0]!.id, viewId: 'v_2' }))).toBe('TOOL_UNAVAILABLE');
+        zero(f);
+    });
+});

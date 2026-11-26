@@ -4,8 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": [
-      "ES2022",
-      "DOM"
+      "ES2022"
     ],
     "declaration": true,
     "declarationMap": true,
@@ -16,11 +15,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "preact",
-    "types": [
-      "node"
-    ]
+    "types": []
   },
   "include": [
     "src/**/*"
@@ -29,7 +24,6 @@
     "node_modules",
     "dist",
     "**/*.test.ts",
-    "**/*.test.tsx",
     "**/__tests__/**"
   ]
 }

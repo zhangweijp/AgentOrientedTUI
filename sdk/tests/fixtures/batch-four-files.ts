@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 import { join } from 'node:path';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { createApp, createView, defineViewType, ref, type ToolResult, type ViewHandle } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, ref, type ToolResult } from '@aotui/sdk';
 
 type Name = 'A' | 'B' | 'C' | 'D' | 'E';
 const largeText = 'B-LATEST ' + 'b'.repeat(8_000);
@@ -34,36 +34,36 @@ export default createApp({
         const folder = launchConfig?.folder;
         if (typeof folder !== 'string') throw new Error('Missing file fixture directory');
         const dir: string = folder;
-        const files = new Map<Name, ViewHandle>();
-        const text = new Map<Name, string>();
+        let files = new Map<Name, ReturnType<typeof mount>>();
         const generations = new Map<Name, number>();
         const writeLog = (name: string, value: object) => appendFileSync(join(dir, name + '.jsonl'), JSON.stringify(value) + '\n');
         const disk = (name: Name) => join(dir, name + '.txt');
         const workspace = createView(Workspace, { render: () => ({ body: 'Workspace files A, B, C, D and E.',
             context: { open(requested) {
+                const candidate = new Map(files);
                 const added: Name[] = [];
                 try {
                     for (const name of requested) {
-                        if (files.has(name)) continue;
-                        text.set(name, readFileSync(disk(name), 'utf8'));
-                        files.set(name, mount(name));
+                        if (candidate.has(name)) continue;
+                        candidate.set(name, mount(name, readFileSync(disk(name), 'utf8')));
                         added.push(name);
                     }
-                    prepareOpeningProjection(frame());
+                    const open = prepareOpeningProjection(frame(candidate));
+                    if (open.status === 'rejected')
+                        return { success: false, error: { code: open.issue.code, message: open.issue.message } };
+                    files = candidate;
+                    for (const name of added) generations.set(name, files.get(name)!.generation);
                     return { success: true, data: { opened: added } };
                 } catch (error) {
-                    for (const name of added) files.delete(name);
-                    prepareProjection(frame());
                     return { success: false, error: { code: (error as { code?: string }).code ?? 'OPEN_FAILED',
                         message: error instanceof Error ? error.message : 'Open failed' } };
                 }
             } },
         }) });
-        const frame = () => ({ views: [workspace, ...files.values()] });
-        const publish = () => prepareProjection(frame());
-        function mount(name: Name): ViewHandle {
+        const frame = (current: typeof files) => ({ views: [workspace, ...[...current.values()].map(page => page.handle)] });
+        const publish = () => prepareProjection(frame(files));
+        function mount(name: Name, text: string) {
             const generation = (generations.get(name) ?? 0) + 1;
-            generations.set(name, generation);
             function close(): ToolResult {
                 writeLog('closes', { name, generation, threadId });
                 if (name === 'D') return { success: false, error: { code: 'UNSAVED', message: 'Save the file before closing.' } };
@@ -72,23 +72,24 @@ export default createApp({
                 publish();
                 return { success: true };
             }
-            return createView(File, {
+            const handle = createView(File, {
                 idPrefix: 'file_' + name,
                 region: name === 'A' || (name === 'B' && launchConfig?.staticB === true) ? 'static' : 'dynamic',
                 ...(name === 'C' ? {} : { onClose: close }),
-                render: () => ({ body: name + '.txt generation ' + generation + '\n' + text.get(name),
-                    refs: [ref('content', text.get(name) ?? '', { scope: 'protected', schema: Type.String() })],
+                render: () => ({ body: name + '.txt generation ' + generation + '\n' + text,
+                    refs: [ref('content', text, { scope: 'protected', schema: Type.String() })],
                     context: { name, async edit(mode) {
                         const value = mode === 'large' ? largeText : name + '-EDITED';
                         writeFileSync(disk(name), value);
                         writeLog('writes', { name, generation, size: value.length, threadId });
-                        text.set(name, value);
+                        text = value;
                         publish();
                         if (mode === 'late') await new Promise(resolve => setTimeout(resolve, 240));
                         return succeeded();
                     } },
                 }),
             });
+            return { handle, generation, update(textFromDisk: string) { text = textFromDisk; } };
         }
         publish();
         writeLog('lifecycle', { event: 'start', threadId });
@@ -100,10 +101,19 @@ export default createApp({
             if (raw === seen) return;
             seen = raw;
             const { name, remount } = JSON.parse(raw) as { name: Name; remount?: boolean };
-            if (!files.has(name)) return;
-            text.set(name, readFileSync(disk(name), 'utf8'));
-            if (remount) files.set(name, mount(name));
-            publish();
+            const page = files.get(name);
+            if (!page) return;
+            const current = readFileSync(disk(name), 'utf8');
+            if (remount) {
+                const next = mount(name, current);
+                const candidate = new Map(files).set(name, next);
+                if (prepareOpeningProjection(frame(candidate)).status === 'rejected') return;
+                files = candidate;
+                generations.set(name, next.generation);
+            } else {
+                page.update(current);
+                publish();
+            }
         }, 20);
         registerCleanup({ stop: () => { clearInterval(watcher); writeLog('lifecycle', { event: 'stop', threadId }); } });
     },

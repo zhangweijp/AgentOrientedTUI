@@ -48,11 +48,11 @@ export function previewCommittedApp(store: SnapshotStore, appId: string, instanc
 
 const rejected = (error: unknown): ObservationRejected => Object.freeze({ status: 'rejected', issue: issue(error) });
 function object(value: unknown, keys: readonly string[], code: Parameters<typeof fail>[0] = 'OBSERVATION_INVALID',
-    optional: readonly string[] = []): Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) fail(code);
+    optional: readonly string[] = [], path?: string): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) fail(code, path);
     const record = value as Record<string, unknown>;
     if (keys.some(key => !Object.hasOwn(record, key)) ||
-        Object.keys(record).some(key => !keys.includes(key) && !optional.includes(key))) fail(code);
+        Object.keys(record).some(key => !keys.includes(key) && !optional.includes(key))) fail(code, path);
     return record;
 }
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
@@ -114,7 +114,7 @@ interface Hold {
     readonly hold: SnapshotHold;
     readonly revokedViews: Set<string>;
 }
-type SelectedWindows = Readonly<Record<'receiverViews' | 'refViews', ReadonlySet<string>>>;
+type SelectedWindows = ReadonlySet<string>;
 export interface Reservation extends Hold {
     readonly observationId: string;
     cancelled: boolean;
@@ -224,8 +224,8 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         if (state.adoptedObservationId !== observationId) fail('OBSERVATION_NOT_ADOPTED');
         return value;
     }
-    function eligible(value: RegisteredObservation, kind: keyof SelectedWindows, view: ViewIdentity): boolean {
-        return value.selected?.[kind].has(view.viewInstanceId) === true && !value.revokedViews.has(view.viewInstanceId);
+    function eligible(value: RegisteredObservation, view: ViewIdentity): boolean {
+        return value.selected?.has(view.viewInstanceId) === true && !value.revokedViews.has(view.viewInstanceId);
     }
     function revokeWindows(target?: ViewIdentity): void {
         for (const held of [...state.observations.values(), ...state.reservations.values()]) {
@@ -236,28 +236,23 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         }
     }
     function visibleRefs(value: RegisteredObservation) {
-        return value.metadata.refs.filter(ref => eligible(value, 'refViews', ref));
+        return value.metadata.refs.filter(ref => eligible(value, ref));
     }
     function selectWindows(value: Hold, input: unknown): SelectedWindows {
-        if (input === undefined) {
-            const all = new Set(value.source.views.map(view => view.viewInstanceId));
-            return { receiverViews: all, refViews: all };
-        }
+        if (input === undefined) return new Set(value.source.views.map(view => view.viewInstanceId));
         const captured = bounded<unknown>(input, DEFAULT_PROJECTION_LIMITS.metadata, 'OBSERVATION_INVALID', '$.windows').value;
-        const selection = object(captured, ['receiverViews', 'refViews']);
+        const selection = object(captured, ['activeViews'], 'OBSERVATION_INVALID', [], '$.windows');
         const views = new Map(value.source.views.map(view => [view.viewInstanceId, view.id]));
-        const list = (entries: unknown, path: string) => {
-            if (!Array.isArray(entries) || entries.length > views.size) fail('OBSERVATION_INVALID', path);
-            const result = new Set<string>();
-            for (const entry of entries) {
-                const { viewId, viewInstanceId } = object(entry, ['viewId', 'viewInstanceId']);
-                if (!text(viewId) || !text(viewInstanceId) || views.get(viewInstanceId) !== viewId || result.has(viewInstanceId))
-                    fail('OBSERVATION_INVALID', path, 'Select each receiving or publishing mount once from the candidate observation.');
-                result.add(viewInstanceId);
-            }
-            return result;
-        };
-        return { receiverViews: list(selection.receiverViews, '$.receiverViews'), refViews: list(selection.refViews, '$.refViews') };
+        const entries = selection.activeViews;
+        if (!Array.isArray(entries) || entries.length > views.size) fail('OBSERVATION_INVALID', '$.activeViews');
+        const result = new Set<string>();
+        for (const entry of entries) {
+            const { viewId, viewInstanceId } = object(entry, ['viewId', 'viewInstanceId'], 'OBSERVATION_INVALID', [], '$.activeViews');
+            if (!text(viewId) || !text(viewInstanceId) || views.get(viewInstanceId) !== viewId || result.has(viewInstanceId))
+                fail('OBSERVATION_INVALID', '$.activeViews', 'Select each active mount once from the candidate observation.');
+            result.add(viewInstanceId);
+        }
+        return result;
     }
     function prepareAdoption(observationId: string, windows?: unknown): { status: 'ready'; plan: ObservationAdoption } | ObservationRejected {
         try {
@@ -267,10 +262,9 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             if (!candidate) fail('OBSERVATION_UNAVAILABLE');
             const previous = state.adoptedObservationId;
             const selected = windows === undefined && candidate.selected ? candidate.selected : selectWindows(candidate, windows);
-            if (candidate.selected) for (const kind of ['receiverViews', 'refViews'] as const) {
-                const existing = candidate.selected[kind];
-                if (existing.size !== selected[kind].size || [...selected[kind]].some(id => !existing.has(id)))
-                    fail('OBSERVATION_INVALID', '$.windows', 'Prepare a new observation to change its Window selection.');
+            if (candidate.selected && (candidate.selected.size !== selected.size ||
+                [...selected].some(id => !candidate.selected!.has(id)))) {
+                fail('OBSERVATION_INVALID', '$.windows', 'Prepare a new observation to change its Window selection.');
             }
             const isRetained = () => !state.closing && state.adoptedObservationId === previous &&
                 state.observations.get(observationId) === candidate;
@@ -280,8 +274,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                     ready();
                 } catch (error) { return issue(error); }
             };
-            const views = candidate.source.views.filter(view => selected.receiverViews.has(view.viewInstanceId) ||
-                selected.refViews.has(view.viewInstanceId));
+            const views = candidate.source.views.filter(view => selected.has(view.viewInstanceId));
             const changed = () => fail('OBSERVATION_WINDOW_CHANGED', '$.windows', 'A selected Window or its access changed. Prepare the request again.');
             const recheck = () => {
                 try {
@@ -295,7 +288,6 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                     for (const view of views) {
                         const mount = live.get(view.viewInstanceId);
                         if (!mount || mount.id !== view.id) return changed();
-                        if (!selected.receiverViews.has(view.viewInstanceId)) continue;
                         for (const { toolId, activationId } of view.toolBindings) {
                             if (!grantedTools.has(toolId)) continue;
                             const tool = latest.tools[toolId];
@@ -304,7 +296,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                         }
                     }
                     for (const ref of candidate.observation.refs) {
-                        if (!selected.refViews.has(ref.viewInstanceId)) continue;
+                        if (!selected.has(ref.viewInstanceId)) continue;
                         const publication = latest.refs[refKey(ref)];
                         if (!publication || (ref.scope === 'public' && publication.scope !== 'public') ||
                             (ref.scope === 'protected' && publication.scope === 'private')) changed();
@@ -312,7 +304,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 } catch (error) { return issue(error); }
             };
             return { status: 'ready', plan: {
-                visibleRefs: candidate.observation.refs.filter(ref => selected.refViews.has(ref.viewInstanceId)),
+                visibleRefs: candidate.observation.refs.filter(ref => selected.has(ref.viewInstanceId)),
                 recheck, verify,
                 install() {
                     if (state.adoptedObservationId !== observationId)
@@ -336,7 +328,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     return Object.freeze({
         isCurrent, releaseAll, stats, visibleRefs, prepareAdoption, detach, revokeWindows,
         isRefView(observationId: string, view: ViewIdentity): boolean {
-            try { return eligible(adopted(observationId), 'refViews', view); } catch { return false; }
+            try { return eligible(adopted(observationId), view); } catch { return false; }
         },
         begin() {
             let hold: SnapshotHold | undefined;
@@ -403,7 +395,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                     single ? 'Omit view_id for a single-instance ViewType.' : 'Supply the receiving page XML view_id.');
                 const view = value.source.views.find(candidate => candidate.type === tool.viewType && (single || candidate.id === viewId));
                 const receiver = view && viewToolReceiver(view, toolId);
-                if (!receiver || !value.selected?.receiverViews.has(receiver.viewInstanceId)) fail('TOOL_UNAVAILABLE', '$.view_id',
+                if (!receiver || !value.selected?.has(receiver.viewInstanceId)) fail('TOOL_UNAVAILABLE', '$.view_id',
                     'The selected View could not receive this Tool in the original observation. Choose an eligible XML id.');
                 const latest = ready();
                 const liveView = latest.views.find(candidate => candidate.id === receiver.viewId);

@@ -145,6 +145,9 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
     }
 
     const lifecycle = Object.freeze({
+        invalidatePublication(problem: SnapshotIssue): void {
+            if (identity && status !== 'stopped') markDegraded(identity, problem);
+        },
         stop(): void {
             if (!identity || status === 'stopped') return;
             status = 'stopped';

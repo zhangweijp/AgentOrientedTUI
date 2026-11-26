@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { createApp, createView, defineViewType, refParam, type ToolResult, type ViewHandle } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, refParam, type ToolResult, type ViewHandle } from '@aotui/sdk';
 
 const Contact = Type.Object({ email: Type.String(), 'display.name': Type.String() }, { additionalProperties: false });
 const More = Type.Object({ to: Type.Array(Type.String()), label: Type.String(), priority: Type.Integer(), extra: Type.Unknown() },

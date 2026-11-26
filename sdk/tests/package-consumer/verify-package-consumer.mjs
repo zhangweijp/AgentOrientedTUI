@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 const execute = promisify(execFile);
 const [consumerDirectory, evidence, profile = 'full'] = process.argv.slice(2);
 assert.ok(consumerDirectory && evidence, 'Consumer directory and evidence path are required');
-assert.ok(['plain', 'full', 'author-plain', 'author-jsx', 'core'].includes(profile), 'Select a package profile');
+assert.ok(['plain', 'full', 'author-plain', 'core'].includes(profile), 'Select a package profile');
 
 const consumer = path.resolve(consumerDirectory);
 const plain = profile === 'plain';
@@ -31,10 +31,13 @@ for (const root of host ? [sdkRoot, runtimeRoot] : profile === 'core' ? [path.jo
 const corePackageAnchor = await fs.realpath(path.join(profile === 'core' ? path.join(consumer, 'node_modules/@aotui/core') : sdkRoot, 'package.json'));
 assert.throws(() => createRequire(corePackageAnchor).resolve('@aotui/core/internal'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
 facts.internalBlocked = true;
-if (plain || profile === 'author-plain') {
+{
   const resolve = createRequire(path.join(consumer, 'package.json')).resolve;
-  for (const name of ['preact', 'better-sqlite3']) {
+  for (const name of ['preact', 'linkedom', 'better-sqlite3', ...(!host ? ['typebox', 'zod'] : [])]) {
     assert.throws(() => resolve(name), { code: 'MODULE_NOT_FOUND' });
+  }
+  if (profile !== 'core') {
+    assert.throws(() => resolve('@aotui/sdk/app'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
   }
 }
 
@@ -89,7 +92,6 @@ if (!host) {
     await compile('portable-core', { lib: ['ES2022'], types: [], outDir: './core-out' }, ['public-core.ts']);
   }
   // Check both the actual load and its transitive imports with no ambient renderer.
-  const jsx = profile === 'author-jsx';
   const guardedLoad = `
     import assert from 'node:assert/strict';
     import { registerHooks, builtinModules } from 'node:module';
@@ -97,8 +99,10 @@ if (!host) {
     const native = new Set(builtinModules);
     registerHooks({ resolve(specifier, context, next) {
       loaded.push(specifier);
-      if (specifier.startsWith('@aotui/runtime') || ${!jsx} && /^(?:preact|linkedom)(?:\\/|$)/.test(specifier) ||
-          ${!jsx} && (specifier.startsWith('node:') || native.has(specifier))) throw new Error('Unexpected import: ' + specifier);
+      if ((specifier === 'typebox' || specifier.startsWith('typebox/')) && !context.parentURL?.includes('/@aotui/core/dist/'))
+        throw new Error('Optional schema dependency outside Core: ' + specifier);
+      if (specifier.startsWith('@aotui/runtime') || /^(?:preact|linkedom|zod)(?:\\/|$)/.test(specifier) ||
+          specifier.startsWith('node:') || native.has(specifier)) throw new Error('Unexpected import: ' + specifier);
       const resolved = next(specifier, context);
       if (resolved?.url) loadedFiles.push(resolved.url);
       return resolved;
@@ -108,35 +112,32 @@ if (!host) {
     assert.equal(typeof globalThis.document, 'undefined');
     let definedViewType = false, builtApp = false;
     if (${profile !== 'core'}) {
-      const { default: Type } = await import('typebox');
-      const WorkItem = Type.Object({ id: Type.String() }, { additionalProperties: false });
+      const WorkItem = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] };
       const Board = actual.defineViewType()({
         name: 'Board',
         multiplicity: 'single',
         tools: {
           pick: {
             description: 'Select one item.',
-            inputSchema: Type.Object({ item: actual.refParam('WorkItem', WorkItem) }),
+            inputSchema: { type: 'object', properties: { item: actual.refParam('WorkItem', WorkItem) }, required: ['item'] },
             execute: () => ({ success: true }),
           },
         },
       });
       definedViewType = Board.tools.pick.inputSchema.properties.item['x-aotui-ref-kind'] === 'WorkItem' &&
         !Object.hasOwn(Board.tools.pick.inputSchema.properties.item, 'type');
-      const factory = ${jsx}
-        ? actual.createTUIApp({ app_name: 'consumer_check', viewTypes: [Board], component: () => null })
-        : actual.createApp({ app_name: 'consumer_check', viewTypes: [Board], initialize() {} });
+      const factory = actual.createApp({ app_name: 'consumer_check', viewTypes: [Board], initialize() {} });
       builtApp = typeof factory?.app_name === 'string' && typeof factory.initialize === 'function';
     }
     console.log(JSON.stringify({ loaded, loadedFiles, definedViewType, builtApp, core: actual.coreFixtureFacts, factory: typeof actual.createApp,
       componentFactory: typeof actual.createTUIApp }));`;
   const specifier = profile === 'core' ? pathToFileURL(path.join(output, 'core-out/public-core.js')).href
-    : jsx ? '@aotui/sdk' : '@aotui/sdk/app';
+    : '@aotui/sdk';
   facts.load = lastJson(await checked(`${profile}-load`, ['--input-type=module', '--eval', guardedLoad, specifier]));
   if (profile !== 'core') {
     const forbiddenUrls = facts.load.loadedFiles.filter(url =>
       /\/@aotui\/core\/dist\/(?:host|producer|persistence)\b|\/@aotui\/core\/dist\/(?:projection|invocation|snapshot\/store|tool\/tool-projection\.js)|\/node_modules\/acorn\//.test(url) ||
-      (!jsx && /\/node_modules\/(?:preact|linkedom)\//.test(url)));
+      /\/node_modules\/(?:preact|linkedom|zod)\//.test(url));
     assert.deepEqual(forbiddenUrls, [], `Forbidden transitive files loaded for ${profile}: ${JSON.stringify(forbiddenUrls)}`);
   }
   if (profile === 'core') {
@@ -146,24 +147,22 @@ if (!host) {
   } else {
     assert.equal(facts.load.definedViewType, true);
     assert.equal(facts.load.builtApp, true);
-    assert.equal(jsx ? facts.load.componentFactory : facts.load.factory, 'function');
-    const readme = await stageReadmeExample(sdkRoot, jsx ? 'tsx' : 'ts', jsx ? 'readme-app.tsx' : 'readme-app.ts');
-    await compile(`${profile}-readme`, { lib: jsx ? ['ES2022', 'DOM'] : ['ES2022'], types: [], declaration: true, resolveJsonModule: true,
-      outDir: './readme-out', ...(jsx ? { jsx: 'react-jsx', jsxImportSource: 'preact' } : {}) }, [readme]);
+    assert.equal(facts.load.factory, 'function');
+    assert.equal(facts.load.componentFactory, 'undefined');
+    const readme = await stageReadmeExample(sdkRoot, 'ts', 'readme-app.ts');
+    await compile(`${profile}-readme`, { lib: ['ES2022'], types: [], declaration: true, rootDir: './readme-src', outDir: './readme-out' }, [readme]);
     const app = path.join(output, 'app');
     await fs.mkdir(app, { recursive: true });
-    const names = [jsx ? 'author-jsx.tsx' : 'author-plain.ts', 'files.ts', 'file-io.mjs', 'file-io.d.mts'];
+    const names = ['author-plain.ts', 'files.ts', 'file-io.mjs', 'file-io.d.mts'];
     for (const name of names) await fs.copyFile(path.join(sdkRoot, 'examples', 'files', name), path.join(app, name));
     const sdk = JSON.parse(await fs.readFile(path.join(sdkRoot, 'package.json'), 'utf8'));
-    const metadata = { name: `aotui-delivered-files-${jsx ? 'jsx' : 'plain'}`, version: '0.1.0', type: 'module',
-      main: `./dist/${jsx ? 'author-jsx' : 'author-plain'}.js`, types: `./dist/${jsx ? 'author-jsx' : 'author-plain'}.d.ts`,
-      files: ['dist', 'aoapp.json'], aotui: { app_name: 'delivered_files' }, dependencies: { [sdk.name]: sdk.version, typebox: sdk.peerDependencies.typebox,
-        ...(jsx ? { preact: sdk.peerDependencies.preact } : {}) } };
+    const metadata = { name: 'aotui-delivered-files', version: '0.1.0', type: 'module',
+      main: './dist/author-plain.js', types: './dist/author-plain.d.ts',
+      files: ['dist', 'aoapp.json'], aotui: { app_name: 'delivered_files' }, dependencies: { [sdk.name]: sdk.version } };
     await fs.writeFile(path.join(app, 'package.json'), JSON.stringify(metadata, null, 2));
     const config = path.join(app, 'tsconfig.json');
-    await fs.writeFile(config, JSON.stringify({ compilerOptions: { ...strict, lib: jsx ? ['ES2022', 'DOM'] : ['ES2022'],
-      types: [], outDir: './dist', rootDir: '.', declaration: true, allowJs: true,
-      ...(jsx ? { jsx: 'react-jsx', jsxImportSource: 'preact' } : {}) }, files: names }));
+    await fs.writeFile(config, JSON.stringify({ compilerOptions: { ...strict, lib: ['ES2022'],
+      types: [], outDir: './dist', rootDir: '.', declaration: true, allowJs: true }, files: names }));
     await checked(`${profile}-compile`, [compiler, '-p', config, '--pretty', 'false']);
     await checked(`${profile}-manifest`, [app], path.join(consumer, 'node_modules/.bin/generate-aoapp'));
     facts.manifest = JSON.parse(await fs.readFile(path.join(app, 'aoapp.json'), 'utf8'));
@@ -180,33 +179,28 @@ if (!host) {
 
 await stageFixtures(sdkFixtures, ['work-items.ts', 'work-items-plain.ts', 'worker-app-contracts.mjs']);
 await fs.copyFile(coreExample, path.join(output, 'public-core.ts'));
-await stageFixtures(runtimeFixtures, ['public-memory-state.ts']);
 await compile('core', { lib: ['ES2022'], types: [], outDir: './core-out' },
-  ['public-core.ts', 'public-memory-state.ts', 'work-items-plain.ts']);
+  ['public-core.ts', 'work-items-plain.ts']);
 
 if (!plain) {
-  // Copy the installed bytes rather than the package manager's symlink. Both SDKs resolve the consumer's Preact.
+  // Install a second physical copy of the delivered SDK and Core for the descriptor and diagnostic checks.
   const sdkCopy = path.join(consumer, 'node_modules/@aotui/sdk-copy');
   const realSdk = await fs.realpath(sdkRoot);
   await fs.cp(realSdk, sdkCopy, { recursive: true });
   const realCore = await fs.realpath(path.join(consumer, 'node_modules/@aotui/core'));
   const acorn = createRequire(path.join(realCore, 'dist/index.js')).resolve('acorn/package.json');
-  const linkedom = createRequire(path.join(realSdk, 'dist/index.js')).resolve('linkedom/package.json');
   await fs.mkdir(path.join(sdkCopy, 'node_modules/@aotui'), { recursive: true });
   await fs.cp(realCore, path.join(sdkCopy, 'node_modules/@aotui/core'), { recursive: true });
   await fs.cp(path.dirname(acorn), path.join(sdkCopy, 'node_modules/acorn'), { recursive: true });
-  await fs.symlink(path.dirname(linkedom), path.join(sdkCopy, 'node_modules/linkedom'), 'dir');
-  await stageFixtures(sdkFixtures, ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx', 'source-host.mjs', 'assembly-consumer.mjs']);
-  await stageFixtures(sdkFixtures, ['preact-sdk-copies.tsx']);
-  await stageFixtures(sdkFixtures, ['ref-prompt-app.tsx', 'ref-prompt-consumer.mjs', 'scripted-provider-turn.mjs']);
+  await stageFixtures(sdkFixtures, ['file-app.ts', 'file-tools.ts', 'ref-app.ts', 'source-host.mjs', 'assembly-consumer.mjs',
+    'sdk-copies.ts', 'ref-prompt-app.ts', 'ref-prompt-consumer.mjs', 'scripted-provider-turn.mjs', 'readme-counter.ts']);
   await stageFixtures(runtimeFixtures, ['managed-host.ts', 'managed-host-app.mjs']);
-  const counterSource = await stageReadmeExample(sdkRoot, 'tsx', 'readme-app.tsx');
   await stageReadmeExample(runtimeRoot, 'js', 'readme-host.mjs');
-  await compile('full', { lib: ['ES2022', 'DOM'], types: ['node'], jsx: 'react-jsx', jsxImportSource: 'preact', resolveJsonModule: true, outDir: './full-out' },
-    [counterSource, 'file-app.tsx', 'ref-app.tsx', 'ref-prompt-app.tsx', 'work-items-preact.tsx', 'preact-sdk-copies.tsx', 'managed-host.ts']);
+  await compile('full', { lib: ['ES2022'], types: ['node'], outDir: './full-out' },
+    ['readme-counter.ts', 'file-app.ts', 'ref-app.ts', 'ref-prompt-app.ts', 'sdk-copies.ts', 'managed-host.ts']);
   const readmeApp = path.join(output, 'readme-counter');
   await fs.mkdir(path.join(readmeApp, 'dist'), { recursive: true });
-  await fs.copyFile(path.join(output, 'full-out/readme-src/readme-app.js'), path.join(readmeApp, 'dist/app.js'));
+  await fs.copyFile(path.join(output, 'full-out/readme-counter.js'), path.join(readmeApp, 'dist/app.js'));
   await fs.writeFile(path.join(readmeApp, 'package.json'), JSON.stringify({ name: 'aotui-readme-counter',
     version: '0.1.0', type: 'module', main: './dist/app.js', aotui: { app_name: 'counter' } }));
   await checked('readme-manifest', [readmeApp], path.join(consumer, 'node_modules/.bin/generate-aoapp'));
@@ -224,7 +218,7 @@ if (!plain) {
   await fs.mkdir(app, { recursive: true });
   await fs.writeFile(path.join(app, 'index.mjs'), "import { workItemsApp } from '../core-out/work-items-plain.js';\nexport default workItemsApp('work_items');\n");
   await fs.writeFile(path.join(app, 'aoapp.json'), JSON.stringify({
-    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
+    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
     appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './index.mjs' },
   }));
   const { receipt, workspace } = lastJson(await checked('source-host-execution', [path.join(output, 'source-host.mjs'), app]));
@@ -236,9 +230,9 @@ if (!plain) {
 
   const assemblyApp = path.join(output, 'assembly-host-app');
   await fs.mkdir(assemblyApp, { recursive: true });
-  await fs.writeFile(path.join(assemblyApp, 'index.mjs'), "import { workItemsApp } from '../full-out/work-items-preact.js';\nexport default workItemsApp('work_items');\n");
+  await fs.writeFile(path.join(assemblyApp, 'index.mjs'), "import { workItemsApp } from '../core-out/work-items-plain.js';\nexport default workItemsApp('work_items');\n");
   await fs.writeFile(path.join(assemblyApp, 'aoapp.json'), JSON.stringify({
-    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v7',
+    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
     appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './index.mjs' },
   }));
   const assembly = await checked('assembly-provider-execution', [
@@ -251,12 +245,7 @@ if (!plain) {
   ]);
   facts.refPrompt = lastJson(refPrompt);
 
-  const commitFixture = path.join(output, 'verify-preact-commit.mjs');
-  await fs.copyFile(new URL('./verify-preact-commit.mjs', import.meta.url), commitFixture);
-  const commit = lastJson(await checked('preact-commit-execution', [commitFixture, '--assert-prepare-diagnostic']));
-  const sdkPackage = JSON.parse(await fs.readFile(path.join(sdkRoot, 'package.json'), 'utf8'));
-  assert.equal(commit.version, sdkPackage.peerDependencies.preact);
-  facts.preactCommit = commit;
+
 }
 
 facts.passed = true;

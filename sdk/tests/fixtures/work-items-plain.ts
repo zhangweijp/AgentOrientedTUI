@@ -1,4 +1,4 @@
-import { arrayRef, createApp, createView, formatRef, ref, type ToolResult } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, formatRef, ref, type ToolResult } from '@aotui/sdk';
 import { ItemType, WorkspaceType, initialState, itemRefOptions, label, listRefOptions, otherViewPrefix, selectedViewPrefix,
     workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 

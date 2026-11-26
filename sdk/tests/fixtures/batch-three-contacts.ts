@@ -2,7 +2,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { arrayRef, createApp, createView, defineViewType, ref, type ToolResult } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, defineViewType, ref, type ToolResult } from '@aotui/sdk';
 
 const Contact = Type.Object({ email: Type.String(), 'display.name': Type.String() }, { additionalProperties: false });
 const People = Type.Array(Contact);
@@ -13,7 +13,8 @@ const save = { description: 'Store a text selection from this request.', inputSc
     execute: ({ input, context }: { input: Type.Static<typeof SaveInput>; context: Save }) => context.save(input.text) };
 const List = defineViewType<Save>()({ name: 'list', multiplicity: 'single', region: 'dynamic', tools: { store_here: save } });
 const Team = defineViewType<Save>()({ name: 'team', multiplicity: 'single', region: 'dynamic', tools: { store_team: save } });
-type Directory = { revision: string; people: Type.Static<typeof People>; withdrawn?: boolean; privateScore?: boolean };
+type Directory = { revision: string; people: Type.Static<typeof People>; withdrawn?: boolean; privateScore?: boolean;
+    score?: number; emails?: string[]; numbers?: number[] };
 
 export default createApp({
     app_name: 'contacts',
@@ -37,7 +38,9 @@ export default createApp({
                 ref('secret', 'only-on-list', { scope: 'private', schema: Text }),
                 ref('team', 'inside-contacts', { scope: 'protected', schema: Text }),
                 arrayRef('empty', [], { scope: 'protected', itemType: 'Contact', schema: People }),
-                ref('score', 7, { scope: directory.privateScore ? 'private' : 'public', schema: Type.Integer() }),
+                ref('score', directory.score ?? 7, { scope: directory.privateScore ? 'private' : 'public', schema: Type.Integer() }),
+                ...(directory.emails ? [arrayRef('emails', directory.emails, { scope: 'public', schema: Type.Array(Text) })] : []),
+                ...(directory.numbers ? [arrayRef('numbers', directory.numbers, { scope: 'public', schema: Type.Array(Type.Integer()) })] : []),
             ],
         }) });
         const team = createView(Team, { render: () => ({ body: '# Team notes', context: storeOn('team') }) });

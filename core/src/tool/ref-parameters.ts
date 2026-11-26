@@ -1,33 +1,33 @@
 import { parseExpressionAt, type MemberExpression } from 'acorn';
 import { utf8Size } from '../snapshot/json.js';
-import { isInstanceName } from '../snapshot/types.js';
+import { isInstanceName, isRefId } from '../snapshot/types.js';
 import { MAX_REF_ADDRESS_BYTES, MAX_REF_PATH_SEGMENTS, type RefAddress } from './ref-path.js';
 
-const addressRoot = /^\$ref\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)(?=[.\[])/;
+const addressRoot = /^\$ref\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\.([^.[\]]+)/;
 const placeholder = 'ref';
 
 export function parseRefAddress(address: string): RefAddress | undefined {
     if (address.length > MAX_REF_ADDRESS_BYTES || utf8Size(address) > MAX_REF_ADDRESS_BYTES) return;
     const match = addressRoot.exec(address);
     if (!match) return;
-    const [, appId, viewId] = match;
-    if (!isInstanceName(appId) || !isInstanceName(viewId)) return;
-    const expression = placeholder + address.slice(match[0].length);
+    const [, appId, viewId, refId] = match;
+    if (!isInstanceName(appId) || !isInstanceName(viewId) || !isRefId(refId)) return;
+    const suffix = address.slice(match[0].length);
+    if (suffix.length === 0) return Object.freeze({ appId, viewId, refId, path: Object.freeze([]) });
+    const expression = placeholder + suffix;
     try {
         const last = parseExpressionAt(expression, 0, { ecmaVersion: 'latest' });
         if (last.type !== 'MemberExpression' || last.end !== expression.length) return;
         const members: (string | number)[] = [];
         let root: MemberExpression['object'] = last;
         while (root.type === 'MemberExpression') {
-            if (members.length > MAX_REF_PATH_SEGMENTS) return;
+            if (members.length >= MAX_REF_PATH_SEGMENTS) return;
             const part = readMember(expression, root);
             if (part === undefined) return;
             members.push(part);
             root = root.object;
         }
         if (root.type !== 'Identifier' || root.start !== 0 || root.name !== placeholder || root.end !== placeholder.length) return;
-        const refId = members.pop();
-        if (typeof refId !== 'string' || !refId) return;
         return Object.freeze({ appId, viewId, refId, path: Object.freeze(members.reverse()) });
     } catch { /* Invalid syntax or an invalid JSON string key. */ }
 }

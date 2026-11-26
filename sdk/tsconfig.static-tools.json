@@ -7,14 +7,11 @@
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": false,
     "lib": [
-      "ES2022",
-      "DOM"
+      "ES2022"
     ]
   },
   "include": [
-    "type-tests/public-api.ts",
-    "type-tests/view-type-tool.tsx",
-    "type-tests/view-metadata.tsx"
+    "type-tests/*.ts"
   ],
   "exclude": []
 }

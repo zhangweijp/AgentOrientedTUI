@@ -1,4 +1,4 @@
-import { canonicalJson, isSnapshotDataError, SnapshotDataError } from '../snapshot/json.js';
+import { isSnapshotDataError, SnapshotDataError } from '../snapshot/json.js';
 import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
 import {
     SNAPSHOT_SCHEMA_VERSION,
@@ -33,12 +33,9 @@ export interface AppProjectionFrame {
     readonly views: readonly AppFrameView[];
 }
 export type PreparedProjection = Readonly<{ status: 'prepared' }>;
-export type ProjectionOptions =
-    | Readonly<{ opening: true; retainViews?: true }>
-    | Readonly<{ restore: true }>;
-export type ProjectionCommitResult = PreparedProjection
-    | Readonly<{ status: 'restored' }>
-    | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>
+export type OpeningProjectionResult = PreparedProjection | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
+export type ProjectionOptions = Readonly<{ opening: true }>;
+export type ProjectionCommitResult = OpeningProjectionResult
     | Readonly<{ status: 'failed'; issue: SnapshotIssue; cause?: { readonly error: unknown } }>;
 
 export interface ProjectionSource {
@@ -70,7 +67,6 @@ function failureIssue(error: unknown): SnapshotIssue {
                 const path = Object.getOwnPropertyDescriptor(error, 'path')?.value;
                 return captureSnapshotPrepareIssue({ code, message: typeof reason === 'string' ? reason : message, path });
             }
-            if (typeof message === 'string' && message.startsWith('NESTED_VIEW_UNSUPPORTED:')) return { code: 'SNAPSHOT_INVALID', message };
         }
     } catch { /* Diagnostic capture cannot replace the App's error. */ }
     return { code: 'SNAPSHOT_INVALID', message: 'Semantic projection commit failed' };
@@ -86,11 +82,12 @@ export function commitAppFrame(projection: SemanticProjectionCoordinator, regist
         if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
             throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
         const views: AppProjectionFrame['views'] = frame.views;
-        const plan = registry.prepareFrame(views);
+        const plan = registry.prepareFrame(views, projection.failed);
         return {
             views: views.map(({ type, name, region, content }, index) => {
                 const { viewId: id, viewInstanceId, toolBindings, canClose } = plan.instances[index]!;
-                return { id, type, name: name ?? id, region, content, viewInstanceId, toolBindings, ...(canClose ? { canClose } : {}) };
+                return { id, type, name: name === undefined ? id : name, region, content, viewInstanceId, toolBindings,
+                    ...(canClose ? { canClose } : {}) };
             }),
             refs: views.flatMap(({ refs }, index) => {
                 const { viewId, viewInstanceId } = plan.instances[index]!;
@@ -116,28 +113,8 @@ export class SemanticProjectionCoordinator {
 
     constructor(private readonly source: ProjectionSource) {}
 
-    readPreparedProjection(): PreparedProjection {
-        if (this.closed) throw closedError();
-        if (this.committing) throw Object.assign(new Error('Projection commit is still active'), { code: 'PROJECTION_BUSY' });
-        if (this.fault) {
-            const { issue, cause } = this.fault;
-            const error = new SnapshotDataError(issue.code, issue.path ?? '$.views', issue.message);
-            if (cause) Object.defineProperty(error, 'cause', { value: cause.error, configurable: true, writable: true });
-            throw error;
-        }
-        if (!this.prepared) throw new SnapshotDataError('SNAPSHOT_INVALID', '$.views', 'Prepare the App’s first successful projection frame');
-        return Object.freeze({ status: 'prepared' });
-    }
-
-    readPreparedViewId(viewType: string, name: string): string | undefined {
-        if (this.closed || this.fault || !this.prepared) return;
-        let id: string | undefined;
-        for (const view of this.prepared.views) {
-            if (view.type !== viewType || view.name !== name) continue;
-            if (id !== undefined) return;
-            id = view.id;
-        }
-        return id;
+    readViewId(owner: object, registry: ReturnType<typeof createViewOwnedTools>): string | undefined {
+        if (!this.closed && !this.fault && this.prepared) return registry.readViewId(owner);
     }
 
     assertWritable(): void {
@@ -151,6 +128,7 @@ export class SemanticProjectionCoordinator {
 
     commit(build: () => CompleteProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
         this.assertWritable();
+        if (options?.opening && this.fault) return this.fault;
         this.committing = true;
         try {
             let frame: CompleteProjectionFrame;
@@ -166,7 +144,7 @@ export class SemanticProjectionCoordinator {
                 return this.fail(this.commitIssue ?? failureIssue(error), { error });
             }
             try { return this.prepare(frame, options); }
-            catch (error) { return this.fail(this.commitIssue ?? failureIssue(error)); }
+            catch (error) { return this.fail(this.commitIssue ?? failureIssue(error), { error }); }
         } finally {
             this.committing = false;
             this.commitIssue = undefined;
@@ -197,33 +175,21 @@ export class SemanticProjectionCoordinator {
         if (this.commitIssue) return this.fail(this.commitIssue);
         if (!checked.ok) return this.fail(checked.issue);
 
-        const { draft, canonicalContent } = checked.value;
+        const { draft } = checked.value;
         // Drop the temporary UTF-8 bytes before the capacity check measures the observation.
         checked = undefined;
         const previous = this.prepared;
-        if (options && 'restore' in options) {
-            if (!previous || this.fault || previous.appId !== draft.appId || previous.instanceId !== draft.instanceId ||
-                canonicalJson({ schemaVersion: previous.schemaVersion, views: previous.views,
-                    refs: previous.refs, tools: previous.tools } as unknown as JsonValue) !== canonicalContent) {
-                return this.fail({ code: 'SNAPSHOT_INVALID', path: '$.views',
-                    message: 'The render did not restore the accepted projection after refusing an opening' });
-            }
-            return { status: 'restored' };
-        }
-
+        if (this.closed) throw closedError();
         const capacity = this.source.checkCapacity?.(draft);
+        if (this.closed) throw closedError();
         if (this.commitIssue) return this.fail(this.commitIssue);
         if (capacity) {
-            if (capacity.code === 'OBSERVATION_CAPACITY' && previous && options && 'opening' in options) {
+            if (capacity.code === 'OBSERVATION_CAPACITY' && previous && options?.opening) {
                 const mounted = new Set(previous.views.map(view => view.viewInstanceId));
-                const next = new Set(draft.views.map(view => view.viewInstanceId));
-                const addsView = [...next].some(id => !mounted.has(id));
-                const retained = !options.retainViews || (!this.fault && [...mounted].every(id => next.has(id)));
-                if (addsView && retained) return { status: 'rejected', issue: capacity };
+                if (draft.views.some(view => !mounted.has(view.viewInstanceId))) return { status: 'rejected', issue: capacity };
             }
             return this.fail(capacity);
         }
-        if (this.closed) throw closedError();
         accept?.();
         this.prepared = draft;
         this.epoch = draft.sourceEpoch;

@@ -1,5 +1,5 @@
 import Type from 'typebox';
-import { defineViewType, refParam, type DeepReadonly, type ToolResult } from '@aotui/sdk/app';
+import { defineViewType, refParam, type JsonValue, type ToolResult } from '@aotui/sdk';
 
 const jsonList = Type.Array(Type.Unknown(), { maxItems: 8 });
 const itemValue = Type.Union([
@@ -8,7 +8,7 @@ const itemValue = Type.Union([
 ]);
 export const itemRefOptions = { scope: 'protected' as const, refType: 'Data', schema: itemValue };
 export const listRefOptions = { scope: 'protected' as const, itemType: 'Data', schema: Type.Array(itemValue) };
-type ItemValue = DeepReadonly<Type.Static<typeof itemValue>>;
+type ItemValue = string | number | boolean | null | readonly JsonValue[] | { readonly nested: readonly JsonValue[] };
 const operation = Type.Enum(['null', 'reset', 'reverse', 'empty', 'close', 'open', 'invalid', 'oversized', 'wait']);
 
 type ItemContext = { change(update: (state: State) => State): ToolResult | void };

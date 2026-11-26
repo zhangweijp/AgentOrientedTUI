@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Type from 'typebox';
-import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType } from '@aotui/sdk';
 import { DIAGRAM, PLAIN_APP, RAW_VIEWS } from './batch-five-content.js';
 
 const Raw = defineViewType({ name: 'raw_markdown', multiplicity: 'multiple' });

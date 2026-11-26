@@ -1,7 +1,5 @@
-import { h } from 'preact';
-import { useState } from 'preact/hooks';
 import Type from 'typebox';
-import { StaticView, DynamicView, createTUIApp, defineViewType, refParam, useDataRef } from '@aotui/sdk';
+import { createApp, createView, defineViewType, refParam, ref } from '@aotui/sdk';
 
 const File = Type.Object({ id: Type.String(), text: Type.String() }, { additionalProperties: false });
 const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
@@ -36,26 +34,45 @@ const Status = defineViewType({ name: 'Status', multiplicity: 'single' });
 export const initialText = '    first line  \r\n```\r\n<view id="literal">&lt;original&gt;</view>\r\n</application>\r\nlast line  \r\n';
 export const displayName = 'A > B & "C"\nnext';
 
-function FileBody({ text }) {
-  useDataRef('current', { id: 'internal-file', text }, { schema: Type.Object({}), scope: 'protected', refType: 'File' });
-  return h('section', {}, [
-    h('span', { 'data-role': 'application-instruction' }),
-    h('pre', {}, h('code', { class: 'language-text' }, text)),
-  ]);
-}
-
-function App() {
-  const [text, setText] = useState(initialText);
-  const [open, setOpen] = useState(true);
-  const [pinned, setPinned] = useState(false);
-  return h('main', {}, [
-    h(Guide, { id: 'guide', context: { setOpen, toggleStatic: () => setPinned(value => !value) } },
-      h('p', {}, 'Read the current file.')),
-    h(StaticView, { type: Note, idPrefix: 'note' }, 'Other static guidance.'),
-    h(DynamicView, { type: Status, id: 'status' }, open ? 'Open' : 'Closed'),
-    open ? h(FileDetail, { idPrefix: 'file_a', region: pinned ? 'static' : 'dynamic', name: displayName, context: { text, setText } },
-      h(FileBody, { text })) : null,
-  ]);
-}
-
-export default createTUIApp({ app_name: 'pipeline', component: App, viewTypes: [Guide, FileDetail, Note, Status] });
+export default createApp({
+  app_name: 'pipeline', viewTypes: [Guide, FileDetail, Note, Status],
+  initialize({ prepareProjection, prepareOpeningProjection }) {
+    let text = initialText;
+    let pinned = false, opening = false;
+    const guide = createView(Guide, { id: 'guide', render: () => ({
+      body: '\nRead the current file.\n', context: { setOpen, toggleStatic },
+    }) });
+    const note = createView(Note, { idPrefix: 'note', region: 'static', render: () => ({ body: 'Other static guidance.' }) });
+    const status = createView(Status, { id: 'status', region: 'dynamic', render: () => ({ body: file || opening ? 'Open' : 'Closed' }) });
+    function makeFile(region) {
+      return createView(FileDetail, { idPrefix: 'file_a', region, name: displayName, render: () => {
+        const current = ref('current', { id: 'internal-file', text }, { schema: File, scope: 'protected', refType: 'File' });
+        let length = 3;
+        for (const run of text.matchAll(/`+/g)) length = Math.max(length, run[0].length + 1);
+        const fence = '`'.repeat(length);
+        return { body: '\n' + fence + 'text\n' + text + (text.endsWith('\n') ? '' : '\n') + fence + '\n',
+            refs: [current], context: { text, setText(next) { text = next; publish(); } } };
+      } });
+    }
+    let file = makeFile('dynamic');
+    const frame = (view) => ({ views: [guide, note, status, ...(view ? [view] : [])] });
+    function publish() { prepareProjection(frame(file)); }
+    function show(next) {
+      opening = true;
+      try {
+        const result = prepareOpeningProjection(frame(next));
+        if (result.status === 'rejected') throw Error(result.issue.message);
+        file = next;
+      } finally { opening = false; }
+    }
+    function setOpen(open) {
+      if (open && !file) show(makeFile(pinned ? 'static' : 'dynamic'));
+      if (!open && file) { file = undefined; publish(); }
+    }
+    function toggleStatic() {
+      if (file) show(makeFile(pinned ? 'dynamic' : 'static'));
+      pinned = !pinned;
+    }
+    publish();
+  },
+});

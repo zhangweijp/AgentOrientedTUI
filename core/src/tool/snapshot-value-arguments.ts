@@ -3,7 +3,7 @@ import type { ToolParameterContract } from './tool-parameters.js';
 import type { InvocationSource, Issue } from '../invocation/app-interaction-types.js';
 import type { RefConsumer, RefGrant } from '../invocation/observation-types.js';
 import { parseRefAddress } from './ref-parameters.js';
-import { REF_ADDRESS_PREFIX, isArrayElementPath, readRefPath, refConsumerAllowed, refPath, scopeAllows,
+import { REF_ADDRESS_PREFIX, decodeRefLiteral, isArrayElementPath, readRefPath, refConsumerAllowed, refPath, scopeAllows,
     type LocalRefUse, type RefAddress } from './ref-path.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
@@ -46,10 +46,10 @@ export function prepareViewTypeParameters(
         const expectedType = schema?.['x-aotui-ref-kind'];
         if (typeof value !== 'string' || !value.startsWith(REF_ADDRESS_PREFIX)) {
             if (expectedType !== undefined) fail('REF_TYPE_MISMATCH', 'Choose a published Ref of type ' + expectedType + '.', slot);
-            return typeof value === 'string' && value.startsWith('$' + REF_ADDRESS_PREFIX) ? value.slice(1) : value;
+            return typeof value === 'string' ? decodeRefLiteral(value) : value;
         }
         const address = parseRefAddress(value);
-        if (!address) fail('TOOL_INVALID_ARGS', 'Use a complete $ref.app_id.view_id.ref_id address. Escape literal $ref. with $$ref.', slot);
+        if (!address) fail('TOOL_INVALID_ARGS', 'Use a complete $ref.app_id.view_id.ref_id address. To quote literal text starting with dollar signs followed by ref., add one leading $.', slot);
         const { appId, viewId, refId, path } = address;
         const origin = origins.get(appId) ?? external?.(appId);
         if (!origin) fail('REF_NOT_VISIBLE', 'Choose a Ref from an App in this request.', slot);

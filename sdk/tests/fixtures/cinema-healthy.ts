@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import Type from 'typebox';
-import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType } from '@aotui/sdk';
 
 const Ready = defineViewType<object>()({ name: 'Ready', region: 'dynamic', multiplicity: 'single', tools: {
     confirm: { description: 'Record a confirmation',

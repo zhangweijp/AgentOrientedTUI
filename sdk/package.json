@@ -1,7 +1,7 @@
 {
   "name": "@aotui/sdk",
   "version": "0.9.0",
-  "description": "Build Agent-Oriented TUI Apps with TypeScript or Preact",
+  "description": "Build Agent-Oriented TUI Apps with TypeScript",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,10 +9,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./app": {
-      "types": "./dist/app.d.ts",
-      "import": "./dist/app.js"
     }
   },
   "bin": {
@@ -26,21 +22,10 @@
     "prepack": "npm run build 1>&2",
     "typecheck:static": "node ./node_modules/@typescript/native/bin/tsc -p tsconfig.static-tools.json"
   },
-  "peerDependencies": {
-    "typebox": "1.4.3",
-    "preact": "10.29.1"
-  },
-  "peerDependenciesMeta": {
-    "preact": {
-      "optional": true
-    }
-  },
   "dependencies": {
-    "@aotui/core": "0.1.0",
-    "linkedom": "0.18.12"
+    "@aotui/core": "0.1.0"
   },
   "devDependencies": {
-    "@testing-library/preact": "^3.2.4",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "8.72.1",
     "@typescript-eslint/parser": "8.72.1",
@@ -48,9 +33,6 @@
     "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
-    "jsdom": "^27.0.1",
-    "preact": "10.29.1",
-    "preact-render-to-string": "^6.6.4",
     "prettier": "^3.7.4",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typebox": "1.4.3",
@@ -63,7 +45,6 @@
     "minimatch@3.1.2": "3.1.4",
     "minimatch@9.0.5": "9.0.7",
     "picomatch@4.0.3": "4.0.4",
-    "preact": "10.29.1",
     "rollup": "^4.60.1",
     "brace-expansion@1": "^1.1.20",
     "brace-expansion@2": "^2.1.2"
@@ -76,10 +57,11 @@
       "minimatch@3.1.2": "3.1.4",
       "minimatch@9.0.5": "9.0.7",
       "picomatch@4.0.3": "4.0.4",
-      "preact": "10.29.1",
       "rollup": "^4.60.1",
       "brace-expansion@1": "^1.1.20",
-      "brace-expansion@2": "^2.1.2"
+      "brace-expansion@2": "^2.1.2",
+      "vitest>jsdom": "-",
+      "vitest>happy-dom": "-"
     }
   },
   "files": [
@@ -90,7 +72,6 @@
   "keywords": [
     "aotui",
     "tui",
-    "preact",
     "agent",
     "llm"
   ],

@@ -1,10 +1,11 @@
+import { plainConfigObject } from '../snapshot/projection-limits.js';
 import type { AppSnapshot } from '../snapshot/types.js';
 import type { RefArgumentSource } from '../tool/snapshot-value-arguments.js';
-import type { ActiveTurn, AdoptTurnResult, AppInteraction, AppInvocation, CancellationSignal, ConsoleInputs, InvokeResult,
-    Issue, ObservationCandidate, PrepareObservationResult, InspectRefMode, InspectRefResult, TurnSelection } from './app-interaction-types.js';
+import type { ActiveTurn, AdoptTurnResult, AppInteraction, AppInvocation, CancellationSignal, InvokeResult,
+    Issue, ObservationCandidate, PrepareObservationResult, InspectRefMode, InspectRefResult, ReadPublicRefsResult, TurnSelection } from './app-interaction-types.js';
 import type { ObservedRef, ViewIdentity } from './observation-types.js';
 import { installObservationAdoptions, noObservationCleanupIssues, releaseObservationHolds, type ObservationAdoption } from './observation-registry.js';
-import { inspectTurnRef, readConsoleInputs } from './console-inputs.js';
+import { inspectTurnRef, readTurnPublicRefs } from './public-refs.js';
 
 export interface RefSourceHold {
     readonly source: RefArgumentSource;
@@ -45,17 +46,6 @@ const bindings = new WeakMap<ActiveTurn, BoundRequestSources>();
 
 export function registerRequestSource(client: RequestSourceClient, authority: RequestSourceAuthority): void {
     authorities.set(client, authority);
-}
-
-export function forwardRequestSource(client: RequestSourceClient, original: RequestSourceClient): void {
-    const authority = authorities.get(original);
-    if (authority) registerRequestSource(client, authority);
-}
-
-function dataField(object: unknown, name: string): unknown {
-    if (object === null || typeof object !== 'object') return undefined;
-    const field = Object.getOwnPropertyDescriptor(object, name);
-    return field?.enumerable && 'value' in field ? field.value : undefined;
 }
 
 export function requestSourcesFor(token: ActiveTurn, target: RequestSourceAuthority, observationId: string): BoundRequestSources | undefined {
@@ -143,15 +133,20 @@ export function createTurnCoordinator() {
         const apps = new Map<string, BoundApp>();
         const plans: ObservationAdoption[] = [];
         try {
-            const supplied = dataField(input, 'apps');
+            const supplied = plainConfigObject(input, ['apps'], '$').apps;
             if (!Array.isArray(supplied)) return rejectTurn(invalidTurn);
             for (let index = 0; index < supplied.length; index++) {
-                const selection = dataField(supplied, String(index));
-                const entry = candidates.get(dataField(selection, 'candidate') as ObservationCandidate);
+                const element = Object.getOwnPropertyDescriptor(supplied, String(index));
+                const selection = plainConfigObject(
+                    element?.enumerable && 'value' in element ? element.value : undefined,
+                    ['candidate', 'windows'],
+                    `$.apps[${index}]`,
+                );
+                const entry = candidates.get(selection.candidate as ObservationCandidate);
                 const authority = entry?.authority.deref();
                 if (!entry || !authority || apps.has(authority.appId)) return rejectTurn(invalidTurn);
                 if (!entry.client.deref() || !entry.isLive()) return rejectTurn(unavailable);
-                const selected = authority.prepare(entry.observationId, dataField(selection, 'windows'));
+                const selected = authority.prepare(entry.observationId, selection.windows);
                 if (selected.status === 'rejected') return selected;
                 plans.push(selected.plan);
                 apps.set(authority.appId, { ...entry, visibleRefs: selected.plan.visibleRefs });
@@ -166,9 +161,9 @@ export function createTurnCoordinator() {
         const previous = current;
         current = binding;
         revision = Symbol();
-        async function inputs(imports?: readonly string[]): Promise<ConsoleInputs> {
+        async function readPublicRefs(addresses?: readonly string[]): Promise<ReadPublicRefsResult> {
             if (!binding.isCurrent()) return rejectTurn(inactive);
-            const result = await readConsoleInputs(apps, id => acquireRequestSource(binding, id), imports);
+            const result = await readTurnPublicRefs(apps, id => acquireRequestSource(binding, id), addresses);
             return binding.isCurrent() ? result : rejectTurn(inactive);
         }
         const turn: ActiveTurn = Object.freeze({
@@ -179,7 +174,7 @@ export function createTurnCoordinator() {
                 if (!client || !requestAppIsAvailable(binding, appId)) return Promise.resolve(refused(unavailable));
                 return client.invoke(request, timeoutMs, turn, signal);
             },
-            readConsoleInputs: inputs,
+            readPublicRefs,
             async inspectRef(address: string, mode: InspectRefMode): Promise<InspectRefResult> {
                 if (!binding.isCurrent()) return rejectTurn(inactive);
                 const result = await inspectTurnRef(apps, id => acquireRequestSource(binding, id), address, mode);
