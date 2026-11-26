@@ -262,6 +262,55 @@ describe('SemanticAOTUIDrivenSource', () => {
         h.source.dispose();
     });
 
+    it.each(['retitle', 'remount', 'close'] as const)('checks real mount eligibility during request adoption (%s)', async change => {
+        const h = harness();
+        let views: AppWindows['views'] = [{ viewId: 'workspace', viewInstanceId: 'one-view',
+            type: 'AnyView', name: 'Workspace', region: 'dynamic', canClose: true }];
+        h.desktop.getAppWindows.mockImplementation(() => ({ appId: 'one', instanceId: 'one-instance', views }));
+        const prepared = await h.source.getContext();
+        views = change === 'close' ? [] : [{ ...views[0]!, name: 'Updated title',
+            ...(change === 'remount' ? { viewInstanceId: 'replacement' } : {}) }];
+        try {
+            if (change === 'retitle') {
+                await prepared.adopt!();
+                expect(h.desktop.adoptTurn).toHaveBeenCalledOnce();
+            } else {
+                expect(() => prepared.adopt!()).toThrow(expect.objectContaining({ code: 'SEMANTIC_WINDOW_CHANGED' }));
+                expect(h.desktop.adoptTurn).not.toHaveBeenCalled();
+            }
+        } finally {
+            await prepared.release?.();
+            h.source.dispose();
+        }
+    });
+
+    it.each(['retitle', 'remount', 'close'] as const)('checks real mount eligibility during expansion preflight (%s)', async change => {
+        const h = harness();
+        let views: AppWindows['views'] = [{ viewId: 'workspace', viewInstanceId: 'one-view',
+            type: 'AnyView', name: 'Workspace', region: 'dynamic', canClose: true }];
+        h.desktop.getAppWindows.mockImplementation(() => ({ appId: 'one', instanceId: 'one-instance', views }));
+        const open = await consume(h.source);
+        const target = { app_id: 'one', view_id: 'workspace' };
+        expect(await open.executeTool!('system-collapse_view', { ...target, note: 'keep' }, 'collapse'))
+            .toMatchObject({ outcomeStatus: 'succeeded' });
+        const collapsed = await consume(h.source);
+        const checkExpansion = vi.fn(async () => {
+            if (change === 'close') views = [];
+            else views = [{ ...views[0]!, name: 'Updated title',
+                ...(change === 'remount' ? { viewInstanceId: 'replacement' } : {}) }];
+            return { method: 'utf8-bytes' as const, inputBytes: 10, safety: 0, estimated: 10, inputLimit: 100, outputReserved: 10 };
+        });
+        try {
+            const result = await collapsed.executeTool!('system-expand_view', target, 'expand', { checkExpansion });
+            expect(checkExpansion).toHaveBeenCalledOnce();
+            if (change === 'retitle') expect(result).toMatchObject({ outcomeStatus: 'succeeded' });
+            else expect(result?.error?.code).toBe('VIEW_STATE_CHANGED');
+        } finally {
+            await collapsed.release?.();
+            h.source.dispose();
+        }
+    });
+
     it('binds close, collapse and expand to the observed instance and keeps the layout in the Source', async () => {
         const h = harness(), originalId = h.installed[0].appInstanceId!;
         h.desktop.getAppWindows.mockImplementation((appId?: string, instanceId?: string) => ({

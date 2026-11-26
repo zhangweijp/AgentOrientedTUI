@@ -95,6 +95,17 @@ type StoredReport = { report: WindowBudgetReport; scope: BudgetReportScope; key:
 type Control = (input: unknown, callId: string, current: () => ActiveTurn | undefined, budget?: ToolExecutionBudget) => Promise<ToolResult>;
 const windowKey = (appId: string, viewInstanceId: string) => JSON.stringify([appId, viewInstanceId]);
 
+function sameWindowEligibility(before: DisplayedWindows | undefined, after: DisplayedWindows | undefined): boolean {
+    if (!before || !after) return before === after;
+    if (before.appId !== after.appId || before.instanceId !== after.instanceId ||
+        before.expanded !== after.expanded || before.views.length !== after.views.length) return false;
+    const mounts = new Map(after.views.map(view => [view.viewInstanceId, view]));
+    return before.views.every(view => {
+        const current = mounts.get(view.viewInstanceId);
+        return current?.viewId === view.viewId && current.expanded === view.expanded && current.canClose === view.canClose;
+    });
+}
+
 class AppProjectionError extends Error {
     constructor(readonly code: string, message: string, readonly path?: string) { super(message); }
 }
@@ -121,13 +132,6 @@ function formatAppIssue(issue: AppIssue): string {
 
 function appIssueFrom(error: unknown): AppIssue {
     if (error instanceof AppProjectionError) return boundedIssue(error.code, error.message, error.path);
-    const message = error instanceof Error ? error.message : '';
-    const code = message.match(/^([A-Z][A-Z0-9_]{0,63}):/)?.[1];
-    if (code === 'AOTUI_TOOL_NAME_INVALID' ||
-        code === 'AOTUI_TOOL_NAME_COLLISION' || code === 'TOOL_TARGET_REQUIRED' ||
-        code === 'TOOL_SOURCE_CONFLICT' || code === 'TOOL_TARGET_CONFLICT') {
-        return boundedIssue(code, message.replace(new RegExp(`^${code}:\\s*`), ''));
-    }
     return boundedIssue('AOTUI_APP_PROJECTION_FAILED',
         'This App projection is invalid; repair its View or Tool declarations, then refresh the context.');
 }
@@ -527,7 +531,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                             throw Object.assign(new Error('A Window changed while preparing the model request.'), { code: 'SEMANTIC_WINDOW_CHANGED' });
                         for (const [appId, expected] of catalog) {
                             const current = this.currentWindows(appId as AppID, expected.instanceId);
-                            if (JSON.stringify(current) !== JSON.stringify(expected))
+                            if (!sameWindowEligibility(expected, current))
                                 throw Object.assign(new Error('A Window changed while preparing the model request.'), { code: 'SEMANTIC_WINDOW_CHANGED' });
                         }
                         const selected = projected.appSelections.map(({ observationId, windows }) =>
@@ -746,7 +750,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                                 ...(window ? { view: window } : {}) }, budget, success, toolSchema);
                             if (issue) return issue;
                             if (!current() || this.generation !== generation || this.windowRevision !== windowRevision || !this.allowed(captured) ||
-                                JSON.stringify(liveCatalog) !== JSON.stringify(this.currentWindows(appId, app.appInstanceId)))
+                                !sameWindowEligibility(liveCatalog, this.currentWindows(appId, app.appInstanceId)))
                                 return unavailable(name, callId, 'VIEW_STATE_CHANGED', 'The window changed during budget preflight. Observe the current Desktop.');
                         }
                         const turn = opening ? started : current();
