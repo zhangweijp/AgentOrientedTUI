@@ -38,7 +38,6 @@ export interface ProviderUpdates {
 
 export interface UseProviderConfigsResult {
     providers: ProviderConfig[];
-    activeProviderId: string | null;
     isLoading: boolean;
     error: Error | null;
     addProvider: (config: NewProviderConfig) => Promise<void>;
@@ -91,7 +90,6 @@ export function sortProviders(providers: ProviderConfig[]): ProviderConfig[] {
  */
 export function useProviderConfigs(): UseProviderConfigsResult {
     const [providers, setProviders] = useState<ProviderConfig[]>([]);
-    const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<Error | null>(null);
 
@@ -106,13 +104,11 @@ export function useProviderConfigs(): UseProviderConfigsResult {
             setError(null);
 
             const allConfigs = await bridge.getAllLLMConfigs();
-            const activeConfig = await bridge.getActiveLLMConfig();
 
             const providerConfigs = allConfigs.map(toProviderConfig);
             const sortedProviders = sortProviders(providerConfigs);
 
             setProviders(sortedProviders);
-            setActiveProviderId(activeConfig?.providerId || null);
         } catch (err) {
             setError(err instanceof Error ? err : new Error(String(err)));
         } finally {
@@ -244,7 +240,6 @@ export function useProviderConfigs(): UseProviderConfigsResult {
 
     return {
         providers,
-        activeProviderId,
         isLoading,
         error,
         addProvider,

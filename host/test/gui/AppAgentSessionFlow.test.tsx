@@ -134,8 +134,11 @@ vi.mock('../../src/gui/ChatBridge.js', () => ({
 }));
 
 vi.mock('../../src/gui/components/ProjectSelector.js', () => ({
-    ProjectSelector: ({ onSelectProject }: any) => (
-        <button data-testid="select-project" onClick={() => onSelectProject('p1')}>Select Project</button>
+    ProjectSelector: ({ onSelectProject, theme, toggleTheme }: any) => (
+        <>
+            <button data-testid="select-project" onClick={() => onSelectProject('p1')}>Select Project</button>
+            <button onClick={toggleTheme}>Current theme: {theme}</button>
+        </>
     ),
 }));
 
@@ -181,6 +184,22 @@ import { App } from '../../src/gui/App.js';
 describe('App agent flow around New Session', () => {
     beforeEach(() => {
         mockRef.bridge = createMockBridge();
+    });
+
+    it('persists a changed theme through the App and reads it after a remount', async () => {
+        const key = 'aotui-theme', previous = localStorage.getItem(key);
+        try {
+            localStorage.setItem(key, 'dark');
+            const original = render(<App />);
+            fireEvent.click(await screen.findByRole('button', { name: 'Current theme: dark' }));
+            expect(localStorage.getItem(key)).toBe('light');
+            original.unmount();
+            render(<App />);
+            expect(await screen.findByRole('button', { name: 'Current theme: light' })).toBeInTheDocument();
+        } finally {
+            if (previous === null) localStorage.removeItem(key);
+            else localStorage.setItem(key, previous);
+        }
     });
 
     it('creates a Topic from registered App keys and preserves the Agent’s MCP server selection', async () => {

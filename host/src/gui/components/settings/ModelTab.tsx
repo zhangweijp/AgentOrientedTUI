@@ -38,7 +38,6 @@ export const ModelTab: React.FC = () => {
     // Provider management hook
     const {
         providers,
-        activeProviderId,
         isLoading: isLoadingProviders,
         error: providerError,
         addProvider,
@@ -87,10 +86,9 @@ export const ModelTab: React.FC = () => {
     // Models management hook
     const {
         models,
-        activeModelId,
         isLoading: isLoadingModels,
         error: modelsError,
-    } = useModels(selectedProviderId, activeProviderId ? `${activeProviderId}/model` : null);
+    } = useModels(selectedProviderId);
 
     // Show warning toast when models fail to load
     useEffect(() => {
@@ -392,7 +390,7 @@ export const ModelTab: React.FC = () => {
 
     // Filter models based on search query
     const filteredModels = filterModels(models, modelSearchQuery);
-    const effectiveActiveModelId = selectedProvider?.isActive ? (selectedProvider.model || activeModelId) : null;
+    const effectiveActiveModelId = selectedProvider?.isActive ? selectedProvider.model : null;
 
     // Derived: selected custom provider record + its linked ProviderConfigs
     const selectedCustomProvider = selectedCustomProviderId
