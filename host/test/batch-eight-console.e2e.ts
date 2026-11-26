@@ -42,7 +42,7 @@ const desktops = {
             await desktop.openApp(CATALOG);
             await desktop.openApp(TASKS);
         }
-        return { desktop, thirdPartyAppCount: id.startsWith('agent:') || hidden ? 2 : 0 };
+        return desktop;
     },
     async getAppsConfig() { return { [CATALOG]: {}, [TASKS]: {} }; },
 } as DesktopManager;
@@ -52,7 +52,7 @@ const llm: LLMConfig = { provider: { id: 'local-console', baseURL: provider.url 
 const host = new HostManagerV2('console-topic', {} as ConstructorParameters<typeof HostManagerV2>[1]);
 mock.method(host.getLLMConfigService(), 'resolveLLMConfig', async () => llm);
 mock.method(host.getLLMConfigService(), 'withModelInputBudget', (value: LLMConfig) => value);
-await host.initAgentDriver(runtime, desktops);
+await host.initAgentDriver(desktops);
 await db.initDatabase();
 const sessions = host.getSessionManager()!;
 function topic(id: string) {

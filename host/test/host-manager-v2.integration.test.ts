@@ -81,7 +81,7 @@ describe('HostManager V2 Integration', () => {
             const mockKernel = {} as any;
             const mockDesktopManager = {} as any;
 
-            await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
+            await hostManager.initAgentDriver(mockDesktopManager);
 
             await hostManager.sendUserMessage('Search for AI news');
 
@@ -92,7 +92,7 @@ describe('HostManager V2 Integration', () => {
             const mockKernel = {} as any;
             const mockDesktopManager = {} as any;
 
-            await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
+            await hostManager.initAgentDriver(mockDesktopManager);
 
             const guiEvents: any[] = [];
             hostManager.onGuiUpdate((event) => {
@@ -139,7 +139,7 @@ describe('HostManager V2 Integration', () => {
             const mockKernel = {} as any;
             const mockDesktopManager = {} as any;
 
-            await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
+            await hostManager.initAgentDriver(mockDesktopManager);
 
             const topic1 = 'topic_1';
             const topic2 = 'topic_2';

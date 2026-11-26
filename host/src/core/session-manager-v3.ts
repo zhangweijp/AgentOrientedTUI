@@ -170,10 +170,10 @@ export class SessionManagerV3 extends EventEmitter {
             ? projectService.getProject(topic.projectId)?.path
             : undefined;
         const appConfig = projectPath
-            ? { projectPath, workspace_dir_path: projectPath }
+            ? { projectPath }
             : undefined;
 
-        const { desktop } = await this.desktopManager.createDesktop(desktopId, appConfig);
+        const desktop = await this.desktopManager.createDesktop(desktopId, appConfig);
         let sourceControls: TopicSourceControls | undefined;
         let appReceipts: PendingAppReceipts | undefined;
         let aotuiSource: SemanticAOTUIDrivenSource | undefined;

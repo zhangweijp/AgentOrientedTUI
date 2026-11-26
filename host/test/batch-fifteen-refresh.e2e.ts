@@ -42,7 +42,7 @@ const facts = { wire: provider.requests, workers: tracked.events, results: {}, p
 try {
     await db.initDatabase();
     await manager.initialize({ appEntries: refreshEntries(installed) });
-    await host.initAgentDriver(runtime, manager);
+    await host.initAgentDriver(manager);
     const now = Date.now();
     db.createTopic({ id, agentId: id, title: id, status: 'hot', createdAt: now, updatedAt: now });
     await host.ensureSessionForTopic(id);

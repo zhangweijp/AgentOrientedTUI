@@ -116,9 +116,8 @@ try {
         { name: 'terminal', source: `local:${path.join(repo, 'demo-apps/terminal-app')}`, enabled: true, autoStart: true },
         { name: browserInstallation, source: `local:${path.join(repo, 'demo-apps/lite-browser-app')}`, enabled: true, autoStart: false },
     ] });
-    const info = await manager.createDesktop('semantic-default-e2e' as any, { projectPath: project });
-    const { desktop } = info;
-    assert.equal(info.thirdPartyAppCount, 3);
+    const desktop = await manager.createDesktop('semantic-default-e2e' as any, { projectPath: project });
+    assert.equal(desktop.listApps().length, 3);
     source = new SemanticAOTUIDrivenSource(desktop, { includeInstruction: true });
     const preview = async () => {
         const { applications, diagnostics } = await readDesktopPreview(desktop);

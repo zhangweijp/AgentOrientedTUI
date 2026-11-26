@@ -39,7 +39,7 @@ let tracked: ReturnType<typeof trackTodo> | undefined;
 try {
     await db.initDatabase();
     await manager.initialize({ appEntries: [todoEntry(installed)] });
-    await host.initAgentDriver(runtime, manager);
+    await host.initAgentDriver(manager);
     const now = Date.now();
     db.createTopic({ id, agentId: id, title: id, status: 'hot', createdAt: now, updatedAt: now });
     await host.ensureSessionForTopic(id);

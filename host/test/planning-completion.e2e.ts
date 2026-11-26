@@ -97,7 +97,7 @@ try {
     await symlink(join(resolve(builtApp), 'node_modules'), join(app, 'node_modules'), 'junction');
     await chat.initDatabase();
     await manager.initialize({ appEntries: [{ name: installation, source: 'local:' + app, enabled: true, autoStart: true }] });
-    await host.initAgentDriver(runtime, manager);
+    await host.initAgentDriver(manager);
     const now = Date.now();
     chat.createTopic({ id: topic, agentId: topic, title: topic, createdAt: now, updatedAt: now, status: 'hot' });
     await host.ensureSessionForTopic(topic);

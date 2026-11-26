@@ -105,7 +105,7 @@ try {
         apiKey: 'fixture-only', skipValidation: true });
     llm.setActiveConfig(config.id);
     await desktops.initialize();
-    await host.initAgentDriver(runtime, desktops);
+    await host.initAgentDriver(desktops);
     facts.native = await runTopic('cinema_topic', false);
     facts.openai = await runTopic('cinema_strict', true);
     facts.blocked = await runTopic('cinema_blocked', false, { blocked: true });

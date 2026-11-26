@@ -34,7 +34,7 @@ const assembled = {
         folders.set(id, folder);
         const desktop = await runtime.createDesktop({ id: id, policyForApp: () => policy });
         await installConsoleFixtures(desktop, consumer, folder);
-        return { desktop, thirdPartyAppCount: 2 };
+        return desktop;
     },
     async getAppsConfig() { return { [CATALOG]: {}, [TASKS]: {} }; },
 } as DesktopManager;
@@ -64,7 +64,7 @@ const unsubscribe = host.onGuiUpdate((event: GuiUpdateEvent) => {
 
 try {
     await db.initDatabase();
-    await host.initAgentDriver(runtime, assembled);
+    await host.initAgentDriver(assembled);
     const id = 'scope-topic', key = 'agent:scope:local:direct:scope-im';
     const now = Date.now();
     db.createTopic({ id, agentId: 'scope', title: id, status: 'hot', createdAt: now, updatedAt: now });

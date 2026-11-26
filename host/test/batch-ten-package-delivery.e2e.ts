@@ -44,7 +44,7 @@ try {
     await setupFiles(folder);
     facts.artifact = await artifactDetails(archive, installed, import.meta.resolve('@aotui/runtime'));
     await manager.initialize({ appEntries: [appEntry(installed)] });
-    await host.initAgentDriver(runtime, manager);
+    await host.initAgentDriver(manager);
     const now = Date.now();
     db.createTopic({ id, agentId: id, title: id, status: 'hot', createdAt: now, updatedAt: now });
     await host.ensureSessionForTopic(id);

@@ -6,7 +6,7 @@
 
 import type { ModelMessage } from 'ai';
 import { AgentDriverV2, ModelInputError, ProviderToolSchemaError, type LLMConfig, type MessageWithTimestamp } from '@aotui/agent-driver-v2';
-import { createDesktopId, type IDesktop, type IKernel } from '@aotui/runtime';
+import { createDesktopId, type IDesktop } from '@aotui/runtime';
 import type { AppConfigEntry } from '../app-distribution/app-catalog.js';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { readDesktopPreview } from './desktop-preview.js';
@@ -51,7 +51,6 @@ export class HostManagerV2 {
     private logger: Logger;
     private events: EventEmitter;
     private llmConfigService: LLMConfigService;
-    private kernel: IKernel | null = null;
     private imRuntimeProvider: (() => unknown) | null = null;
     private readonly imMessageIds = new WeakMap<MessageWithTimestamp, string>();
     private readonly imAppReceipts = new WeakMap<object, { receipts: PendingAppReceipts; source: SemanticAOTUIDrivenSource }>();
@@ -72,10 +71,8 @@ export class HostManagerV2 {
      * 使用 SessionManagerV3 替代直接创建 AgentDriver
      */
     async initAgentDriver(
-        kernel: IKernel,
         desktopManager: import('./desktop-manager.js').DesktopManager,
     ): Promise<void> {
-        this.kernel = kernel;
         this.desktopManager = desktopManager;
         
         // 创建 SessionManagerV3
@@ -92,10 +89,7 @@ export class HostManagerV2 {
         this.sessionManager.on('model-usage', (event: ModelUsageEvent) => this.events.emit('model-usage', event));
 
         this.imSessionManager = new IMSessionManager({
-            createDesktop: async sessionKey => {
-                const { desktop } = await this.requireDesktopManager().createDesktop(createDesktopId(sessionKey));
-                return desktop;
-            },
+            createDesktop: sessionKey => this.requireDesktopManager().createDesktop(createDesktopId(sessionKey)),
             createSource: ({ sessionKey }) => new IMDrivenSource({
                 sessionKey,
                 loadHistory: async (key) => listIMMessages(key).map(({ id, ...message }) => {

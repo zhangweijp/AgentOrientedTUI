@@ -14,11 +14,6 @@ import { rethrowAfterDesktopClose } from './desktop-close.js';
 
 export type { DesktopID, InstallAppOptions, InstallAppResult };
 
-export interface DesktopInfo {
-    desktop: IDesktop;
-    thirdPartyAppCount: number;
-}
-
 export interface CatalogSearchEntry extends CatalogSearchResult {
     installed: boolean;
     installedName: string | null;
@@ -74,7 +69,7 @@ export class DesktopManager {
      * @param desktopId - Optional: specify a custom Desktop ID (for historical topics)
      * @param config - Optional: runtime config to inject into apps (e.g. projectPath)
      */
-    async createDesktop(desktopId?: DesktopID, config?: AppLaunchConfig): Promise<DesktopInfo> {
+    async createDesktop(desktopId?: DesktopID, config?: AppLaunchConfig): Promise<IDesktop> {
         const desktop = await this.kernel.createDesktop(desktopId);
         try {
             if (desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
@@ -88,9 +83,8 @@ export class DesktopManager {
             if (desktop.isClosing || this.getDesktop(desktop.id) !== desktop) {
                 throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
             }
-            const thirdPartyAppCount = desktop.listApps().length;
-            console.log(`[DesktopManager] Created Desktop ${desktop.id} with ${thirdPartyAppCount} third-party apps (Semantic)`);
-            return { desktop, thirdPartyAppCount };
+            console.log(`[DesktopManager] Created Desktop ${desktop.id} with ${desktop.listApps().length} apps`);
+            return desktop;
         } catch (error) {
             console.error('[DesktopManager] Failed to install apps:', error);
             return rethrowAfterDesktopClose(desktop, error);

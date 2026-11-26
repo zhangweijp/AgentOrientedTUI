@@ -66,7 +66,7 @@ process.exitCode = 1;
 try {
     await db.initDatabase();
     await manager.initialize({ appEntries: [{ name: installation, source: `local:${resolve(installed)}`, enabled: true, autoStart: true }] });
-    await host.initAgentDriver(runtime, manager);
+    await host.initAgentDriver(manager);
     const now = Date.now();
     db.createTopic({ id, agentId: id, title: id, status: 'hot', createdAt: now, updatedAt: now });
     await host.ensureSessionForTopic(id);

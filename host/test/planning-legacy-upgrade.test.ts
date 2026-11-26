@@ -127,7 +127,7 @@ describe('planning-app upgrade through Host DesktopManager with AOTUI_DATA_DIR',
             await manager1.initialize({
                 appEntries: [{ name: 'planning', source: `local:${appDir}`, enabled: true, autoStart: true }],
             });
-            const { desktop: d1 } = await manager1.createDesktop(desktopId, { AOTUI_DATA_DIR: hostDataDir });
+            const d1 = await manager1.createDesktop(desktopId, { AOTUI_DATA_DIR: hostDataDir });
             const running1 = getPlanningApp(d1);
 
             await waitForObservedText(d1, 'Old User Plan');
@@ -166,7 +166,7 @@ describe('planning-app upgrade through Host DesktopManager with AOTUI_DATA_DIR',
             await manager2.initialize({
                 appEntries: [{ name: 'planning', source: `local:${appDir}`, enabled: true, autoStart: true }],
             });
-            const { desktop: d2 } = await manager2.createDesktop(desktopId, { AOTUI_DATA_DIR: hostDataDir });
+            const d2 = await manager2.createDesktop(desktopId, { AOTUI_DATA_DIR: hostDataDir });
             const restored = await waitForObservedText(d2, 'Old User Task');
             const text = JSON.stringify(restored.views);
             expect(text).toContain('Old User Plan');
