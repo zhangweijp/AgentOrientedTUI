@@ -10,7 +10,7 @@
  * 基于 Vercel AI SDK v6
  */
 
-import type { LanguageModelUsage, ModelMessage, Tool } from 'ai';
+import type { LanguageModelUsage, ModelMessage, Tool, ToolModelMessage } from 'ai';
 
 /**
  * AgentState - AgentDriver 状态
@@ -149,7 +149,7 @@ export interface AgentDriverV2Config {
      * 
      * 当 LLM 返回 assistant message 时触发
      * 
-     * @param message - Assistant Message (可能包含 text 或 toolcall)
+     * @param message - Save the complete assistant message, including ordered provider-executed parts.
      * 
      * @example
      * onAssistantMessage: (message) => {
@@ -165,7 +165,7 @@ export interface AgentDriverV2Config {
      * 当 ToolCall 执行完成，生成 toolresult message 时触发
      * 
      * @param message - Tool Message (包含一个或多个 tool-result)
-     * @param results - The execution results used to build this message, in part order.
+     * @param results - Source execution results in part order. An SDK-generated protocol result has no Source results.
      * Return the save promise when persistence is asynchronous so session close can await it.
      * 
      * @example
@@ -251,6 +251,13 @@ export interface ProviderConfig {
     /** Function schema mode for OpenAI and DeepSeek. Non-strict is the default. */
     toolSchemaMode?: 'non-strict' | 'strict';
 
+    /** Opt-in tool loading on the official OpenAI Responses route. */
+    openaiResponsesTools?: {
+        readonly search: 'hosted' | 'client';
+        readonly additionalTools?: readonly string[];
+        readonly deferredTools?: readonly string[];
+    };
+
     /** 自定义 HTTP Headers */
     headers?: Record<string, string>;
 }
@@ -304,7 +311,7 @@ export interface LLMConfig {
 export interface LLMResponse {
     /** 生成的文本 */
     text: string;
-    /** ToolCalls */
+    /** Calls the Driver must dispatch to a Source. */
     toolCalls: Array<{
         toolCallId: string;
         toolName: string;
@@ -316,4 +323,6 @@ export interface LLMResponse {
     usage?: LanguageModelUsage;
     /** Assistant Message (用于构建消息历史) */
     assistantMessage?: ModelMessage;
+    /** Protocol results already produced by the model SDK. */
+    toolMessages?: ToolModelMessage[];
 }

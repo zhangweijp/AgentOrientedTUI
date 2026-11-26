@@ -48,6 +48,12 @@ function walkSchema(schema: unknown, mode: SchemaMode, fineTuned: boolean, path:
     const type = schema.type;
     const childrenNesting = nesting + Number(type === 'object' || type === 'array');
     if (mode === 'claude') {
+        for (const key of ['minLength', 'maxLength']) {
+            if (Object.hasOwn(schema, key)) return fail(key, `Claude strict does not support the string constraint ${key}.`);
+        }
+        for (const key of numeric) {
+            if (Object.hasOwn(schema, key)) return fail(key, `Claude strict does not support the numerical constraint ${key}.`);
+        }
         const reason = 'Claude strict only supports minItems of 0 or 1 for array length.';
         if (Object.hasOwn(schema, 'maxItems')) return fail('maxItems', reason);
         if (Object.hasOwn(schema, 'minItems') && schema.minItems !== 0 && schema.minItems !== 1) return fail('minItems', reason);

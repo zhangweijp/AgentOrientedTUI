@@ -329,7 +329,7 @@ it('rejects DeepSeek strict without its Beta endpoint and a model without requir
     expect(beforeRequest).not.toHaveBeenCalled();
 });
 
-it('rejects unsupported Claude strict array bounds in a required tool before adoption', async () => {
+it('rejects unsupported Claude strict constraints in a required tool before adoption', async () => {
     const fetch = vi.fn(), beforeRequest = vi.fn();
     vi.stubGlobal('fetch', fetch);
     const client = new LLMClient({ apiKey: 'fixture', model: 'claude-sonnet-4-5',
@@ -339,10 +339,18 @@ it('rejects unsupported Claude strict array bounds in a required tool before ado
     ] } });
     const policy = await client.toolSchemaPolicy();
     for (const minItems of [0, 1]) expect(policy.check?.(schema({ minItems }))).toBeUndefined();
-    for (const [keyword, value] of [['maxItems', 256], ['minItems', 2]] as const) {
-        await expect(client.call(messages, { required_lookup: { inputSchema: jsonSchema(schema({ [keyword]: value })) } },
+    expect(policy.check?.(closed({ label: { type: 'string', enum: ['red', 'blue'] } }))).toBeUndefined();
+    const unsupported = [
+        [schema({ maxItems: 256 }), '$.properties.imports.anyOf[0].maxItems', 'minItems of 0 or 1'],
+        [schema({ minItems: 2 }), '$.properties.imports.anyOf[0].minItems', 'minItems of 0 or 1'],
+        [closed({ payload: closed({ label: { type: 'string', minLength: 1 } }) }), '$.properties.payload.properties.label.minLength', 'minLength'],
+        [closed({ labels: { type: 'array', items: { type: 'string', maxLength: 16 } } }), '$.properties.labels.items.maxLength', 'maxLength'],
+        [closed({ page: { type: 'integer', minimum: 1 } }), '$.properties.page.minimum', 'minimum'],
+    ] as const;
+    for (const [inputSchema, path, rule] of unsupported) {
+        await expect(client.call(messages, { required_lookup: { inputSchema: jsonSchema(inputSchema) } },
             { preserveTools: true, beforeRequest })).rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED',
-            tool: 'required_lookup', path: `$.properties.imports.anyOf[0].${keyword}`, reason: expect.stringContaining('minItems of 0 or 1') });
+            tool: 'required_lookup', path, reason: expect.stringContaining(rule) });
     }
     expect(beforeRequest).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();

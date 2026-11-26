@@ -16,6 +16,11 @@ import type { LLMConfig, LLMResponse, ModelInputLimits, ModelInputMeasurement } 
 import { Logger } from '../utils/logger.js';
 import { createLanguageModelWithChatFetch, observeChatStreamEnd, validateModelConfig } from './provider-factory.js';
 import { createProviderToolSchemaPolicy, ProviderToolSchemaError, type ProviderToolSchemaPolicy } from './provider-tool-schema.js';
+import { captureAnthropicSearchError, includeAnthropicHistoryTools, isAnthropicSearchTool,
+    prepareAnthropicSearchErrorReplay, recordAnthropicSearchTools, withoutAnthropicSearchHistory,
+    type AnthropicSearchError } from './anthropic-tool-history.js';
+import { getToolResultIds } from './context-regions.js';
+import { prepareOpenAIResponsesInput, recordOpenAIResponsesToolLoad } from './openai-responses-tools.js';
 
 export class ModelInputError extends Error {
     constructor(readonly code: 'MODEL_INPUT_BUDGET_EXCEEDED' | 'MODEL_INPUT_LIMITS_UNAVAILABLE' | 'MODEL_INPUT_UNMEASURABLE', message: string, readonly details?: Readonly<Record<string, number | string>>) {
@@ -25,13 +30,17 @@ export class ModelInputError extends Error {
 
 type StreamParams = Parameters<ReturnType<typeof createLanguageModelWithChatFetch>['doStream']>[0];
 
+function hasUnmeasurableParts(messages: ModelMessage[] | StreamParams['prompt']): boolean {
+    return messages.some(message => typeof message.content !== 'string' &&
+        message.content.some(part => part.type === 'file' || part.type === 'image' || (part.type === 'tool-result' &&
+            part.output.type === 'content' && part.output.value.some(item => item.type !== 'text'))));
+}
+
 function verifyMeasurable(params: StreamParams, limits: ModelInputLimits): void {
-    if (params.tools?.some(tool => tool.type !== 'function') || params.maxOutputTokens !== limits.maxOutputTokens) {
-        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The model request uses unsupported tools or output settings.');
+    if (params.maxOutputTokens !== limits.maxOutputTokens) {
+        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The model request uses unsupported output settings.');
     }
-    if (params.prompt.some(message => typeof message.content !== 'string' &&
-        message.content.some(part => part.type === 'file' || (part.type === 'tool-result' &&
-            part.output.type === 'content' && part.output.value.some(item => item.type !== 'text'))))) {
+    if (hasUnmeasurableParts(params.prompt)) {
         throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs, including media in tool history.');
     }
 }
@@ -118,17 +127,20 @@ export class LLMClient {
         return this.providerToolPolicy ??= createProviderToolSchemaPolicy(this.config);
     }
 
-    private async prepareInput(messages: ModelMessage[], tools: Record<string, Tool>, budget: ModelInputLimits | undefined, preserveTools: boolean) {
+    private async prepareInput(messages: ModelMessage[], tools: Record<string, Tool>, budget: ModelInputLimits | undefined,
+        preserveTools: boolean): ReturnType<typeof prepareOpenAIResponsesInput> {
         const capabilities = budget?.capabilities ?? this.config.modelCapabilities;
         messages = this.applyInputCapabilityGuard(messages, capabilities);
-        if (budget && messages.some(message => Array.isArray(message.content) &&
-            message.content.some(part => part.type === 'file' || part.type === 'image'))) {
-            throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs. Remove the attachment to continue.');
+        if (budget && hasUnmeasurableParts(messages)) {
+            throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs, including media in tool history.');
         }
+        const anthropic = this.config.provider.id === 'anthropic';
+        if (anthropic) tools = includeAnthropicHistoryTools(messages, tools);
+        else messages = withoutAnthropicSearchHistory(messages);
         if (capabilities?.toolCall === false && Object.keys(tools).length > 0) {
             if (preserveTools) throw new ProviderToolSchemaError((await this.toolSchemaPolicy()).label,
                 'required tools', '$', 'The selected model does not support the tools required by this context.');
-            return { messages, tools: {} };
+            return { messages: anthropic ? withoutAnthropicSearchHistory(messages) : messages, tools: {} };
         }
         const policy = await this.toolSchemaPolicy();
         const definitions: [string, Tool][] = [];
@@ -141,7 +153,9 @@ export class LLMClient {
             if (issue) throw new ProviderToolSchemaError(policy.label, name, issue.path, issue.reason);
             definitions.push([name, { ...definition, ...(policy.strict === undefined ? {} : { strict: policy.strict }) }]);
         }
-        return { messages, tools: Object.fromEntries(definitions) };
+        const input = await prepareOpenAIResponsesInput(this.config, messages, Object.fromEntries(definitions));
+        const replay = anthropic ? prepareAnthropicSearchErrorReplay(input.messages) : undefined;
+        return replay ? { ...input, ...replay } : input;
     }
 
     /** Run the real Provider encoder with a local fetch that cannot send. */
@@ -156,7 +170,8 @@ export class LLMClient {
             const capture: typeof fetch = async (url, init) => {
                 try {
                     if (!params) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'No Provider input to count.');
-                    measurement = measureInput(budget, await encodedInput(url, init), params);
+                    const encoded = await encodedInput(url, init);
+                    measurement = measureInput(budget, input.rewriteRequestBody?.(encoded) ?? encoded, params);
                 } catch (error) { failure = error; }
                 throw new Error('Local model input measurement completed');
             };
@@ -168,7 +183,8 @@ export class LLMClient {
                     return doStream();
                 },
             } });
-            const trial = streamText({ model, ...input, maxOutputTokens: budget.maxOutputTokens,
+            const trial = streamText({ model, messages: input.messages, tools: input.tools, providerOptions: input.providerOptions,
+                maxOutputTokens: budget.maxOutputTokens,
                 temperature: this.config.temperature ?? 0.7, maxRetries: 0, onError: () => {} });
             try {
                 for await (const part of trial.fullStream) if (part.type === 'error') throw part.error;
@@ -213,8 +229,11 @@ export class LLMClient {
 
             const hasTools = Object.keys(effectiveTools).length > 0;
             const streamEnd = hasTools ? observeChatStreamEnd() : undefined;
+            const recordSearchHistory = this.config.provider.id === 'anthropic' && Object.values(effectiveTools).some(isAnthropicSearchTool);
+            const wireAdmission = !!(budget || input.rewriteRequestBody);
             let admitted: Promise<void> | undefined;
             let paramsForFetch: StreamParams | undefined;
+            let requestTools: StreamParams['tools'];
             const admit = (input: string, output: number | undefined) => {
                 if (!callbacks?.beforeRequest) return;
                 const signature = createHash('sha256')
@@ -224,25 +243,30 @@ export class LLMClient {
             };
             const guard = (send: typeof fetch): typeof fetch => async (url, init) => {
                 try {
-                    if (!budget || !paramsForFetch) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'No Provider input to count.');
-                    const body = await encodedInput(url, init);
-                    const cost = measureInput(budget, body, paramsForFetch);
-                    if (cost.estimated > cost.inputLimit) throw inputBudgetExceeded(cost);
+                    if (!paramsForFetch) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'No encoded Provider input to adopt.');
+                    const encoded = await encodedInput(url, init);
+                    const body = input.rewriteRequestBody?.(encoded) ?? encoded;
+                    if (budget) {
+                        const cost = measureInput(budget, body, paramsForFetch);
+                        if (cost.estimated > cost.inputLimit) throw inputBudgetExceeded(cost);
+                    }
                     await admit(body, paramsForFetch.maxOutputTokens);
+                    if (body !== encoded) init = { ...init, body };
                 } catch (error) { requestFailure = error; throw error; }
                 return send(url, init);
             };
-            const provider = this.createProvider(budget ? guard(streamEnd?.fetch ?? globalThis.fetch) : streamEnd?.fetch,
-                budget ? guard(globalThis.fetch) : undefined);
-            const model = budget || callbacks?.beforeRequest ? wrapLanguageModel({ model: provider, middleware: {
+            const provider = this.createProvider(wireAdmission ? guard(streamEnd?.fetch ?? globalThis.fetch) : streamEnd?.fetch,
+                wireAdmission ? guard(globalThis.fetch) : undefined);
+            const model = wireAdmission || callbacks?.beforeRequest || recordSearchHistory ? wrapLanguageModel({ model: provider, middleware: {
                 specificationVersion: 'v3',
                 wrapStream: async ({ params, doStream }) => {
                     try {
-                        if (budget) {
-                            verifyMeasurable(params, budget);
-                            paramsForFetch = params;
-                        } else if (callbacks?.beforeRequest) await admit(
-                            JSON.stringify({ messages: params.prompt, tools: params.tools ?? [], toolChoice: params.toolChoice }), params.maxOutputTokens);
+                        if (recordSearchHistory) requestTools = params.tools;
+                        if (budget) verifyMeasurable(params, budget);
+                        if (wireAdmission) paramsForFetch = params;
+                        else if (callbacks?.beforeRequest) await admit(
+                            JSON.stringify({ messages: params.prompt, tools: params.tools ?? [], toolChoice: params.toolChoice,
+                                providerOptions: params.providerOptions }), params.maxOutputTokens);
                     } catch (error) {
                         requestFailure = error;
                         throw error;
@@ -252,6 +276,7 @@ export class LLMClient {
             } }) : provider;
 
             let streamRaw: RawUsage | undefined;
+            const searchErrors = new Map<string, AnthropicSearchError>();
             // Select the actual adapter: OpenAI with a compatible URL uses Chat, while xAI uses Responses.
             const usageFormat: UsageFrameFormat | undefined = provider instanceof OpenAICompatibleChatLanguageModel ? 'chat'
                 : provider.provider === 'openai.responses' ? 'responses'
@@ -261,84 +286,43 @@ export class LLMClient {
                 model,
                 messages,
                 tools: effectiveTools,
+                providerOptions: input.providerOptions,
                 maxOutputTokens: budget?.maxOutputTokens,
                 temperature: this.config.temperature ?? 0.7,
-                includeRawChunks: usageFormat !== undefined,
+                includeRawChunks: recordSearchHistory || usageFormat !== undefined,
                 onError: ({ error }) => { requestFailure ??= error; },
-                onChunk: usageFormat ? ({ chunk }) => {
-                    if (chunk.type === 'raw') streamRaw = readUsageFrame(chunk.rawValue, usageFormat) ?? streamRaw;
+                onChunk: recordSearchHistory || usageFormat ? ({ chunk }) => {
+                    if (chunk.type !== 'raw') return;
+                    if (recordSearchHistory) captureAnthropicSearchError(chunk.rawValue, searchErrors);
+                    if (usageFormat) streamRaw = readUsageFrame(chunk.rawValue, usageFormat) ?? streamRaw;
                 } : undefined,
             });
 
-            let text: string;
-            let reasoningParts: Array<{ type: 'reasoning'; text: string }> = [];
-
-            const isStreaming = !!(callbacks?.onTextDelta || callbacks?.onReasoningDelta);
-
-            if (isStreaming) {
-                // ═══════════════════════════════════════════════
-                //  流式模式: 通过 fullStream 实时消费所有部分
-                //
-                //  关键: 不能在消费 textStream 之前 await result.reasoning,
-                //  因为 AI SDK 的 Promise 属性会先内部消费整个 stream 再 resolve,
-                //  导致 textStream 被提前耗尽，streaming delta 永远不会触发。
-                //  使用 fullStream 同时获取 reasoning + text delta，一次完成。
-                // ═══════════════════════════════════════════════
-                text = '';
-                let reasoningAccum = '';
+            let text = '';
+            if (callbacks?.onTextDelta || callbacks?.onReasoningDelta) {
                 for await (const part of result.fullStream) {
                     switch (part.type) {
                         case 'error': throw part.error;
                         case 'text-delta':
-                            text += (part as any).text ?? '';
-                            if ((part as any).text) callbacks.onTextDelta?.((part as any).text);
+                            text += part.text;
+                            if (part.text) callbacks.onTextDelta?.(part.text);
                             break;
                         case 'reasoning-delta':
-                            reasoningAccum += (part as any).text ?? '';
-                            if ((part as any).text) callbacks.onReasoningDelta?.((part as any).text);
+                            if (part.text) callbacks.onReasoningDelta?.(part.text);
                             break;
-                        // tool-call, finish 等由 await result.toolCalls 后续处理
                     }
-                }
-                if (reasoningAccum) {
-                    reasoningParts = [{ type: 'reasoning', text: reasoningAccum }];
                 }
             } else {
-                // ═══════════════════════════════════════════════
-                //  非流式模式: 先提取 reasoning，再等待完整文本
-                // ═══════════════════════════════════════════════
-                let reasoningText: string | undefined;
-                try {
-                    const reasoningValue = (result as any).reasoning;
-                    if (reasoningValue) {
-                        const resolvedReasoning = typeof reasoningValue === 'string'
-                            ? reasoningValue
-                            : await reasoningValue;
-                        if (Array.isArray(resolvedReasoning)) {
-                            reasoningParts = resolvedReasoning
-                                .filter((part: any) => part && typeof part === 'object' && part.type === 'reasoning')
-                                .map((part: any) => ({ type: 'reasoning' as const, text: String(part.text ?? '') }));
-                        } else {
-                            reasoningText = String(resolvedReasoning);
-                        }
-                    }
-                } catch (error) {
-                    this.logger.debug('Failed to read reasoning from LLM result', error instanceof Error ? error.message : String(error));
-                }
-                if (reasoningParts.length === 0 && reasoningText && reasoningText.trim().length > 0) {
-                    reasoningParts = [{ type: 'reasoning', text: reasoningText }];
-                }
                 text = await result.text;
             }
 
             if (requestFailure !== undefined) throw requestFailure;
 
-            // stream 已被完整消费，以下 Promise 均已 resolve
-            const toolCalls = (await result.toolCalls).map((tc) => ({
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                args: (tc as any).args ?? (tc as any).input,
-            }));
+            const { messages: history } = await result.response;
+            const toolMessages = history.filter(message => message.role === 'tool');
+            const completed = new Set(toolMessages.flatMap(getToolResultIds));
+            const toolCalls = (await result.toolCalls).filter(call => call.providerExecuted !== true && !completed.has(call.toolCallId))
+                .map(call => ({ toolCallId: call.toolCallId, toolName: call.toolName, args: call.input }));
             const finishReason = await result.finishReason;
             if (toolCalls.length > 0 && streamEnd?.missingDone() &&
                 finishReason === 'other' && (await result.rawFinishReason) === undefined) {
@@ -346,43 +330,13 @@ export class LLMClient {
             }
             const usage = reportedUsage(await result.usage, streamRaw);
 
-            const hasText = typeof text === 'string' && text.trim().length > 0;
-            const hasToolCalls = toolCalls.length > 0;
-            let assistantMessage: ModelMessage | undefined;
-
-            if (hasToolCalls || hasText) {
-                const reasoningPart = reasoningParts;
-
-                if (hasToolCalls) {
-                    const contentParts = [
-                        ...reasoningPart,
-                        ...(hasText ? [{ type: 'text', text }] : []),
-                        ...toolCalls.map((tc) => ({
-                            type: 'tool-call' as const,
-                            toolCallId: tc.toolCallId,
-                            toolName: tc.toolName,
-                            input: tc.args,
-                        })),
-                    ];
-
-                    assistantMessage = {
-                        role: 'assistant',
-                        content: contentParts,
-                    } as ModelMessage;
-                } else if (reasoningPart.length > 0) {
-                    assistantMessage = {
-                        role: 'assistant',
-                        content: [
-                            ...reasoningPart,
-                            ...(hasText ? [{ type: 'text', text }] : []),
-                        ],
-                    } as ModelMessage;
-                } else {
-                    assistantMessage = {
-                        role: 'assistant',
-                        content: text,
-                    } as ModelMessage;
-                }
+            let assistantMessage = history.find(message => message.role === 'assistant');
+            if (assistantMessage && requestTools) assistantMessage = recordAnthropicSearchTools(assistantMessage, requestTools, searchErrors);
+            assistantMessage = recordOpenAIResponsesToolLoad(assistantMessage, input.openaiToolLoad);
+            if (assistantMessage && Array.isArray(assistantMessage.content) && assistantMessage.content.length === 1) {
+                const [onlyPart] = assistantMessage.content;
+                if (onlyPart?.type === 'text' && !onlyPart.providerOptions)
+                    assistantMessage = onlyPart.text.trim() ? { ...assistantMessage, content: onlyPart.text } : undefined;
             }
 
             const response: LLMResponse = {
@@ -391,6 +345,7 @@ export class LLMClient {
                 finishReason: finishReason || 'unknown',
                 ...(usage && { usage }),
                 assistantMessage,
+                ...(toolMessages.length && { toolMessages }),
             };
 
             this.logger.info('LLM call completed', {
