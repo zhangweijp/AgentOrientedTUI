@@ -29,7 +29,7 @@ describe('DesktopManager', () => {
         const manager = new DesktopManager({ kernel: mockKernel, appCatalog: mockCatalog });
         const desktop = await manager.createDesktop('dt_test', { projectPath: '/test/workspace', AOTUI_DATA_DIR: '/fixture/state' });
         expect(mockKernel.createDesktop).toHaveBeenCalledWith('dt_test');
-        expect(desktop.thirdPartyAppCount).toBe(1);
+        expect(desktop.listApps().length).toBe(1);
         expect(mockCatalog.installAll).toHaveBeenCalledWith(mockKernel.getDesktop(), {
             entries: undefined,
             dynamicConfig: { projectPath: '/test/workspace', AOTUI_DATA_DIR: '/fixture/state' },

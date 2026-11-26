@@ -66,7 +66,7 @@ async function stageReadmeExample(root, language, name) {
   const target = root === sdkRoot ? path.join('readme-src', name) : name;
   if (root === sdkRoot) {
     await fs.mkdir(path.join(output, 'readme-src'), { recursive: true });
-    await fs.writeFile(path.join(output, 'package.json'), JSON.stringify({ type: 'module', aotui: { app_name: 'counter' } }));
+    await fs.writeFile(path.join(output, 'package.json'), JSON.stringify({ type: 'module' }));
   }
   await fs.writeFile(path.join(output, target), source + '\n');
   return target;
@@ -193,23 +193,24 @@ if (!plain) {
   await fs.cp(realCore, path.join(sdkCopy, 'node_modules/@aotui/core'), { recursive: true });
   await fs.cp(path.dirname(acorn), path.join(sdkCopy, 'node_modules/acorn'), { recursive: true });
   await stageFixtures(sdkFixtures, ['file-app.ts', 'file-tools.ts', 'ref-app.ts', 'source-host.mjs', 'assembly-consumer.mjs',
-    'sdk-copies.ts', 'ref-prompt-app.ts', 'ref-prompt-consumer.mjs', 'scripted-provider-turn.mjs', 'readme-counter.ts']);
+    'sdk-copies.ts', 'ref-prompt-app.ts', 'ref-prompt-consumer.mjs', 'scripted-provider-turn.mjs']);
   await stageFixtures(runtimeFixtures, ['managed-host.ts', 'managed-host-app.mjs']);
   await stageReadmeExample(runtimeRoot, 'js', 'readme-host.mjs');
   await compile('full', { lib: ['ES2022'], types: ['node'], outDir: './full-out' },
-    ['readme-counter.ts', 'file-app.ts', 'ref-app.ts', 'ref-prompt-app.ts', 'sdk-copies.ts', 'managed-host.ts']);
-  const readmeApp = path.join(output, 'readme-counter');
-  await fs.mkdir(path.join(readmeApp, 'dist'), { recursive: true });
-  await fs.copyFile(path.join(output, 'full-out/readme-counter.js'), path.join(readmeApp, 'dist/app.js'));
-  await fs.writeFile(path.join(readmeApp, 'package.json'), JSON.stringify({ name: 'aotui-readme-counter',
-    version: '0.1.0', type: 'module', main: './dist/app.js', aotui: { app_name: 'counter' } }));
+    ['file-app.ts', 'ref-app.ts', 'ref-prompt-app.ts', 'sdk-copies.ts', 'managed-host.ts']);
+  const readmeSource = await stageReadmeExample(sdkRoot, 'ts', 'app.ts');
+  await compile('readme-notes', { lib: ['ES2022'], types: [], rootDir: './readme-src', outDir: './readme-notes/dist' }, [readmeSource]);
+  const readmeApp = path.join(output, 'readme-notes');
+  await fs.writeFile(path.join(readmeApp, 'package.json'), JSON.stringify({ name: 'aotui-readme-notes',
+    version: '0.1.0', type: 'module', main: './dist/app.js', aotui: { app_name: 'notes' } }));
   await checked('readme-manifest', [readmeApp], path.join(consumer, 'node_modules/.bin/generate-aoapp'));
   const readme = await checked('readme-execution', [path.join(output, 'readme-host.mjs'), readmeApp]);
-  const counter = lastJson(readme);
-  assert.match(counter.before, /\bCount 0\b/);
-  assert.match(counter.after, /\bCount 1\b/);
-  assert.equal(counter.receipt.outcome.status, 'succeeded');
-  facts.readmeCounter = counter;
+  const note = lastJson(readme);
+  assert.deepEqual([note.before, note.after], ['Draft', 'Reviewed']);
+  assert.equal(note.receipt.invocationId, 'edit-1');
+  assert.equal(note.receipt.outcome.status, 'succeeded');
+  assert.equal(note.resourcesReleased, true);
+  facts.readmeNote = note;
 }
 
 facts.workerApps = lastJson(await checked('worker-execution', ['--experimental-import-meta-resolve', path.join(output, 'worker-app-contracts.mjs'), profile]));

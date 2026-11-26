@@ -42,7 +42,7 @@ const factory = {
         const desktop = await runtime.createDesktop(id);
         await installConsoleFixtures(desktop, resolve(consumer), folder);
         await desktop.openApp(TASKS);
-        return { desktop, thirdPartyAppCount: 2 };
+        return desktop;
     },
     async getAppsConfig() { return { [TASKS]: {} }; },
 } as DesktopManager;
@@ -81,7 +81,7 @@ async function ask(label: string) {
 
 try {
     await db.initDatabase();
-    await host.initAgentDriver(runtime, factory);
+    await host.initAgentDriver(factory);
     const now = Date.now();
     if (!im) db.createTopic({ id, agentId: agent.id, title: id, status: 'hot', createdAt: now, updatedAt: now });
     await open();

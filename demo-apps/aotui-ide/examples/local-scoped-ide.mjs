@@ -135,7 +135,8 @@ if (values.help) {
                             case 'invoke': {
                                 if (!active) throw new Error('Adopt an observation before invoking a Tool.');
                                 value = await active.turn.invoke(client.appId, { invocationId: command.invocationId ?? randomUUID(),
-                                    observationId: command.observationId, toolId: command.toolId, input: command.input });
+                                    observationId: command.observationId, toolId: command.toolId,
+                                    ...(command.viewId === undefined ? {} : { viewId: command.viewId }), input: command.input });
                                 break;
                             }
                             case 'release': release(command.observationId); value = { released: true }; break;

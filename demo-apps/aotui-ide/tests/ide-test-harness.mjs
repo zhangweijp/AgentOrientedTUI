@@ -10,7 +10,7 @@ const facts = { profile: 'scoped-ide-view-type-parameters-v1', startedAt: new Da
 const working = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-full-ide-')));
 const consumer = process.env.AOTUI_IDE_CONSUMER ?? path.join(working, 'consumer'), modules = path.join(consumer, 'node_modules');
 const apps = [];
-let Host, createTurnCoordinator, entry, sequence = 0;
+let Host, connectNodeWorker, createTurnCoordinator, defaultProjectionLimits, entry, sequence = 0;
 async function setup() {
     if (!process.env.AOTUI_IDE_CONSUMER) {
     await fs.mkdir(path.join(modules, '@aotui'), { recursive: true });
@@ -32,6 +32,8 @@ async function setup() {
     }
     }
     Host = (await import(pathToFileURL(path.join(modules, '@aotui/runtime/dist/engine/app/worker-host.js')))).AppWorkerHost;
+    ({ connectNodeWorker } = await import(pathToFileURL(path.join(modules, '@aotui/runtime/dist/adapters/node-worker-transport.js'))));
+    ({ DEFAULT_PROJECTION_LIMITS: defaultProjectionLimits } = await import(pathToFileURL(path.join(modules, '@aotui/core/dist/index.js'))));
     const idePackage = path.join(modules, '@agentina/aotui-ide');
     const ideManifest = JSON.parse(await fs.readFile(path.join(idePackage, 'package.json'), 'utf8'));
     const packageMain = ideManifest.main;
@@ -83,16 +85,17 @@ async function start(root, id, options = {}) {
     worker.stderr?.on('data', buffer => { logs.push(String(buffer)); if (logs.length > 30) logs.shift(); });
     worker.on('message', message => { if (message.type !== 'SNAPSHOT_PREPARED') messages.push(message.type); });
     const appId = id.replaceAll('-', '_');
-    const host = new Host({ appId, desktopId: 'test', appModulePath: entry, existingWorker: worker,
-        timeout: 45000,
+    const host = new Host({ appId, desktopId: 'test', appModulePath: entry, toolsEnabled: true, projectionLimits: defaultProjectionLimits,
+        runtimeConfig: { worker: { timeoutMs: 45000, maxWorkers: 1 } },
         config: { projectPath: root, ideSessionKey: options.sessionKey ?? id,
             ideHistoryPath: options.historyPath ?? path.join(working, 'history', id + '.json'),
             enableDiagnosticsRead: options.slices !== false, enableWorkspaceCreate: options.slices !== false, AOTUI_DATA_DIR: data },
     });
+    host.startExecution = emit => connectNodeWorker(worker, emit);
     const x = { id: appId, host, worker, logs, messages, data, turns: createTurnCoordinator(), closed: false }; apps.push(x);
     await host.start(); await host.open();
     try { await eventuallyProjected(x, () => toolNames(x).includes('multi_open_file'), id + ' ready'); }
-    catch (error) { console.error('APP DEBUG', logs, host.getSemanticSnapshotReport()); throw error; }
+    catch (error) { console.error('APP DEBUG', logs, await host.preview()); throw error; }
     return x;
 }
 function scope(x) {

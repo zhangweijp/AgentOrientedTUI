@@ -1,4 +1,4 @@
-import type { FetchDocument, FetchFormat, FetchAttachment } from '../types.js';
+import type { FetchDocument, FetchFormat } from '../types.js';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -25,33 +25,31 @@ const stripHtml = (html: string): string => {
     return withoutTags.replace(/\s+/g, ' ').trim();
 };
 
-const decodeToText = async (response: Response): Promise<string> => {
-    const text = await response.text();
-    if (text.length * 2 > MAX_BYTES) {
+async function readBody(response: Response, decodeText: boolean): Promise<string> {
+    const reader = response.body?.getReader();
+    if (!reader) return '';
+    const decoder = decodeText ? new TextDecoder() : undefined;
+    let size = 0;
+    let text = '';
+    try {
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (value) size += value.byteLength;
+            if (size > MAX_BYTES) break;
+            if (decoder) {
+                text += done ? decoder.decode() : decoder.decode(value, { stream: true });
+                if (text.length * 2 > MAX_BYTES) break;
+            }
+            if (done) return text;
+        }
         throw new Error('Response size exceeds 5MB limit');
+    } catch (error) {
+        void reader.cancel().catch(() => {});
+        throw error;
+    } finally {
+        reader.releaseLock();
     }
-    return text;
-};
-
-const decodeToBase64 = async (response: Response): Promise<string> => {
-    const arrayBuffer = await response.arrayBuffer();
-    if (arrayBuffer.byteLength > MAX_BYTES) {
-        throw new Error('Response size exceeds 5MB limit');
-    }
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (const byte of bytes) {
-        binary += String.fromCharCode(byte);
-    }
-    if (typeof btoa === 'function') {
-        return btoa(binary);
-    }
-    const buffer = (globalThis as { Buffer?: { from: (data: Uint8Array) => { toString: (enc: string) => string } } }).Buffer;
-    if (buffer) {
-        return buffer.from(bytes).toString('base64');
-    }
-    throw new Error('Base64 encoder not available in runtime');
-};
+}
 
 const normalizeContentType = (value: string | null): string => value?.split(';')[0]?.trim() ?? '';
 
@@ -89,62 +87,16 @@ export const runWebFetch = async (params: {
         }
 
         if (!finalResponse.ok) {
-            const errorText = await finalResponse.text();
+            const errorText = await readBody(finalResponse, true);
             throw new Error(`Fetch failed: ${finalResponse.status} ${errorText}`);
         }
 
         const contentType = normalizeContentType(finalResponse.headers.get('content-type'));
-        const title = `${params.url} (${contentType || 'unknown'})`;
-
-        if (contentType.startsWith('image/') && !contentType.includes('svg')) {
-            const base64 = await decodeToBase64(finalResponse);
-            const attachment: FetchAttachment = {
-                name: 'image',
-                mimeType: contentType,
-                data: `data:${contentType};base64,${base64}`
-            };
-            return {
-                url: params.url,
-                title,
-                contentType,
-                format,
-                content: 'Image fetched successfully',
-                attachments: [attachment],
-                fetchedAt: Date.now()
-            };
-        }
-
-        const bodyText = await decodeToText(finalResponse);
-        if (format === 'html') {
-            return {
-                url: params.url,
-                title,
-                contentType,
-                format,
-                content: bodyText,
-                fetchedAt: Date.now()
-            };
-        }
-
-        const textContent = contentType.includes('html') ? stripHtml(bodyText) : bodyText;
-        if (format === 'markdown') {
-            return {
-                url: params.url,
-                title,
-                contentType,
-                format,
-                content: textContent,
-                fetchedAt: Date.now()
-            };
-        }
-        return {
-            url: params.url,
-            title,
-            contentType,
-            format,
-            content: textContent,
-            fetchedAt: Date.now()
-        };
+        const isImage = contentType.startsWith('image/') && !contentType.includes('svg');
+        const body = await readBody(finalResponse, !isImage);
+        const content = isImage ? 'Image fetched successfully'
+            : format !== 'html' && contentType.includes('html') ? stripHtml(body) : body;
+        return { url: params.url, contentType, format, content };
     } finally {
         clearTimeout(timeoutId);
     }

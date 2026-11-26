@@ -45,7 +45,7 @@ const desktops = {
         const desktop = runtime.getDesktop(desktopId);
         await desktop.registerPendingApp({ installationId: 'files_install', localPath: await fixtureAppPath(moduleURL, APP, path), config: { folder: path, staticB: true } });
         await desktop.openApp('files_install');
-        return { desktop, thirdPartyAppCount: 1 };
+        return desktop;
     },
     async getAppsConfig() { return { files_install: {} }; },
 } as DesktopManager;
@@ -100,7 +100,7 @@ try {
     assert.deepEqual((await journal(paths.get(topicId)!, 'writes')).map(entry => entry.name), ['B']);
     facts.topic = { savedToolMessage: topicWrite, recovered: restored, writes: await journal(paths.get(topicId)!, 'writes') };
 
-    await host.initAgentDriver(runtime, desktops);
+    await host.initAgentDriver(desktops);
     const imDelivered: NonNullable<GuiUpdateEvent['message']>[] = [];
     const imSession = () => host['imSessionManager']?.getSession(key);
     const unsubscribe = host.onGuiUpdate(event => {

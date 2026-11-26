@@ -36,7 +36,7 @@ const setup = {
         const desktop = runtime.getDesktop(desktopId);
         await installFixture(desktop, 'contacts', 'contacts_install', appModule('contacts'), scratch);
         await installFixture(desktop, 'mail', 'mail_install', appModule('mail'), scratch);
-        return { desktop, thirdPartyAppCount: 2 };
+        return desktop;
     },
 } as DesktopManager;
 const llm: LLMConfig = { model: 'batch-two-topic-fixture', apiKey: 'test-only',

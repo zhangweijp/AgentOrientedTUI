@@ -43,7 +43,7 @@ const adoptedObservations = new Map<DesktopID, ReadonlyMap<string, string>>();
 const restoreAdoptions: Array<() => void> = [];
 const desktops = {
     async createDesktop(id: DesktopID) {
-        if (id === nativeTopicId) return { desktop: await runtime.createDesktop(id), thirdPartyAppCount: 0 };
+        if (id === nativeTopicId) return runtime.createDesktop(id);
         const folder = join(project, 'files-' + paths.size);
         paths.set(id, folder);
         await setupFiles(folder);
@@ -59,7 +59,7 @@ const desktops = {
         restoreAdoptions.push(() => recordAdoption.mock.restore());
         await desktop.registerPendingApp({ installationId: 'files_install', localPath: await fixtureAppPath(moduleURL, APP, folder), config: { folder } });
         await desktop.openApp('files_install');
-        return { desktop, thirdPartyAppCount: 1 };
+        return desktop;
     },
     async getAppsConfig() { return { files_install: {} }; },
 } as unknown as DesktopManager;
@@ -143,7 +143,7 @@ try {
     db.createTopic({ id: topicId, agentId: 'usage', title: 'Usage fixture', createdAt: time, updatedAt: time, status: 'hot',
         sourceControls: { apps: { enabled: true, disabledItems: [] }, skill: { enabled: false, disabledItems: [] },
             mcp: { enabled: false, disabledItems: [], allowedServers: [] } } });
-    await host.initAgentDriver(runtime, desktops);
+    await host.initAgentDriver(desktops);
     await im.start();
     assert.equal(im.getRuntime().channels.find(channel => channel.id === 'local')?.active, true);
     await host.ensureSessionForTopic(topicId);

@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
@@ -66,11 +67,11 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 outfile: appFile, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
             });
-            host = new AppWorkerHost({
+            host = fixtureHost(AppWorkerHost, {
                 appId: 'result_app' as any, desktopId: 'result_desktop' as any,
-                appModulePath: appFile, workerScriptPath: workerFile,
+                appModulePath: appFile,
                 config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
-            });
+            }, { script: workerFile });
             await host.start();
             await host.open();
 

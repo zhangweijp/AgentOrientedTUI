@@ -1,15 +1,9 @@
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import type { ExecutionConnection, TransportEvents } from './execution-transport.js';
 import type { WorkerToMainMessage } from '../spi/worker-protocol/index.js';
 
-const claimedWorkers = new WeakSet<Worker>();
-
 export function connectNodeWorker(worker: Worker, emit: TransportEvents): ExecutionConnection {
-    if (claimedWorkers.has(worker))
-        throw Object.assign(new Error('Create a new Worker for each App execution'), { code: 'APP_INSTANCE_REUSE_UNSUPPORTED' });
-    claimedWorkers.add(worker);
     let exited = false;
     const message = (message: WorkerToMainMessage) => { if (!exited) emit({ kind: 'message', message }); };
     const error = (error: Error) => { if (!exited) emit({ kind: 'error', error }); };
@@ -33,8 +27,7 @@ export function connectNodeWorker(worker: Worker, emit: TransportEvents): Execut
     } };
 }
 
-export function startNodeWorker(script: string | undefined,
-    workerData: { appId: string; desktopId: string; appModulePath: string }, emit: TransportEvents): ExecutionConnection {
-    const filename = script === undefined ? fileURLToPath(new URL('../worker-runtime/index.js', import.meta.url)) : resolve(script);
-    return connectNodeWorker(new Worker(filename, { workerData }), emit);
+export function startNodeWorker(emit: TransportEvents): ExecutionConnection {
+    const filename = fileURLToPath(new URL('../worker-runtime/index.js', import.meta.url));
+    return connectNodeWorker(new Worker(filename), emit);
 }

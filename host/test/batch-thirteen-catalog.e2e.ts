@@ -76,8 +76,9 @@ async function runLocalApp() {
     child.stderr.setEncoding('utf8').on('data', chunk => { errors += chunk; });
     try {
         await watchUntil(() => output.includes('Runtime ready.'));
-        child.stdin.write('snapshot\n');
-        await watchUntil(() => output.includes('Draft: empty'));
+        child.stdin.write('snapshot\n'.repeat(20));
+        await watchUntil(() => (output.match(/Draft: empty/g) ?? []).length === 20);
+        assert.equal((output.match(/<view /g) ?? []).length, 20);
         child.stdin.end('exit\n');
         assert.deepEqual(await close, [0, null], errors);
         return { output, errors };
@@ -153,7 +154,7 @@ try {
     await fs.writeFile(configPath, jsonc(initial));
     await db.initDatabase();
     await desktops.initialize();
-    await host.initAgentDriver(runtime, desktops);
+    await host.initAgentDriver(desktops);
     assert.equal((await Config.getTuiConfig()).modelInputLimits?.[limitKey].contextWindow, 32_000);
     const discovered = JSON.parse((await cli(['list', '--json'])).stdout);
     assert.deepEqual(discovered.map(item => [item.name, item.status]), [

@@ -1,3 +1,4 @@
+import { committedSnapshot, committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { build } from 'esbuild';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
@@ -55,26 +56,15 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
             });
 
-            host = new AppWorkerHost({
+            host = fixtureHost(AppWorkerHost, {
                 appId: 'm4_app' as any, desktopId: 'desktop_m4' as any,
-                appModulePath: appScript, workerScriptPath: workerScript,
-            });
+                appModulePath: appScript,
+            }, { script: workerScript });
             await host.start();
             await host.open();
-            await vi.waitFor(() => {
-                expect(host!.getSemanticSnapshotReport()).toMatchObject({
-                    health: 'ready', lastViewCount: 2, lastToolCount: 1,
-                });
-            }, { timeout: 3_000 });
-
-            const readSnapshot = (current: AppWorkerHost) => {
-                const report = current.getSemanticSnapshotReport();
-                if (!report?.snapshotId) throw new Error('Expected a Semantic snapshot');
-                const result = (current as any).snapshotReceiver.core.store.getById(report.snapshotId);
-                if (result.status !== 'found') throw new Error('Expected a retained Semantic snapshot');
-                return result.snapshot;
-            };
-            const first = readSnapshot(host);
+            expect(committedSnapshot(host).views).toHaveLength(2);
+            expect(Object.keys(committedSnapshot(host).tools)).toHaveLength(1);
+            const first = committedSnapshot(host);
             const firstMarkup = first.views.map((view: any) => view.content.value).join('\n');
             expect(firstMarkup).toContain('App.tsx');
             expect(firstMarkup).toContain('package.json');
@@ -96,28 +86,27 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
             await expect(host.open()).rejects.toThrow(/shutdown is pending/);
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(posted).not.toHaveBeenCalled();
-            expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'stopped' });
-            expect(host.getSemanticSnapshotReport()?.snapshotId).toBeUndefined();
+            expect(committedState(host)).toEqual({ status: 'stopped' });
 
             const oldExecution = host.appInstanceId;
             expect(physical.threadId).toBe(-1);
             posted.mockRestore();
-            host = new AppWorkerHost({
+            host = fixtureHost(AppWorkerHost, {
                 appId: 'm4_app' as any, desktopId: 'desktop_m4' as any,
-                appModulePath: appScript, workerScriptPath: workerScript,
-            });
+                appModulePath: appScript,
+            }, { script: workerScript });
             expect(host.appInstanceId).not.toBe(oldExecution);
             await host.start();
             await host.open();
             await vi.waitFor(() => {
-                const current = readSnapshot(host!);
+                const current = committedSnapshot(host!);
                 expect(current.views).toHaveLength(2);
                 for (const view of current.views) {
                     expect(view.viewInstanceId).toContain(host!.appInstanceId);
                     expect(view.viewInstanceId).not.toContain(oldExecution);
                 }
             }, { timeout: 3_000 });
-            const current = readSnapshot(host);
+            const current = committedSnapshot(host);
             for (const view of current.views) {
                 expect(view.viewInstanceId).not.toBe(firstViewsById.get(view.id).viewInstanceId);
                 expect(view.content.value).not.toContain(view.viewInstanceId);

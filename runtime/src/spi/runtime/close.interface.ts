@@ -18,7 +18,6 @@ export interface CloseReport {
     readonly pendingTasks: number;
     readonly unverifiedParticipants: number;
     readonly appCleanup?: { readonly managedApps: number; readonly completedApps: number; readonly failedApps: number };
-    readonly resources: { readonly retainedOwners: number; readonly pendingOperations: number };
     readonly workers: { readonly ownership: 'owned' | 'not-owned'; readonly report: null | {
         readonly state: 'open' | 'closing' | 'closed'; readonly limit: number; readonly total: number;
     } };

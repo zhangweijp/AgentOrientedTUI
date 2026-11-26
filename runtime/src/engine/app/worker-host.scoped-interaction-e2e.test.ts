@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
 import { Worker } from 'node:worker_threads';
@@ -32,9 +33,9 @@ async function start() {
     const post = worker.postMessage.bind(worker); worker.postMessage = (m: any) => { sent.push(m); post(m); };
     worker.stdout!.on('data', b => logs.push(String(b))); worker.stderr!.on('data', b => logs.push(String(b)));
     const authorization = policyProbe();
-    const host = new Host({ policy: authorization.policy, appId: 'scoped_sdk' as any, desktopId: 'd' as any, appModulePath: appFile, existingWorker: worker,
+    const host = fixtureHost(Host, { policy: authorization.policy, appId: 'scoped_sdk' as any, desktopId: 'd' as any, appModulePath: appFile,
         config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') },
-        timeout: 1500 });
+         }, { worker, timeoutMs: 1500 });
     worker.on('message', m => messages.push(m));
     const x = { authorization, host, worker, messages, sent, logs,
         snapshot: () => (host as any).snapshotReceiver.core.store.readLatest('scoped_sdk').snapshot,

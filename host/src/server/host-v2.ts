@@ -24,11 +24,7 @@ export async function createHostV2Core(modelRegistry: ModelRegistry): Promise<{
     const hostManager = new HostManagerV2('default_topic', modelRegistry);
     const llmConfigService = hostManager.getLLMConfigService();
 
-    // 5. 获取 Kernel (SessionManagerV3 will create Desktops on-demand)
-    const kernel = desktopManager.getKernel();
-    console.log('[HostV2] Kernel ready for Session-based Desktop creation');
-
-    await hostManager.initAgentDriver(kernel, desktopManager);
+    await hostManager.initAgentDriver(desktopManager);
 
     const imRuntimeBridge = new IMRuntimeBridge({
       hostManager,

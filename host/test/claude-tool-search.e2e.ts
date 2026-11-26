@@ -49,7 +49,7 @@ const desktops = {
                 observationIds.set(provider.requests.length, observation.observationId);
             return result;
         });
-        return { desktop, thirdPartyAppCount: 1 };
+        return desktop;
     },
     async getAppsConfig() { return { files_install: {} }; },
 } as DesktopManager;

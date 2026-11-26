@@ -48,7 +48,6 @@ export default createApp({
         let terminals: OpenTerminal[] = [];
         let candidate: OpenTerminal[] | undefined;
         let terminalCounter = 0;
-        let commandCounter = 0;
         const processes = new Map<string, RunningCommand>();
 
         const root = createView(RootType, { id: 'root', name: 'Root', render: () => ({ body: rootBody }) });
@@ -103,11 +102,11 @@ export default createApp({
             if ('error' in plan) return commandRejected(plan.error);
 
             const record: CommandRecord = {
-                id: 'cmd_' + commandCounter++, command, status: 'running', startedAt: new Date().toISOString(), outputLines: [],
+                command, status: 'running', outputLines: [],
             };
             if (plan.isCd) {
                 terminal.commands.push({
-                    ...record, status: 'success', finishedAt: new Date().toISOString(),
+                    ...record, status: 'success',
                     outputLines: ['Changed directory to ' + plan.cwd],
                 });
                 terminal.cwd = plan.cwd;
@@ -120,7 +119,6 @@ export default createApp({
             child.stdin.end();
             terminal.commands.push(record);
             terminal.status = 'running';
-            terminal.activeCommandId = record.id;
             const closed = new Promise<void>(resolve => child.once('close', resolve));
             const running = { child, closed, stopping: false };
             processes.set(id, running);
@@ -137,10 +135,8 @@ export default createApp({
                 processes.delete(id);
                 if (running.stopping || signal.aborted) return;
                 record.status = code === 0 ? 'success' : 'failed';
-                record.finishedAt = new Date().toISOString();
                 if (code !== null) record.exitCode = code;
                 terminal.status = 'idle';
-                terminal.activeCommandId = undefined;
                 publishCommand();
                 if (code !== 0) requestAttention();
             });
@@ -164,7 +160,7 @@ export default createApp({
             if ('error' in plan) return commandRejected(plan.error);
             const session: TerminalSession = {
                 id: 'Session ' + (terminalCounter + 1), cwd: projectPath, status: 'idle',
-                createdAt: new Date().toISOString(), commands: [], outputTail: DEFAULT_TAIL_LINES,
+                commands: [], outputTail: DEFAULT_TAIL_LINES,
             };
             const view = createView(TerminalType, {
                 idPrefix: 'terminal', name: session.id,

@@ -36,8 +36,9 @@ receiving mounts when needed. View messages show the selected Ref addresses.
 `system-inspect_ref` can read a visible declaration with `mode: "schema"` and
 an original public value with `mode: "value"`. Both Native calls and
 `tools[name](args)` in `run_code` use `$ref.app_id.view_id.ref_id` with an
-optional path. Use `$$ref.` for literal text beginning with `$ref.`. The
-Source uses the same observed mounts for the model schema and dispatch.
+optional path. For a literal argument or direct array element starting with
+one or more dollar signs followed by `ref.`, add one leading `$`. The Source
+uses the same observed mounts for the model schema and dispatch.
 Each business parameter is validated using the App's declaration after any
 reference is resolved. A program can use only the tools published at the
 start of its turn.

@@ -30,7 +30,6 @@ function makeDriver(source: ContextDrivenSource | ContextDrivenSource[], call: R
 }
 
 const response = (toolNames: string[] = []) => ({
-    text: '', finishReason: toolNames.length ? 'tool-calls' : 'stop',
     toolCalls: toolNames.map((toolName, i) => ({ toolName, toolCallId: `call-${i}`, args: {} })),
 });
 

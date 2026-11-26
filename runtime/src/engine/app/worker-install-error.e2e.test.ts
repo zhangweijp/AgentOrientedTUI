@@ -108,8 +108,7 @@ export default createApp({ app_name: 'diagnostics', viewTypes: [],
         } finally {
             const report = await f.sandbox!.beginClose().completion;
             expect(report).toMatchObject({ ok: true, resourcesReleased: true,
-                interactions: { retainedOperations: 0 },
-                resources: { retainedOwners: 0, pendingOperations: 0 } });
+                interactions: { retainedOperations: 0 } });
         }
     });
 });

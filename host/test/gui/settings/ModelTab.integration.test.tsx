@@ -67,7 +67,6 @@ const mockModels: ModelsDevModel[] = [
 // Mock hooks
 const mockUseProviderConfigs = {
     providers: mockProviders,
-    activeProviderId: 'openai',
     isLoading: false,
     error: null,
     addProvider: vi.fn().mockResolvedValue(undefined),
@@ -79,7 +78,6 @@ const mockUseProviderConfigs = {
 
 const mockUseModels = {
     models: mockModels,
-    activeModelId: 'openai/gpt-4',
     isLoading: false,
     error: null,
     refresh: vi.fn(),
@@ -125,11 +123,9 @@ describe('ModelTab - Integration Tests', () => {
         vi.clearAllMocks();
         // Reset mock data
         mockUseProviderConfigs.providers = mockProviders;
-        mockUseProviderConfigs.activeProviderId = 'openai';
         mockUseProviderConfigs.isLoading = false;
         mockUseProviderConfigs.error = null;
         mockUseModels.models = mockModels;
-        mockUseModels.activeModelId = 'openai/gpt-4';
         mockUseModels.isLoading = false;
         mockUseModels.error = null;
     });
@@ -564,7 +560,6 @@ describe('ModelTab - Integration Tests', () => {
 
         it('should not select model when no provider is selected', async () => {
             // Start with no selected provider
-            mockUseProviderConfigs.activeProviderId = null;
             mockUseModels.models = [];
 
             render(<ModelTab />);

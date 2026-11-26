@@ -19,6 +19,7 @@ it.each(['/synthetic/project', undefined])('passes the selected project path to 
         ? { id: 'project', path: projectPath, name: 'Project', createdAt: 1 } : null);
     const kernel = createRuntime();
     const desktopManager = new DesktopManager({ kernel });
+    await desktopManager.initialize({ appEntries: [] });
     const createDesktop = vi.spyOn(desktopManager, 'createDesktop');
     const llm = new LLMConfigService(new ModelRegistry());
     vi.spyOn(llm, 'resolveLLMConfig').mockResolvedValue({ model: 'synthetic', provider: { id: 'openai' } });
@@ -26,7 +27,7 @@ it.each(['/synthetic/project', undefined])('passes the selected project path to 
     try {
         await manager.ensureSession(desktopId);
         expect(createDesktop).toHaveBeenCalledExactlyOnceWith(desktopId,
-            projectPath ? { projectPath, workspace_dir_path: projectPath } : undefined);
+            projectPath ? { projectPath } : undefined);
     } finally {
         await manager.cleanup();
     }

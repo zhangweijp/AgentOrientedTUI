@@ -5,7 +5,7 @@ import {
 } from '@aotui/core';
 import { captureViewBindings, captureViewPlacement, captureViewTypes, requireViewType, viewTypeDefinitions, type ViewContextProps, type ViewNamingProps,
     type ViewRegionProps, type ViewType } from '../tools/view-type-tool.js';
-import { publishedValue, capturePublication, type PublishedRef } from './refs.js';
+import { capturePublication, type PublishedRef } from './refs.js';
 
 declare const viewHandle: unique symbol;
 export interface ViewHandle { readonly [viewHandle]: true }
@@ -107,7 +107,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 const refIds = new Set<string>();
                 const captured: AppProjectionFrame['views'][number]['refs'][number][] = [];
                 for (const item of refs) {
-                    const ref = publishedValue(label, capturePublication(capture, item));
+                    const ref = capturePublication(label, capture, item);
                     if (refIds.has(ref.id)) invalid(path + '.refs', 'Ref IDs must be unique within this View');
                     refIds.add(ref.id);
                     captured.push(ref);

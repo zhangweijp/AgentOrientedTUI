@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { ActiveTurn, AppInvocation } from '@aotui/core';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
@@ -86,9 +87,9 @@ async function start(options: any = {}) {
   worker.postMessage = (m: any) => { attempted.push(m); if (!hold?.(m)) { sent.push(m); post(m); } };
   worker.stdout?.on('data', (b: any) => logs.push(String(b))); worker.stderr?.on('data', (b: any) => logs.push(String(b)));
   const authorization = policyProbe();
-  const host = new Host({ policy: options.policy ?? authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile, existingWorker: worker,
-    timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS, toolsEnabled: options.toolsEnabled,
-    config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
+  const host = fixtureHost(Host, { policy: options.policy ?? authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile,
+    toolsEnabled: options.toolsEnabled,
+    config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } }, { worker, timeoutMs: options.timeout ?? NORMAL_HOST_TIMEOUT_MS });
   worker.on('message', (m: any) => messages.push(m));
   const x = { authorization, host, worker, messages, sent, attempted, logs, hold(f: (m: any) => boolean) { hold = f; }, physical(m: any) { sent.push(m); post(m); },
     entries: () => messages.filter(m => m.type === 'TEST_HANDLER_ENTER'), posts: () => sent.filter(isInvoke),
@@ -102,7 +103,7 @@ async function start(options: any = {}) {
 describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   beforeAll(async () => {
     const runtime = resolve(process.cwd()), sdk = resolve(runtime, '../sdk');
-    
+
     temporary = await mkdtemp(join(process.env.AOTUI_MIGRATION_TEMP_DIR ?? tmpdir(), 'aotui-w07-b2-'));
     Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
     workerFile = join(runtime, 'dist/worker-runtime/index.js');
@@ -143,8 +144,8 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   });
 
   it('new Runtime rejects a factory with the old authoring protocol before AppKernel construction', async () => {
-    const host = new Host({ appId: 'legacy_sdk', desktopId: 'd', appModulePath: legacySdkAppFile,
-      timeout: NORMAL_HOST_TIMEOUT_MS, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
+    const host = fixtureHost(Host, { appId: 'legacy_sdk', desktopId: 'd', appModulePath: legacySdkAppFile,
+      config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } }, { timeoutMs: NORMAL_HOST_TIMEOUT_MS });
     try {
       await expect(host.start()).rejects.toThrow('APP_AUTHORING_PROTOCOL_UNSUPPORTED');
       expect(host.getStatus()).toBe('closed');

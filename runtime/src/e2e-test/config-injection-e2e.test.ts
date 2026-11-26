@@ -1,56 +1,51 @@
-import { describe, it, expect } from 'vitest';
-import { AppWorkerHost } from '../engine/app/worker-host.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const workerScriptPath = path.resolve(__dirname, 'fixtures/echo-worker.js');
-
-describe('E2E: Configuration Injection', () => {
-
-    it('should inject config into real worker and echo it back', async () => {
+it.each(['direct', 'pending'])('captures launch configuration at %s installation and receives it in the actual Worker', async method => {
+    const runtimeUrl = new URL('../../dist/index.js', import.meta.url);
+    const sdkUrl = new URL('../../../sdk/dist/index.js', import.meta.url).href;
+    const { createRuntime } = await import(runtimeUrl.href) as typeof import('../index.js');
+    const directory = await mkdtemp(join(tmpdir(), 'aotui-config-'));
+    const runtime = createRuntime();
+    try {
+        const path = join(directory, 'app.mjs');
+        await writeFile(path, `
+            import { createApp, createView, defineViewType } from ${JSON.stringify(sdkUrl)};
+            const Root = defineViewType()({ name: 'Root', region: 'static', multiplicity: 'single' });
+            export default createApp({ app_name: 'configuration', viewTypes: [Root],
+                initialize({ launchConfig, projectionLimits, prepareProjection }) {
+                    const root = createView(Root, { render: () => ({
+                        body: launchConfig.env.E2E_TEST_VAR + ':' + projectionLimits.maxViews,
+                    }) });
+                    prepareProjection({ views: [root] });
+                },
+            });
+        `);
+        await writeFile(join(directory, 'aoapp.json'), JSON.stringify({
+            app_name: 'configuration', version: '1.0.0', entry: { main: './app.mjs' },
+            toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
+        }));
+        const desktop = await runtime.createDesktop();
         const config = { env: { E2E_TEST_VAR: 'confirmed' } };
-
-        const testHost = new AppWorkerHost({
-            appId: 'e2e_app',
-            desktopId: 'e2e_desktop',
-            appModulePath: '/mock/app/path', // Not used by echo-worker
-            workerScriptPath: workerScriptPath,
-            config
-        });
-
-        // Use a promise to capture the echo message
-        const echoPromise = new Promise((resolve) => {
-            // @ts-ignore - Access private worker instance for testing
-            const checkWorker = () => {
-                // @ts-ignore
-                const worker = testHost.worker;
-                if (worker) {
-                    worker.on('message', (msg: any) => {
-                        if (msg.type === 'ECHO_CONFIG') {
-                            resolve(msg.config);
-                        }
-                    });
-                } else {
-                    // Retry if worker not yet created (should be created in start)
-                    setTimeout(checkWorker, 10);
-                }
-            };
-            // Monitor testHost property 'worker' using a timer loop started BEFORE start().
-            checkWorker();
-        });
-
-        const startTime = Date.now();
-        await testHost.start();
-        const duration = Date.now() - startTime;
-
-        console.log(`[Performance] App Start + Config Echo took ${duration}ms`);
-
-        const receivedConfig = await echoPromise;
-
-        expect(receivedConfig).toEqual(config);
-
-        testHost.terminate();
-    });
+        const projectionLimits = { maxViews: 2 };
+        const starting = method === 'direct'
+            ? desktop.installDynamicWorkerApp(path, { name: 'configuration', config, projectionLimits })
+            : desktop.registerPendingApp({ installationId: 'configuration', localPath: directory, config, projectionLimits })
+                .then(id => desktop.openApp(id));
+        config.env.E2E_TEST_VAR = 'late change';
+        projectionLimits.maxViews = 3;
+        const app = await starting;
+        expect(await app.preview()).toMatchObject({ status: 'previewed', views: [{ content: { value: 'confirmed:2' } }] });
+        const initial = await app.observe();
+        expect(initial.status).toBe('prepared');
+        expect(await app.preview()).toMatchObject({ status: 'previewed', views: [{ id: 'Root' }] });
+        if (initial.status !== 'prepared') throw Error(initial.issue.code);
+        expect(desktop.adoptTurn({ apps: [{ candidate: initial.candidate }] }).status).toBe('adopted');
+        expect(await app.beginClose().completion).toMatchObject({ resourcesReleased: true, worker: 'exited' });
+    } finally {
+        await runtime.beginClose().completion;
+        await rm(directory, { recursive: true, force: true });
+    }
 });

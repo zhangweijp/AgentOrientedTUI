@@ -93,7 +93,7 @@ it('C2-26 actual default Kernel/SDK saves two Desktop values and closes all phys
         await install(runtime,f,'a');await install(runtime,f,'b');const boxes=[sandbox(runtime,'a'),sandbox(runtime,'b')],workers=boxes.map(box=>box.host.worker);
         expect((await invoke(runtime,'a','app','set',{value:11})).success).toBe(true);expect((await invoke(runtime,'b','app','set',{value:22})).success).toBe(true);
         const closing=runtime.beginClose(),before=closing.inspect();const report=await closing.completion;await runtime.beginClose().completion;
-        expect(report).toMatchObject({state:'settled',ok:true,verification:'managed',apps:{accepted:2,settled:2,pending:0,notVerifiedReleased:0},desktops:{accepted:2,settled:2,pending:0},resources:{pendingOperations:0,retainedOwners:0},workers:{ownership:'owned',report:{state:'closed',total:0}}});
+        expect(report).toMatchObject({state:'settled',ok:true,verification:'managed',apps:{accepted:2,settled:2,pending:0,notVerifiedReleased:0},desktops:{accepted:2,settled:2,pending:0},workers:{ownership:'owned',report:{state:'closed',total:0}}});
         expect(report).not.toHaveProperty('persistence');
         expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);
         for (const id of ['a', 'b']) expect(() => runtime.getDesktop(createDesktopId(id))).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));

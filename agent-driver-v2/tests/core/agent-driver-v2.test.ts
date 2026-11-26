@@ -30,7 +30,7 @@ async function runTurn(driver: AgentDriverV2): Promise<void> {
 }
 
 function response(toolCalls: LLMResponse['toolCalls'] = []): LLMResponse {
-    return { text: toolCalls.length ? '' : 'ok', toolCalls, finishReason: toolCalls.length ? 'tool-calls' : 'stop',
+    return { toolCalls,
         usage: {
             inputTokens: 2, outputTokens: 1, totalTokens: 3,
             inputTokenDetails: { noCacheTokens: 2, cacheReadTokens: undefined, cacheWriteTokens: undefined },

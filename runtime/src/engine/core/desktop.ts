@@ -15,7 +15,7 @@ import { appInteractionUnavailable } from '../../spi/runtime/app-interaction.int
 import type { ReceiptQuery, TurnSelection } from '@aotui/core';
 import type { AppWindowTarget, ViewWindowTarget } from '../../spi/runtime/windows.js';
 import { createTurnCoordinator } from '@aotui/core/host';
-import { captureOptions, pendingAppFields } from '../app/interaction-config.js';
+import { captureInstallationOptions, captureOptions, pendingAppFields } from '../app/interaction-config.js';
 import { createCandidateScope } from './candidate-scope.js';
 import { readAppManifest } from '../app/manifest.js';
 
@@ -24,8 +24,6 @@ export interface DesktopOptions {
     workerCapacity?: WorkerCapacity;
     policyForApp?: CreateDesktopOptions['policyForApp'];
     onResourcesReleased?: (desktop: Desktop) => void;
-    /** 使用外部 AppManager (默认创建内部实例) */
-    appManager?: AppManager;
     runtimeConfig?: RuntimeConfig;
 }
 
@@ -37,7 +35,6 @@ export class Desktop implements IDesktop {
     private readonly signalBus = new SignalBus();
     private readonly logger: DesktopLogger;
 
-    // Use injected AppManager or create internal instance
     private readonly appManager: AppManager;
     private readonly turns = createTurnCoordinator();
     private readonly managedTurns = new WeakMap<ActiveTurn, CoreTurn>();
@@ -48,7 +45,7 @@ export class Desktop implements IDesktop {
         this.onResourcesReleased = options?.onResourcesReleased;
         this.logger = new DesktopLogger(runtimeConfig.logger.maxSystemLogs);
 
-        this.appManager = options?.appManager || new AppManager(this, { workerCapacity: options?.workerCapacity,
+        this.appManager = new AppManager(this, { workerCapacity: options?.workerCapacity,
             runtimeConfig, policyForApp: options?.policyForApp,
             onAppClosing: () => this.turns.eligibilityChanged() });
 
@@ -128,7 +125,7 @@ export class Desktop implements IDesktop {
 
     /** Register a fixed App entry before starting its execution. */
     async registerPendingApp(options: Parameters<IDesktop['registerPendingApp']>[0]): Promise<string> {
-        const captured = captureOptions(options, pendingAppFields);
+        const captured = captureInstallationOptions(options, pendingAppFields);
         if (!captured?.installationId || captured.installationId.trim() !== captured.installationId)
             throw new AOTUIError('CONFIG_INVALID', { path: 'options.installationId', reason: 'Provide a stable installation key' });
         this.assertActive();

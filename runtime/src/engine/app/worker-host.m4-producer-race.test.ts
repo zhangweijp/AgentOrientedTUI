@@ -1,3 +1,4 @@
+import { committedSnapshot, committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { build } from 'esbuild';
 import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
@@ -83,39 +84,30 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                 format: 'esm', target: 'node20',
                 packages: 'external', logLevel: 'silent',
             });
-            host = new AppWorkerHost({
+            host = fixtureHost(AppWorkerHost, {
                 appId: 'race_app' as any, desktopId: 'race_desktop' as any,
-                appModulePath: appScript, workerScriptPath: workerScript,
+                appModulePath: appScript,
                 config: { AOTUI_DATA_DIR: join(temporary, 'data') },
-            });
+            }, { script: workerScript });
             await host.start();
             await host.open();
-            const first = host.getSemanticSnapshotReport()!;
-            expect(first).toMatchObject({ health: 'ready', revision: 1, lastViewCount: 1, lastToolCount: 1 });
+            const first = committedSnapshot(host);
+            expect(first.revision).toBe(1);
+            expect(first.views).toHaveLength(1);
+            expect(Object.keys(first.tools)).toHaveLength(1);
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'attempt' });
-            await vi.waitFor(() => {
-                expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1 });
-            });
-            const degraded = (host as any).snapshotReceiver.core.store.readLatest('race_app');
-            expect(degraded).toMatchObject({ status: 'degraded', lastGood: { id: first.snapshotId } });
+            await vi.waitFor(() => expect(committedState(host!)).toMatchObject({
+                status: 'degraded', lastGood: { id: first.id },
+            }));
             const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
             expect(trace).toMatchObject({ viewType: 'FileDetail', submitted: false });
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
             expect((await host.preview()).status).toBe('previewed');
-            await vi.waitFor(() => {
-                expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastToolCount: 2 });
+            const repaired = committedSnapshot(host);
+            expect(repaired).toMatchObject({ schemaVersion: 8, revision: 2,
+                views: [{ id: 'fd_0_1', content: { value: expect.stringContaining('Stable FileDetail') } }],
             });
-            const report = host.getSemanticSnapshotReport()!;
-            expect(report.lastIssueCode).toBeUndefined();
-            const lookup = (host as any).snapshotReceiver.core.store.getById(report.snapshotId);
-            expect(lookup).toMatchObject({ status:'found', snapshot:{
-                schemaVersion:8, views:[{id:'fd_0_1', content:{value: expect.stringContaining('Stable FileDetail')}}],
-            }});
-            if (lookup.status === 'found') {
-                expect(lookup.snapshot.revision).toBe(2);
-                expect(Object.values(lookup.snapshot.tools).map((tool: any) => tool.name).sort())
-                    .toEqual(['inspect', 'late_inspect']);
-            }
+            expect(Object.values(repaired.tools).map(tool => tool.name).sort()).toEqual(['inspect', 'late_inspect']);
         } finally {
             host?.terminate();
             await host?.waitForResourceRelease();

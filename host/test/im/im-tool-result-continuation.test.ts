@@ -160,11 +160,11 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
     const host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);
     const kernel = createRuntime();
     const desktop = await kernel.createDesktop(createDesktopId('probe-desktop'));
-    const desktops = { createDesktop: async () => ({ desktop }), getAppsConfig: async () => ({}) };
+    const desktops = { createDesktop: async () => desktop, getAppsConfig: async () => ({}) };
     type Init = Parameters<HostManagerV2['initAgentDriver']>;
     const gui = vi.fn(), off = host.onGuiUpdate(gui);
     try {
-      await host.initAgentDriver(kernel as unknown as Init[0], desktops as unknown as Init[1]);
+      await host.initAgentDriver(desktops as unknown as Init[0]);
       const sessionKey = 'agent:probe-agent:controlled:direct:budget-peer';
       await host.sendIMMessage({ sessionKey, agentId: 'probe-agent', channel: 'controlled', chatType: 'direct',
         peerId: 'budget-peer', body: userInput, messageId: 'budget-1', senderId: 'budget-peer',
@@ -264,16 +264,16 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
       fixture.models.push({ at: Date.now(), messages: structuredClone(messages), toolNames: Object.keys(tools).sort() });
       record('model-call', { number: fixture.models.length });
       if (fixture.models.length > 4) throw new Error('Unexpected assistant self-wake');
-      if (fixture.models.length === 1) return { text: '', toolCalls: calls, assistantMessage: assistantCall, finishReason: 'tool-calls' };
-      return { text: 'Observed the receipt.', toolCalls: [], assistantMessage: finalAssistant, finishReason: 'stop' };
+      if (fixture.models.length === 1) return { toolCalls: calls, assistantMessage: assistantCall, };
+      return { toolCalls: [], assistantMessage: finalAssistant, };
     });
     try {
       host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);
       const kernel = createRuntime();
       const desktop = await kernel.createDesktop(createDesktopId('probe-desktop'));
-      const desktops = { createDesktop: async () => ({ desktop }), getAppsConfig: async () => ({ 'probe-app': {} }) };
+      const desktops = { createDesktop: async () => desktop, getAppsConfig: async () => ({ 'probe-app': {} }) };
       type Init = Parameters<HostManagerV2['initAgentDriver']>;
-      await host.initAgentDriver(kernel as unknown as Init[0], desktops as unknown as Init[1]);
+      await host.initAgentDriver(desktops as unknown as Init[0]);
       const sessionKey = 'agent:probe-agent:controlled:direct:probe-peer';
       await host.sendIMMessage({
         sessionKey, agentId: 'probe-agent', channel: 'controlled', chatType: 'direct', peerId: 'probe-peer',

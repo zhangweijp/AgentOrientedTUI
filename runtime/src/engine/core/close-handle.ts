@@ -66,7 +66,6 @@ export function newCloseState(scope: CloseReport['scope']): CloseState {
     return { scope, state: 'closing', ok: false, hasFailures: false, resourcesReleased: true, verification: 'managed',
         apps: counts(), desktops: counts(), pendingTasks: 0, unverifiedParticipants: 0,
         appCleanup: { managedApps: 0, completedApps: 0, failedApps: 0 },
-        resources: { retainedOwners: 0, pendingOperations: 0 },
         interactions: { verified: true, retainedOperations: 0 },
         workers: { ownership: 'not-owned', report: null },
         cleanup: { signalBus: 'not-owned', logger: 'not-owned' },
@@ -82,7 +81,7 @@ export function addCloseFailure(state: CloseState, stage: Stage, codes: readonly
 }
 /** Fold each child once; callers keep unresolved owners separately rather than retaining a report history. */
 export function mergeCloseReport(state: CloseState, child: CloseReport): void {
-    for (const group of ['apps', 'desktops', 'resources'] as const) {
+    for (const group of ['apps', 'desktops'] as const) {
         for (const key of Object.keys(state[group])) (state[group] as unknown as Record<string, number>)[key] += (child[group] as unknown as Record<string, number>)[key];
     }
     if (child.appCleanup && state.appCleanup) for (const key of Object.keys(state.appCleanup) as Array<keyof NonNullable<CloseReport['appCleanup']>>)

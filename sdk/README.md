@@ -95,7 +95,7 @@ npm exec -- generate-aoapp .
 npm pack
 ```
 
-`generate-aoapp <app-dir>` 从 `package.json` 读取 `aotui.app_name`、可选的 `whatItIs` 和 `whenToUse`，以及标准的 `version`、`description`、`main`、`types`。它检查入口文件并静态生成 `aoapp.json`。工厂与清单的 `app_name` 一致，Worker 在启动业务前核对。将 `npm pack` 生成的压缩包交给宿主，例如在接收方运行 `npm install ./aotui-notes-1.0.0.tgz`。用工具 `edit` 传入 `{"text":"Reviewed"}`，下一次观察会显示新正文。宿主调用示例随 `@aotui/runtime` 的 README 提供。
+`generate-aoapp <app-dir>` 从 `package.json` 的 `aotui` 读取 `app_name` 和可选的 `whatItIs`、`whenToUse`，从包顶层读取 `version`、`description`、`main` 和 `types`。它检查入口文件并静态生成 `aoapp.json`。传给 `createApp` 的 `app_name` 须与清单一致，Worker 在启动业务前核对。将 `npm pack` 生成的压缩包交给宿主，例如在接收方运行 `npm install ./aotui-notes-1.0.0.tgz`。用工具 `edit` 传入 `{"text":"Reviewed"}`，下一次观察会显示新正文。宿主调用示例随 `@aotui/runtime` 的 README 提供。
 
 ## 页面、实例和工具
 
@@ -122,7 +122,7 @@ npm pack
 | `[列表](protected items: Note[])` | `"$ref.notes.detail.items"` |
 | `[首项](items[0])` | `"$ref.notes.detail.items[0]"` |
 
-每个具名业务参数接受字面值或兼容的 Ref 地址。参数最外层或直接数组元素可以混用字面值和引用。用 `$$ref.` 传递字面量 `$ref.` 前缀。`$HOME`、`$$HOME` 和嵌套 JSON 原样交付。已有的 `refParam(refType, schema)` 适用于必须选真实已发布值的参数。handler 始终接收校验后的业务值。Runtime 绑定原观察，App 检查当前对象及外部变更。
+每个具名业务参数接受字面值或兼容的 Ref 地址。参数最外层或直接数组元素可以混用字面值和引用。如果字面值以一个或多个 `$` 紧跟 `ref.` 开头，就在前面再加一个 `$`。字面量 `$ref.x` 发送为 `$$ref.x`，字面量 `$$ref.x` 发送为 `$$$ref.x`。`$HOME`、`$$HOME` 和嵌套 JSON 原样交付。`refParam(refType, schema)` 适用于必须选真实已发布值的参数。handler 始终接收校验后的业务值。Runtime 绑定原观察，App 检查当前对象及外部变更。
 
 工具的 `inputSchema` 根是参数对象。业务字段可用 `{}` 接收任意有界 JSON，也可用于数组元素和嵌套字段。Tool 对象的必填项、额外键策略和调用容量仍参与校验。为 Ref 或 `refParam` 声明值结构时，用 `type`、`enum` 或 `const` 约束根形状。如果根形状完全由 `anyOf` 给出，每个备选都要有明确形状，这条规则也适用于嵌套的备选。`{ type: 'object' }` 表示开放对象。Host 根据模型供应商的编码能力判断哪些参数能进入原生 Tools。
 
@@ -143,7 +143,7 @@ const refs = [people];
 
 邮件工具把 `to` 声明为字符串属性。该 Ref 对本轮可见且允许草稿页使用时，模型可传入 `{ "to": "$ref.contacts.list.people[0].email" }`，handler 收到实际邮箱字符串。`["0"]` 选择对象自有键，`[0]` 选择数组元素，`["display.name"]` 选择带点号的键。普通字段通过业务 Schema 验型。`refParam` 的来源资格限于整项 Ref 和已标记的 ArrayRef 元素。
 
-参数使用 JSON Schema 2020-12 支持子集，类型、对象、数组、固定长度的元组、`enum`、`const`、`anyOf` 和常用范围约束可用。工具最外层 `inputSchema` 省略 `additionalProperties` 时由 SDK 默认导出 `false`，显式传 `true` 可放行额外字段。嵌套对象遵守各自声明。框架从同一份登记派生原生 Tool 与 Console 参数。Console 与原生工具使用同样的地址和转义。模型可通过 `system-inspect_ref` 查询可见 Ref 的声明结构，并读取可见 `public` Ref 在原观察中的值。
+可以直接编写 JSON Schema、使用可导出 draft-2020-12 的 Standard JSON Schema v1，或在作者项目中按需安装 TypeBox。SDK 都按 JSON Schema 2020-12 的支持子集处理，包含类型、对象、数组、固定长度的元组、`enum`、`const`、`anyOf` 和常用范围约束。工具最外层 `inputSchema` 省略 `additionalProperties` 时由 SDK 默认导出 `false`，显式传 `true` 可放行额外字段。嵌套对象遵守各自声明。框架从同一份登记派生原生 Tool 与 Console 参数。Console 与原生工具使用同样的地址和转义。模型可通过 `system-inspect_ref` 查询可见 Ref 的声明结构，并读取可见 `public` Ref 在原观察中的值。
 
 固定位置由 `prefixItems` 表达，`items: false` 禁止尾项，`minItems` 与固定元素数量一致。原生工具可以填写完整元组或选择一份获准的完整 Ref。普通数组可以在直接元素位置混合兼容的引用和字面值。缺席的可选键在调用中仍然缺席。
 
@@ -151,7 +151,7 @@ const refs = [people];
 
 用 `prepareProjection({ views })` 提交全部打开的页面。只需交付业务结果时，工具直接返回 `ToolResult`。业务已写入而投影失败时，保留真实写入结果，再从当前业务状态修复页面。
 
-开新页时用 `prepareOpeningProjection({ views })` 提交候选。若超出本地容量，结果为 `{ status: 'rejected', issue }`，上一份健康投影仍可用。App 可以提示先关闭一页，并在成功后提交业务侧的导航变更。用 `registerCleanup` 登记应用的清理和显式保存。 [SDK 声明](dist/index.d.ts)
+开新页时用 `prepareOpeningProjection({ views })` 提交候选。若超出本地容量，结果为 `{ status: 'rejected', issue }`，上一份健康投影仍可用。App 可以提示先关闭一页，并在成功后提交业务侧的导航变更。用 `registerCleanup({ close })` 登记关闭时的清理或显式保存。登记绑定本次 App 实例，返回 `void`。 [SDK 声明](dist/index.d.ts)
 
 ### 同一个双文件 App
 

@@ -17,13 +17,13 @@ import { AddProviderModal } from './AddProviderModal.js';
 
 vi.mock('../../hooks/useProviderConfigs.js', async importOriginal => ({
     ...await importOriginal<typeof import('../../hooks/useProviderConfigs.js')>(),
-    useProviderConfigs: () => ({ providers: [], activeProviderId: null, isLoading: false, error: null }),
+    useProviderConfigs: () => ({ providers: [], isLoading: false, error: null }),
 }));
 vi.mock('../../hooks/useCustomProviders.js', () => ({
     useCustomProviders: () => ({ customProviders: [], isLoading: false }),
 }));
 vi.mock('../../hooks/useModels.js', () => ({
-    useModels: () => ({ models: [], activeModelId: null, isLoading: false }),
+    useModels: () => ({ models: [], isLoading: false }),
 }));
 vi.mock('../../ChatBridge.js', () => ({
     useChatBridge: () => ({ getTrpcClient: () => ({ modelRegistry: { getProviders: { query: async () => [] } } }) }),

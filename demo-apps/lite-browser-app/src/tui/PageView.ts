@@ -12,7 +12,6 @@ export function pageBody({ status, error, document }: PageState): string {
     if (error) body.push('Error: ' + error);
     if (document) {
         body.push('URL: ' + document.url, 'Content Type: ' + (document.contentType || 'unknown'), 'Format: ' + document.format);
-        if (document.attachments?.length) body.push(document.attachments.map(item => '- ' + item.mimeType).join('\n'));
         body.push(literalBlock(document.content));
     }
     return body.join('\n\n');

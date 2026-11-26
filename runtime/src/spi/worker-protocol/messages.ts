@@ -36,7 +36,6 @@ import type { UpdateSignal } from '../core/signals.js';
  */
 export interface InitMessage {
     type: 'INIT';
-    timeoutMs: number;
     appLifecycle: AppLifecycleAck;
     projectionLimits: ProjectionLimits;
     requestId: RequestID;

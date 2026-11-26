@@ -8,7 +8,7 @@ import { projectNativeToolSchema, buildPublicToolName, buildViewMessageMarkup, D
 import { fixtureAppPath, appClient, fixtureProvider, journal, modelCall, watchUntil } from './batch-two-support.mjs';
 import { BACKSLASH_CODE, DIAGRAM, FILES, PLAIN_APP, PIPE_CODE, STOCK_APP, RAW_VIEWS, STOCK } from './dist/batch-five-content.js';
 
-const [mode, folder, phase] = process.argv.slice(2);
+const [mode, folder] = process.argv.slice(2);
 assert.ok(['product', 'independent'].includes(mode));
 await mkdir(folder, { recursive: true });
 const dataDirectory = await mkdtemp(join(folder, 'worker-data-'));
@@ -203,7 +203,6 @@ async function scenario(host, inventory, inventoryPath, plainPath) {
     facts.initial = { raw, expected: { raw: RAW_VIEWS, stock: STOCK, diagram: DIAGRAM },
         stock: tableCells(page(initial, STOCK_APP, 'stock').body), files: { ...filePage, ...files },
         diagram: [page(initial, STOCK_APP, 'diagram_1').body, page(initial, PLAIN_APP, 'diagram_1').body].map(diagram) };
-    if (phase === 'baseline') return;
 
     for (const app of [STOCK_APP, PLAIN_APP]) for (const [id, value] of Object.entries(RAW_VIEWS)) {
         assert.equal(raw[app][id].type, 'raw_markdown');

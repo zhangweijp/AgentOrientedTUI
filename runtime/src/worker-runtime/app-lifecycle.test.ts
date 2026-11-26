@@ -5,19 +5,22 @@ const deferred = () => { let resolve!: () => void, reject!: (reason: Error) => v
     const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
 describe('Optional App cleanup', () => {
-    it('stops synchronously, retains detached callbacks, and waits for cleanup exactly once', async () => {
+    it('starts cleanup synchronously and joins the same cleanup after repeated and reentrant requests', async () => {
         const x = createAppLifecycle('a'), gate = deferred(), events: string[] = [];
         const close = vi.fn(async () => { events.push('close'); await gate.promise; events.push('released'); });
-        const detach = x.port.register({ stop: () => { events.push('stop'); }, close });
-        x.stop(); expect(events).toEqual(['stop']);
-        detach(); const pending = x.close(); expect(x.close()).toBe(pending);
+        const beginCleanup = x.port.register({ stop: () => { events.push('stop'); beginCleanup(); }, close });
+        expect(beginCleanup()).toBeUndefined(); expect(events).toEqual(['stop']);
+        beginCleanup(); x.stop(); const pending = x.close(); expect(x.close()).toBe(pending);
         await Promise.resolve(); expect(x.getReport()).toMatchObject({ state: 'pending' });
         gate.resolve(); await pending;
         expect(events).toEqual(['stop', 'close', 'released']); expect(close).toHaveBeenCalledOnce();
         expect(captureAppCleanupReport(x.getReport(), 'a')).toEqual({ protocol: 'app-lifecycle-v2', instanceId: 'a', state: 'completed', issues: [] });
     });
-    it('reports a callback failure without claiming resource verification', async () => {
-        const x = createAppLifecycle('a'); x.port.register({ stop() {}, close() { throw Error('private'); } });
+    it('retains an early callback failure for formal close without claiming resource verification', async () => {
+        const x = createAppLifecycle('a'); const beginCleanup = x.port.register({ close() { throw Error('private'); } });
+        beginCleanup();
+        await Promise.resolve(); await Promise.resolve();
+        expect(x.getReport().state).toBe('failed');
         await expect(x.close()).rejects.toThrow('APP_CLEANUP_FAILED');
         expect(x.getReport()).toEqual({ protocol: 'app-lifecycle-v2', instanceId: 'a', state: 'failed', issues: ['APP_CLEANUP_FAILED'] });
         expect(JSON.stringify(x.getReport())).not.toContain('private');

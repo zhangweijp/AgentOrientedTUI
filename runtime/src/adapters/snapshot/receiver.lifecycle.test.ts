@@ -19,7 +19,7 @@ function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => nu
         views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View',
             region: 'dynamic', content: { format: 'markdown-v1', value: 'value' } }],
         refs: {}, tools: { [tool.id]: tool } });
-    expect(r.report().health).toBe('ready');
+    expect(core.store.readLatest('a').status).toBe('ready');
     const entered = defer<void>(), gate = defer<void>(); let handlers = 0, completed = 0;
     const binding: ExecutionBinding = { identity: {},
         isLive: source => registry.validateTypeToolBinding(tool, source.receiver).success,
@@ -86,14 +86,16 @@ it('A16 closes authority before disposing Core and retains stopped state and res
     vi.spyOn(f.r, 'closeInteractions').mockImplementation(async () => { expect(f.core.store.inspect().state).toBe(checked++ ? 'disposed' : 'active'); await original(); expect(f.r.getInteractionStats()?.closed).toBe(true); });
     await f.r.close(); await f.r.close();
     expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeHolds: 0, currentBytes: 0 });
-    expect(f.r.report()).toMatchObject({ health: 'stopped', published: 1 });
+    expect(f.core.store.readLatest('a')).toEqual({ status: 'stopped' });
     const poison: any = new Proxy({}, { get() { throw Error('read'); } }); f.r.acceptPrepared(poison); f.r.acceptPrepareFailure(poison);
-    expect(f.r.report()).toMatchObject({ health: 'stopped', published: 1 });
+    expect(f.core.store.readLatest('a')).toEqual({ status: 'stopped' });
     expect(() => f.r.interaction(poison, poison)).toThrow('unavailable');
 });
 it.each(['authorize', 'execute'] as const)('A16 keeps actual %s work tracked after close and never admits a late handler', async stage => {
     const f = fixture('i', stage), request = await f.observe(), pending = f.client.invoke(request); await f.entered.promise;
-    const snapshotId = f.r.report().snapshotId!;
+    const latest = f.core.store.readLatest('a');
+    if (latest.status !== 'ready') throw Error('Expected a committed snapshot');
+    const snapshotId = latest.snapshot.id;
     expect(f.r.getInteractionStats()?.activeInvocations).toBe(1);
     const closing = f.r.close();
     expect(f.core.store.inspect()).toMatchObject({ state: 'active', currentSnapshots: 0, heldSnapshots: 1, activeHolds: 1 });
@@ -112,7 +114,10 @@ it.each(['authorize', 'execute'] as const)('A16 keeps actual %s work tracked aft
 it('A16 real invalid Draft diagnostics forwarded to Receiver have bounded paths', () => {
     const r = new SemanticSnapshotReceiver('a', 'i');
     r.acceptPrepared({ schemaVersion: 2, appId: 'a', instanceId: 'i', producerSeq: 1, sourceEpoch: 1, capturedAt: 0, views: [], refs: { ['x'.repeat(200000)]: null }, tools: {} });
-    expect(r.report().health).toBe('degraded'); expect(new TextEncoder().encode(r.report().lastIssuePath).byteLength).toBeLessThanOrEqual(512); r.close();
+    const state = r['core'].store.readLatest('a');
+    if (state.status !== 'degraded') throw Error('Expected a bounded projection error');
+    expect(new TextEncoder().encode(state.issue.path).byteLength).toBeLessThanOrEqual(512);
+    r.close();
 });
 it('A18 fresh AppInstance and namespace isolate old Client and serialized requests', async () => {
     const old = fixture('old'), request = await old.observe(); await old.client.invoke(request); old.r.close();

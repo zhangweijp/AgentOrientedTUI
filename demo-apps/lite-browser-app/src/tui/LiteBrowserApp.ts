@@ -14,7 +14,7 @@ export default createApp({
     viewTypes: browserViewTypes,
     initialize({ prepareProjection, prepareOpeningProjection, readViewId }) {
         type BrowserState = { search: SearchState; results?: ViewHandle; page?: { state: PageState; view: ViewHandle } };
-        let current: BrowserState = { search: { status: 'idle', results: [] } };
+        let current: BrowserState = { search: { status: 'idle' } };
         let candidate: BrowserState | undefined;
         const displayed = () => candidate ?? current;
 
@@ -43,7 +43,7 @@ export default createApp({
             let response: Awaited<ReturnType<typeof runWebSearch>>;
             try { response = await runWebSearch(query); }
             catch (error) {
-                show({ ...current, search: { status: 'error', query, error: (error as Error).message, results: [] }, results: undefined });
+                show({ ...current, search: { status: 'error', query, error: (error as Error).message }, results: undefined });
                 throw error;
             }
             const { summary, results } = response;
@@ -54,11 +54,11 @@ export default createApp({
                     context: {
                         results,
                         onOpenResult: (url: string) => fetchPage({ url, format: 'markdown' }),
-                        onClearResults: () => show({ ...current, search: { status: 'idle', results: [] }, results: undefined }),
+                        onClearResults: () => show({ ...current, search: { status: 'idle' }, results: undefined }),
                     },
                 }),
             }) : undefined;
-            show({ ...current, search: { status: 'success', query, results, summary }, results: view });
+            show({ ...current, search: { status: 'success', query, summary }, results: view });
             return { resultCount: results.length };
         }
 

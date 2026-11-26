@@ -35,7 +35,7 @@ it('keeps the Topic directory and Driver within the saved MCP server selection',
         if (typeof prompt?.content === 'string') {
             requests.set(prompt.content, Object.keys(tools).filter(key => key.startsWith('mcp-')).sort());
         }
-        return { text: 'Observed the configured tools', toolCalls: [], finishReason: 'stop',
+        return { toolCalls: [],
             assistantMessage: { role: 'assistant', content: 'Observed the configured tools' } };
     });
 

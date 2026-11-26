@@ -1,3 +1,4 @@
+import { committedSnapshot, fixtureHost } from './__tests__/worker-fixture.js';
 import { describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
@@ -76,55 +77,42 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 outfile: appPath, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
             });
-            host = new AppWorkerHost({
+            host = fixtureHost(AppWorkerHost, {
                 appId: 'm3_app' as any, desktopId: 'desktop_m3' as any,
-                appModulePath: appPath, workerScriptPath: workerPath,
-            });
+                appModulePath: appPath,
+            }, { script: workerPath });
             await host.start();
             await host.open();
-            await import('vitest').then(({ vi }) => vi.waitFor(() => {
-                expect(host?.getSemanticSnapshotReport()).toMatchObject({
-                    health: 'ready', revision: 1, lastViewCount: 1,
-                    lastRefCount: 2, lastToolCount: 1,
-                });
-            }, { timeout: 3_000 }));
-            const initial = host.getSemanticSnapshotReport()!;
-            // Test-only inspection of the accepted Store; no production API
-            // exposes mutable Ref payload or bypasses source-bound execution.
-            const semanticCore = (host as any).snapshotReceiver.core;
-            const oldRead = semanticCore.store.getById(initial.snapshotId);
-            expect(oldRead.status).toBe('found');
-            const oldViewInstanceId = oldRead.snapshot.views[0].viewInstanceId;
+            const initial = committedSnapshot(host);
+            expect(initial.revision).toBe(1);
+            expect(initial.views).toHaveLength(1);
+            expect(Object.keys(initial.refs)).toHaveLength(2);
+            expect(Object.keys(initial.tools)).toHaveLength(1);
+            const oldViewInstanceId = initial.views[0].viewInstanceId;
             const oldRefKey = refKey('workspace_1', oldViewInstanceId, 'pending');
-            expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject([{ id: 'A' }]);
-            const markup = oldRead.snapshot.views[0].content.value;
+            expect(initial.refs[oldRefKey].target.payload).toMatchObject([{ id: 'A' }]);
+            const markup = initial.views[0].content.value;
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'replace-target', data: { id: 'B' } });
             expect((await host.preview()).status).toBe('previewed');
-            await import('vitest').then(({ vi }) => vi.waitFor(() => {
-                const report = host?.getSemanticSnapshotReport();
-                expect(report?.health).toBe('ready');
-                expect(report?.revision).toBeGreaterThan(initial.revision);
-                expect(report).toMatchObject({ lastViewCount: 1, lastRefCount: 2, lastToolCount: 1 });
-            }, { timeout: 3_000 }));
-            const changed = host.getSemanticSnapshotReport()!;
-            expect(changed.published).toBeGreaterThanOrEqual(2);
-            expect(changed.snapshotId).not.toBe(initial.snapshotId);
-            const newRead = semanticCore.store.getById(changed.snapshotId);
-            expect(newRead.status).toBe('found');
-            expect(newRead.snapshot.views[0].viewInstanceId).toBe(oldViewInstanceId);
+            const changed = committedSnapshot(host);
+            expect(changed.revision).toBeGreaterThan(initial.revision);
+            expect(changed.id).not.toBe(initial.id);
+            expect(changed.views).toHaveLength(1);
+            expect(Object.keys(changed.refs)).toHaveLength(2);
+            expect(Object.keys(changed.tools)).toHaveLength(1);
+            expect(changed.views[0].viewInstanceId).toBe(oldViewInstanceId);
             const newRefKey = refKey('workspace_1', oldViewInstanceId, 'pending');
-            expect(newRead.snapshot.refs[newRefKey].target.payload).toMatchObject([{ id: 'B' }]);
-            const completeTool = Object.values(newRead.snapshot.tools).find((tool: any) => tool.name === 'complete') as any;
+            expect(changed.refs[newRefKey].target.payload).toMatchObject([{ id: 'B' }]);
+            const completeTool = Object.values(changed.tools).find((tool: any) => tool.name === 'complete') as any;
             expect(completeTool).toMatchObject({ viewType: 'Workspace' });
-            expect(newRead.snapshot.views[0]!.toolBindings).toEqual([{ toolId: completeTool!.id, activationId: expect.any(String) }]);
+            expect(changed.views[0]!.toolBindings).toEqual([{ toolId: completeTool!.id, activationId: expect.any(String) }]);
             expect(completeTool).not.toHaveProperty('targets');
             // A historical Ref is pinned to its original object even when the
             // same visible Ref ID is reused in a new Snapshot.
-            expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject([{ id: 'A' }]);
-            expect(newRead.snapshot.views[0].content.value).toBe(markup);
-            expect(changed.health).toBe('ready');
+            expect(initial.refs[oldRefKey].target.payload).toMatchObject([{ id: 'A' }]);
+            expect(changed.views[0].content.value).toBe(markup);
         } finally {
             host?.terminate();
             await rm(temporary, { recursive: true, force: true });

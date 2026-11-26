@@ -228,7 +228,7 @@ async function verifyIMSaveRollback(phase: 'first' | 'reuse') {
     const released = await original.desktop.beginClose().completion;
     assert.equal(released.resourcesReleased, true);
     assert.equal(im().getSession(key), undefined);
-    const intervening = (await desktops.createDesktop(createDesktopId(key))).desktop;
+    const intervening = await desktops.createDesktop(createDesktopId(key));
     resume.resolve();
     const [error, joinedError] = await Promise.all([opening, joining]);
     assert.equal(error?.code, 'DESKTOP_DISPOSED');
@@ -280,7 +280,7 @@ try {
         if (mode === 'double-failure') assert.equal(initial.resourcesReleased, false);
         const closed = await original.beginClose().completion;
         assert.equal(closed.resourcesReleased, true);
-        const successor = (await desktops.createDesktop(key)).desktop;
+        const successor = await desktops.createDesktop(key);
         const opened = await invoke(successor, 'open_file', { names: ['B'] }, 'open-successor');
         const current = appClient(successor, APP).client;
         assert.match(JSON.stringify((await current.preview()).views), /B-INITIAL/);
@@ -304,9 +304,9 @@ try {
     }
 
     await db.initDatabase();
-    await host.initAgentDriver(runtime, desktops);
+    await host.initAgentDriver(desktops);
     const sessions = host.getSessionManager()!;
-    const unrelated = (await desktops.createDesktop(createDesktopId('startup-unrelated'))).desktop;
+    const unrelated = await desktops.createDesktop(createDesktopId('startup-unrelated'));
     await invoke(unrelated, 'open_file', { names: ['B'] }, 'open-unrelated');
     facts.startupRollback = { topic: [], im: [] };
     for (const fault of ['model', 'agent_state', 'snapshot'] as const) {

@@ -1,3 +1,4 @@
+import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import { projectCompleteViews } from '@aotui/core/host';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,12 +17,17 @@ function draft(instanceId: string, seq: number, value = 'current') {
         views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value } }], refs: {}, tools: {} };
 }
+const snapshotId = (host: AppWorkerHost) => {
+    const state = committedState(host);
+    if (state.status !== 'ready') throw new Error('Expected an accepted snapshot');
+    return state.snapshot.id;
+};
 const cleanup: Array<() => void> = [];
 afterEach(() => { for (const close of cleanup.splice(0)) close(); vi.useRealTimers(); });
 function fixture(projectionLimits?: ConstructorParameters<typeof AppWorkerHost>[0]['projectionLimits']) {
     const directory = mkdtempSync(join(tmpdir(), 'aotui-refresh-unit-'));
-    const host = new AppWorkerHost({ policy: policy, appId: 'app' as any, desktopId: 'desktop' as any,
-        appModulePath: 'unused', timeout: 50, config: { AOTUI_DATA_DIR: directory }, projectionLimits });
+    const host = fixtureHost(AppWorkerHost, { policy: policy, appId: 'app' as any, desktopId: 'desktop' as any,
+        appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory }, projectionLimits }, { timeoutMs: 50 });
     const worker = { postMessage: vi.fn() };
     const internals = host as any; internals.worker = worker; internals.status = 'running';
     internals.snapshotReceiver.acceptPrepared(draft(host.appInstanceId, 1));
@@ -100,9 +106,10 @@ describe('refresh before the existing Scope observation', () => {
             const latest = (receiver as any).core.store.readLatest('app').snapshot;
             expect(latest.views[0].toolBindings).toEqual([{ toolId, activationId: 'active-2' }]);
             expect(Object.values(latest.refs)).toMatchObject([{ target: { payload: { value: 2 } } }]);
-            const id = receiver.report().snapshotId;
+            const before = receiver['core'].store.readLatest('app');
+            if (before.status !== 'ready') throw Error('Expected a committed snapshot');
             expect(publish().status).toBe('unchanged');
-            expect(receiver.report().snapshotId).toBe(id);
+            expect(receiver['core'].store.readLatest('app')).toMatchObject({ status: 'ready', snapshot: { id: before.snapshot.id } });
             expect(prepare({ invalid: () => 0 } as any)).toMatchObject({ status: 'failed' });
             expect(publish().status).toBe('rejected');
             expect((await interaction.observe()).status).toBe('rejected');
@@ -123,10 +130,10 @@ describe('refresh before the existing Scope observation', () => {
         x.publish(2); const observed = await observing;
         expect(observed.status).toBe('prepared'); expect(JSON.stringify(observed)).toContain('updated');
         expect(x.host.onUpdate).not.toHaveBeenCalled();
-        const id = x.host.getSemanticSnapshotReport()!.snapshotId;
+        const id = snapshotId(x.host);
         if (observed.status === 'prepared') observed.candidate.discard();
         const same = x.turns.prepare(); x.publish(3); await same;
-        expect(x.host.getSemanticSnapshotReport()!.snapshotId).toBe(id);
+        expect(snapshotId(x.host)).toBe(id);
         x.host.beginInteractionClose();
         expect(x.host.getResourceReport().interactions).toEqual({ closed: true, retainedOperations: 0 });
     });
@@ -176,11 +183,11 @@ describe('refresh before the existing Scope observation', () => {
     it('uses the newest accepted publication, including an unchanged push, without publishing or equating the observations', async () => {
         const x = fixture();
         await x.prime();
-        const report = x.host.getSemanticSnapshotReport();
+        const report = committedState(x.host);
         x.publish(3, 'updated', false);
-        expect(x.host.getSemanticSnapshotReport()!.snapshotId).toBe(report!.snapshotId);
+        expect(snapshotId(x.host)).toBe(report.status === 'ready' ? report.snapshot.id : undefined);
         x.host.onUpdate = vi.fn();
-        const before = x.host.getSemanticSnapshotReport();
+        const before = committedState(x.host);
         const first = x.turns.prepare();
         const preview = x.host.preview();
         expect(x.sent().known).toEqual({ appId: 'app', instanceId: x.host.appInstanceId, sourceEpoch: 3, producerSeq: 3 });
@@ -199,7 +206,7 @@ describe('refresh before the existing Scope observation', () => {
         x.turns.adopt(b.candidate);
         expect(b.candidate.observation.source).toEqual(a.candidate.observation.source);
         expect(b.candidate.observation.observationId).not.toBe(a.candidate.observation.observationId);
-        expect(x.host.getSemanticSnapshotReport()).toEqual(before);
+        expect(committedState(x.host)).toEqual(before);
         expect(x.host.onUpdate).not.toHaveBeenCalled();
     });
 

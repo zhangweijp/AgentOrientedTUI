@@ -1,3 +1,4 @@
+import { fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { ActiveTurn, AppInvocation } from '@aotui/core';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
@@ -48,12 +49,11 @@ async function control(x: any, action: string) {
 async function start(id = 'app', options: { holdInitialization?: boolean; existingWorker?: Worker } = {}) {
     const root = await mkdtemp(join(tmpdir(), 'aotui-tool-'));
     const authorization = policyProbe();
-    const host = new AppWorkerHost({ policy: authorization.policy, appId: id.replaceAll('-', '_') as any, desktopId: 'd' as any,
+    const host = fixtureHost(AppWorkerHost, { policy: authorization.policy, appId: id.replaceAll('-', '_') as any, desktopId: 'd' as any,
         appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
-        workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), timeout: 5000,
-        existingWorker: options.existingWorker,
+
         config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: !!options.holdInitialization },
-    });
+    }, { script: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), timeoutMs: 5000, worker: options.existingWorker });
     await host.start(); const worker: Worker = (host as any).worker, messages: any[] = [];
     worker.on('message', message => messages.push(message)); const x: any = { authorization, host, worker, messages, root, closed: false };
     running.push(x); const opening = x.opening = host.open(); void opening.catch(() => {});

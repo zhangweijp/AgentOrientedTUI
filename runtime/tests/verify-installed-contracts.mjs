@@ -198,7 +198,8 @@ ${refOnly ? '' : ideTypeAssertions}
 const managedFactory = createApp({
  app_name: 'package_types', viewTypes: [Counter],
  initialize({ prepareProjection, registerCleanup }) {
-  registerCleanup(owner);
+  const registered: void = registerCleanup(owner);
+  void registered;
   const page = createView(Counter, { idPrefix: 'counter', region: 'dynamic', render() {
    const selected = ref('current_record', { id: 'record-1' }, { scope: 'protected', refType: 'Record', schema: Type.Object({ id: Type.String() }) });
    return { body: formatRef('Current record', selected), refs: [selected], context: {} };
@@ -215,7 +216,7 @@ const writable: AppInteractionOptions = { toolsEnabled: true };
 const readOnly: AppInteractionOptions = { toolsEnabled: false };
 // @ts-expect-error The retired array cannot select Host tool availability.
 const oldOptions: AppInteractionOptions = { interactionModes: [] };
-const lifecyclePort = (port: AppLifecyclePort) => { const detach = port.register(owner); detach(); };
+const lifecyclePort = (port: AppLifecyclePort): (() => void) => port.register(owner);
 void [writable, readOnly, oldOptions, lifecyclePort, lifecycleSupport, toolAuthoringProtocol, createRuntime];
 `);
     await fs.writeFile(path.join(folder, 'sdk-tsconfig.json'), JSON.stringify({ compilerOptions: { ...compiler, lib: ['ES2022'], types: ['node'], outDir: './sdk-out' }, files: ['./sdk-types.ts'] }));

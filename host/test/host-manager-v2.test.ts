@@ -118,7 +118,7 @@ describe('HostManagerV2 Integration', () => {
         const mockKernel = {} as any;
         const mockDesktopManager = {} as any;
 
-        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockDesktopManager);
 
         expect(sessionManagerMock.on).toHaveBeenCalledWith('message', expect.any(Function));
     });
@@ -127,7 +127,7 @@ describe('HostManagerV2 Integration', () => {
         const mockKernel = {} as any;
         const mockDesktopManager = {} as any;
 
-        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockDesktopManager);
 
         await hostManager.sendUserMessage('Hello World');
 
@@ -138,7 +138,7 @@ describe('HostManagerV2 Integration', () => {
         const mockKernel = {} as any;
         const mockDesktopManager = {} as any;
 
-        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockDesktopManager);
 
         const assistantMessage: ModelMessage = {
             role: 'assistant',
@@ -198,7 +198,7 @@ describe('HostManagerV2 Integration', () => {
             },
         });
 
-        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockDesktopManager);
 
         const onGuiUpdateSpy = vi.fn();
         hostManager.onGuiUpdate(onGuiUpdateSpy);

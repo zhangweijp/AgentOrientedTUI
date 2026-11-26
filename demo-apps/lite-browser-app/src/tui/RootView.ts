@@ -26,7 +26,7 @@ Current search results. open_result requires a URL from the list. clear_results 
 
 ### Page
 
-Fetched content and extracted attachments. close_page removes the current Page and its tools.
+Fetched content and media type. close_page removes the current Page and its tools.
 
 Browser tools operate on their single current View. Pass the business parameters declared in the tool schema. Read search results and page content in the current Views.
 `;

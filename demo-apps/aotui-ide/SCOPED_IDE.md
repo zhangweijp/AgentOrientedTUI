@@ -1,8 +1,8 @@
 # AOTUI IDE package integration
 
-The package exports a default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and managed app state. Normal Host startup registers the local package on a Desktop and uses the Semantic Source. [Runtime README](../../runtime/README.md)
+The package exports a default managed `TUIAppFactory`, created with `createApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and App-owned state. Normal Host startup registers the local package on a Desktop and uses the Semantic Source. See the README shipped with `@aotui/runtime`.
 
-The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v7'`, which Runtime checks when it loads the factory. The IDE declares Tool inputs once with TypeBox 1.4.3 and supplies per-page context. [SDK README and runnable App](../../sdk/README.md)
+The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createApp` supplies `toolAuthoringProtocol: 'view-type-tools-v8'`, which Runtime checks when it loads the factory. The IDE declares Tool inputs once with TypeBox 1.4.3 and supplies per-page context. The README shipped with `@aotui/sdk` includes a runnable author example.
 
 ## Standard installation and explicit custom hosts
 
@@ -30,7 +30,7 @@ const app = await desktop.installDynamicWorkerApp(appModulePath, {
 
 Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Runtime validates ordinary and Ref parameters under the same ViewType contract. It uses `app-worker/v10` with its bundled Worker. When the Host finishes, await `runtime.beginClose().completion` and inspect its report.
 
-The normal Host supplies App identity, Desktop identity and project path through AppContext. By default, the IDE derives its session key from the Desktop ID and the assigned App ID, and stores session state and history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/session.json` and `history.json`. A different App installation order can change the assigned ID and the default path. Explicit `ideSessionKey` values use 1–128 ASCII letters, digits, underscores, dots or hyphens. Explicit `ideSessionPath` and `ideHistoryPath` values must be absolute. Give concurrent independent Apps distinct session keys or paths. Session state and recent history use atomic file replacement with cooperative locks and report conflicts and warnings. The session directory retains a SQLite coordination file. A SQLite write reservation is owned by the active connection and ends when its Worker exits.
+The normal Host supplies App identity, Desktop identity and project path through the SDK author context. By default, the IDE derives its session key from the Desktop ID and the assigned App ID, and stores session state and history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/session.json` and `history.json`. A different App installation order can change the assigned ID and the default path. Explicit `ideSessionKey` values use 1–128 ASCII letters, digits, underscores, dots or hyphens. Explicit `ideSessionPath` and `ideHistoryPath` values must be absolute. Give concurrent independent Apps distinct session keys or paths. Session state and recent history use atomic file replacement with cooperative locks and report conflicts and warnings. The session directory retains a SQLite coordination file. A SQLite write reservation is owned by the active connection and ends when its Worker exits.
 
 ## All tools and business targets
 
@@ -89,7 +89,7 @@ The Runtime routes an authorized call to the selected live App, View and Tool bi
 
 A handler returns `{ success: true, data }` for a known success. A handler that returns `{ success: false, error, data? }` produces a failed receipt with the IDE's recovery message and any available data. The IDE keeps its internal resource outcomes and per-item batch results for recovery. Inspect the current Views and the reported disk facts before attempting another write.
 
-`createTUIApp` advertises managed app lifecycle support by default. This IDE registers `useAppLifecycle({ stop, close })` because it owns file, search and LSP work. Cleanup reports carry `state` and `issues`, without callback counts or a `verifiedReleased` claim. IDE cleanup still awaits its actual resources and reports failures. Runtime resource release and App callback completion are separate facts.
+`createApp` advertises managed app lifecycle support by default. This IDE registers `registerCleanup({ stop, close })` because it owns file, search and LSP work. Cleanup reports carry `state` and `issues`, without callback counts or a `verifiedReleased` claim. IDE cleanup still awaits its actual resources and reports failures. Runtime resource release and App callback completion are separate facts.
 
 ## Capacity and process support
 
@@ -114,13 +114,13 @@ A group probe denied with `EPERM` retains ownership and continues the existing b
 
 ## Restoration
 
-Managed state owns `workspaceFolders`, `activeFiles` and `expandedDirs` under the session key. Recent history is a separate shared file with version 1 and `workspaces`. Reading validates the current fields, ignores other top-level metadata, and preserves the original file. An ordinary history write saves the current fields.
+The IDE stores `workspaceFolders`, `activeFiles` and `expandedDirs` under the session key. Recent history is a separate shared file with version 1 and `workspaces`. Reading validates the current fields, ignores other top-level metadata, and preserves the original file. An ordinary history write saves the current fields.
 
 The explicitly configured `projectPath` must be a usable directory. A separately restored root that now fails with `ENOENT` or `ENOTDIR` is listed under **Unavailable folders** while other valid roots remain usable. Its normalized absolute path stays in the existing `workspaceFolders` value across restarts and still counts toward the 16-root limit. Unavailable roots are excluded from LSP, search and file access. Permission errors, invalid saved data, identity changes and uncertain cleanup remain initialization failures; this recovery rule does not hide failures while reading the workspace tree.
 
 The IDE does not recreate missing directories. Restore a folder at its listed path and call `add_folder_to_workspace` to reconnect it, or call `remove_folder_from_workspace` to delete that saved entry. Both actions remain available when every saved root is unavailable. Reconnecting a saved path, or an alias of an already connected canonical root, does not consume another slot. Existing active-file and expanded-directory recovery is unchanged: only files that can be loaded under valid roots reopen; inaccessible files produce the existing warning, and expanded paths outside valid roots are omitted. Reconnecting a root does not automatically reopen its former files.
 
-Corrupt history is left on disk and the operation reports the error. Partial initialization releases unconfirmed bindings before managed flush.
+Corrupt history is left on disk and the operation reports the error. Partial initialization releases its owned resources before close.
 
 ## Replace an installed IDE
 
@@ -132,11 +132,11 @@ The package's default factory is the only current app entry. Updating installed 
 
 ## Reproduce
 
-Build Runtime → SDK → IDE in an isolated checkout; run the existing package suites and `tests/scoped-ide.e2e.mjs`, `scoped-ide-edges.mjs`, `scoped-ide-capacity.mjs`, `scoped-lsp.e2e.mjs`, `scoped-lsp-capacity.mjs`, `scoped-ide-performance.mjs`, each with a new JSON output path. Full workflow/performance accept `AOTUI_IDE_CONSUMER` for a clean installed consumer. Capacity tests distinguish direct business-owner checks, controlled protocol faults and actual processes; the custom LSP capacity server deliberately remains unverified for healthy cleanup. Run performance separately from other heavy tests/installations. Use explicit temporary data; tests never redirect HOME. Performance numbers and exact artifact support are recorded in the delivery's frozen profile and D6 evidence, not inferred from version ranges.
+Build Core, then Runtime and SDK, then IDE in an isolated checkout; run the existing package suites and `tests/scoped-ide.e2e.mjs`, `scoped-ide-edges.mjs`, `scoped-ide-capacity.mjs`, `scoped-lsp.e2e.mjs`, `scoped-lsp-capacity.mjs`, `scoped-ide-performance.mjs`, each with a new JSON output path. Full workflow/performance accept `AOTUI_IDE_CONSUMER` for a clean installed consumer. Capacity tests distinguish direct business-owner checks, controlled protocol faults and actual processes; the custom LSP capacity server deliberately remains unverified for healthy cleanup. Run performance separately from other heavy tests/installations. Use explicit temporary data; tests never redirect HOME. Performance numbers and exact artifact support are recorded in the delivery's frozen profile and D6 evidence, not inferred from version ranges.
 
 ## Local terminal from exact installed packages
 
-Use the delivery's package manifests and lockfile to install a matching Runtime, SDK and IDE into an independent consumer. [Runtime README](../../runtime/README.md)
+Use the delivery's package manifests and lockfile to install a matching Runtime, SDK and IDE into an independent consumer. See the README shipped with `@aotui/runtime`.
 
 Run the example shipped with the installed IDE from that consumer directory:
 
@@ -147,11 +147,11 @@ node node_modules/@agentina/aotui-ide/examples/local-scoped-ide.mjs \
 
 Both project and data paths are explicit. The session defaults to a stable digest of the real project directory. The example runs with the local operator's permissions and never rebuilds the repository's shared dist. It prints the actual Runtime and IDE module URLs at startup, including normal package-manager resolution.
 
-Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before invoking a Tool from it. Adoption replaces the previous calling qualification. `views` lists current pages through the read-only preview. Find the Tool in the observation and follow its `inputSchema`. Supply the receiving page in `input.view_id` when required.
+Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before invoking a Tool from it. Adoption replaces the previous calling qualification. `views` lists current pages through the read-only preview. Find the Tool in the observation and follow its `inputSchema`. Supply the receiving page as the command’s `viewId` for a multi-instance Tool.
 
-An `invoke` command contains `invocationId`, `observationId`, `toolId` and `input`. If the ID is omitted the example generates one. To read the same completed receipt again, resend the same complete request with the same ID: Core checks its fingerprint and independently authorizes receipt reading without entering the handler again. There is no standalone `receipt` command. Do not turn an unknown outcome into a new write attempt. Inspect the returned receipt's succeeded/rejected/failed/unknown outcome.
+An `invoke` command contains `invocationId`, `observationId`, `toolId`, business `input` and `viewId` when needed. If the ID is omitted the example generates one. To read the same completed receipt again, resend the same complete request with the same ID: Core checks its fingerprint and independently authorizes receipt reading without entering the handler again. There is no standalone `receipt` command. Do not turn an unknown outcome into a new write attempt. Inspect the returned receipt's succeeded/rejected/failed/unknown outcome.
 
-Release observations when finished. Each observation includes all open Views. Observe and adopt again after the receiving View is replaced. Receipt retention and invocation identity belong to the original App instance. The data directory contains managed state/history; it is separate from installed packages. Different session keys isolate managed state, while recent history uses the selected cooperative shared history resource.
+Release observations when finished. Each observation includes all open Views. Page text is read through the public observation or preview. Observe and adopt again after the receiving View is replaced. Receipt retention and invocation identity belong to the original App instance. The data directory contains IDE-owned state and history; it is separate from installed packages. Different session keys isolate IDE state, while recent history uses the selected cooperative shared history resource.
 
 EOF, `exit`, SIGINT and SIGTERM stop admission and await the actual Runtime close report. Accepted startup work is joined so its lifecycle callbacks can be installed and released. The example never starts another initialization attempt after stop. Input errors do not discard subsequent commands. Initialization failure is recognized only from the IDE Root, retains its existing error, and is followed by real cleanup; arbitrary Workspace text cannot impersonate startup failure. App cleanup failure and actual Runtime resource release remain distinct, and either unsuccessful close or unreleased resources produces a nonzero exit status.
 
