@@ -173,7 +173,7 @@ it('selects Responses for the OpenAI endpoint and Chat for the resolved compatib
 });
 
 const routerModel = 'vendor/model:suffix';
-const routerTool = { fixture: { inputSchema: jsonSchema({ type: 'object' }) } };
+const routerTool = { fixture: { inputSchema: jsonSchema({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'] }) } };
 
 const closed = (properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false,
     properties, required: Object.keys(properties) });

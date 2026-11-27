@@ -1,18 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
 import { jsonSchema } from 'ai';
-import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { LLMClient } from '../../src/core/llm-client.js';
 import type { ContextDrivenSource, DrivenSourceContext } from '../../src/core/interfaces.js';
 
 const drivers: AgentDriverV2[] = [];
-afterEach(() => { for (const driver of drivers.splice(0)) { driver.stop(); driver.dispose(); } vi.restoreAllMocks(); });
+afterEach(() => { for (const driver of drivers.splice(0)) { driver.stop(); driver.dispose(); } vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function fixture(context: DrivenSourceContext, beforeCapture = async () => {}) {
     const source: ContextDrivenSource = { name: 'adoption', onUpdate: () => () => {},
         getContext: vi.fn(async () => { await beforeCapture(); return context; }) };
     const onRunError = vi.fn();
-    const driver = new AgentDriverV2({ sources: [source], llm: { model: 'unused', provider: { id: 'openai' }, apiKey: 'unused' }, onRunError });
+    const driver = new AgentDriverV2({ sources: [source], llm: { model: 'unused', provider: { id: 'compatible', baseURL: 'https://fixture.invalid/v1' }, apiKey: 'unused' }, onRunError });
     // Exercise exactly one real run, with the same active owner as start(), without its scheduling timer.
     driver['running'] = true; drivers.push(driver);
     return { driver, source, onRunError };
@@ -20,19 +19,14 @@ function fixture(context: DrivenSourceContext, beforeCapture = async () => {}) {
 
 function provider(onRequest: () => void) {
     const request = vi.fn(onRequest);
-    const model = new MockLanguageModelV3({ doStream: async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
         request();
-        return { stream: convertArrayToReadableStream([
-            { type: 'text-start', id: 'text' },
-            { type: 'text-delta', id: 'text', delta: 'Done' },
-            { type: 'text-end', id: 'text' },
-            { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: {
-                inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
-                outputTokens: { total: 1, text: 1, reasoning: 0 },
-            } },
-        ]) };
-    } });
-    vi.spyOn(LLMClient.prototype as unknown as { createProvider(): unknown }, 'createProvider').mockReturnValue(model);
+        const frame = { id: 'adoption', model: 'unused', created: 1, choices: [
+            { index: 0, delta: { content: 'Done' }, finish_reason: 'stop' },
+        ] };
+        return new Response('data: ' + JSON.stringify(frame) + '\n\ndata: [DONE]\n\n',
+            { headers: { 'content-type': 'text/event-stream' } });
+    }));
     return request;
 }
 
@@ -84,6 +78,7 @@ describe('Driver serial adoption boundary', () => {
                     if (++executions === 1) {
                         update();
                         await vi.waitFor(() => expect(driver.hasPendingUpdate()).toBe(true));
+                        await driver.trigger();
                     }
                     return { toolName, toolCallId, outcomeStatus: 'succeeded', result: { done: true } };
                 },
@@ -103,6 +98,8 @@ describe('Driver serial adoption boundary', () => {
         driver.resume(); await driver['runInFlight'];
         expect(call).toHaveBeenCalledTimes(2); expect(release).toHaveBeenCalledTimes(2);
         expect(driver.hasPendingUpdate()).toBe(false); expect(onRunError).not.toHaveBeenCalled();
+        driver.resume(); await driver['runInFlight'];
+        expect(call).toHaveBeenCalledTimes(2);
     });
 
 });

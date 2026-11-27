@@ -240,12 +240,41 @@ describe('Source tool execution owner', () => {
                 'E_TOOL_NOT_DISPATCHED',
             ]);
             expect(current.executeTool).toHaveBeenCalledTimes(2);
+            expect(results[0]).toBe(await current.executeTool.mock.results[0]!.value);
+            if (managed) expect(results[1]).toBe(await current.executeTool.mock.results[1]!.value);
+            expect(current.release).not.toHaveBeenCalled();
             saved.resolve();
             await paired;
         } finally { allowed.resolve(); saved.resolve(); }
         await work;
+        await Promise.allSettled(current.executeTool.mock.results.map(result => result.value));
         expect(current.onToolResult).toHaveBeenCalledTimes(1);
         expect(current.release).toHaveBeenCalledTimes(1);
+        expect(current.release.mock.invocationCallOrder[0]).toBeGreaterThan(current.onToolResult.mock.invocationCallOrder[0]);
+    });
+
+    it('never revives undispatched calls from an old published turn after stop/start', async () => {
+        controlledModel(undefined, true, ['pending-call', 'queued-call']);
+        const entered = barrier(), allowed = barrier();
+        const execute = vi.fn(async () => { entered.resolve(); await allowed.promise; return { done: true }; });
+        const current = turn(descriptor(execute), execute);
+        await current.driver.trigger();
+        const work = current.driver['runInFlight']!;
+        await entered.promise;
+        current.driver.stop();
+        current.driver.start();
+        allowed.resolve();
+        await work;
+        expect(current.executeTool).toHaveBeenCalledTimes(1);
+        expect(current.onToolResult).toHaveBeenCalledTimes(1);
+        const [, results] = current.onToolResult.mock.calls[0];
+        expect(results[0]).toBe(await current.executeTool.mock.results[0]!.value);
+        expect(results.slice(1).map((r: any) => [r.toolCallId, r.outcomeStatus, r.error.code])).toEqual([
+            ['pending-call', 'rejected', 'E_SOURCE_UNAVAILABLE'],
+            ['queued-call', 'rejected', 'E_SOURCE_UNAVAILABLE'],
+        ]);
+        expect(current.release).toHaveBeenCalledTimes(1);
+        expect(current.driver.hasPendingUpdate()).toBe(false);
     });
 
     it('reports a failed save when closing the published tool turn', async () => {
