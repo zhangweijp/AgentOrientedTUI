@@ -100,8 +100,8 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
             const assembly = assemblies.find(item => item.app.appId === appId && item.app.appInstanceId === instanceId);
             if (!assembly) return { status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE', message: 'App not found.' } };
             const interaction = assembly.receiver.interaction(policy, assembly.execution);
-            return { status: 'ready', app: { observe: () =>
-                turns.prepareObservation(interaction, () => assemblies.includes(assembly)) } };
+            return { status: 'ready', app: { observe: options =>
+                turns.prepareObservation(interaction, () => assemblies.includes(assembly), options) } };
         },
         listApps: () => assemblies.map(assembly => assembly.app),
         getAppWindows: () => undefined,
@@ -123,11 +123,11 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         const first = await source.getContext();
         contexts.push(first);
         await first.adopt!();
-        expect(first.tools['bad_app-run-file']).toBeUndefined();
-        expect(first.tools['collision_a-run']).toBeDefined();
-        expect(first.tools['healthy_app-run']).toBeDefined();
+        expect(first.tools['bad_app-InvalidAlias-run-file']).toBeUndefined();
+        expect(first.tools['collision_a-Workspace-run']).toBeDefined();
+        expect(first.tools['healthy_app-Workspace-run']).toBeDefined();
         const firstText = JSON.stringify(first.messages);
-        expect(firstText).not.toContain('BAD_APP_BODY');
+        expect(firstText).toContain('BAD_APP_BODY');
         expect(firstText).toContain('COLLISION_B_BODY');
         expect(firstText).toContain('COLLISION_A_BODY');
         expect(firstText).toContain('HEALTHY_APP_BODY');
@@ -135,17 +135,17 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         expect(healthyMessage).toContain('view_id="workspace_1" view_type="Workspace" app_id="healthy_app" app_name="healthy_app"');
         expect(healthyMessage).toContain('\n&lt;view id="literal"&gt;HEALTHY_APP_BODY&lt;/view&gt;\n</view>');
         expect(firstText).toContain('AOTUI_TOOL_NAME_INVALID: toolName');
-        expect(first.tools['collision_b-run']).toBeDefined();
+        expect(first.tools['collision_b-Workspace-run']).toBeDefined();
 
-        expect(await first.executeTool!('collision_a-run', { view_id: 'workspace_1', value: 'winner' }, 'collision-winner'))
+        expect(await first.executeTool!('collision_a-Workspace-run', { view_id: 'workspace_1', value: 'winner' }, 'collision-winner'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'collision_a', value: 'winner' } });
-        expect(await first.executeTool!('healthy_app-run', { view_id: 'workspace_1', value: 'usable' }, 'healthy-call'))
+        expect(await first.executeTool!('healthy_app-Workspace-run', { view_id: 'workspace_1', value: 'usable' }, 'healthy-call'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'healthy_app', value: 'usable' } });
         expect(collidingA.invoked).toEqual(['winner']);
         expect(collidingB.invoked).toEqual([]);
         expect(healthy.invoked).toEqual(['usable']);
         expect(bad.invoked).toEqual([]);
-        expect(bad.receiver.getInteractionStats()).toMatchObject({ observations: { observations: 0, reservations: 0, } });
+        expect(bad.receiver.getInteractionStats()).toMatchObject({ observations: { observations: 1, reservations: 0, } });
 
         await first.release!();
         for (const assembly of assemblies) {
@@ -160,9 +160,9 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         const recovered = await source.getContext();
         contexts.push(recovered);
         await recovered.adopt!();
-        expect(recovered.tools['bad_app-run']).toBeDefined();
+        expect(recovered.tools['bad_app-Workspace-run']).toBeDefined();
         expect(JSON.stringify(recovered.messages)).toContain('bad_app repaired View content.');
-        expect(await recovered.executeTool!('bad_app-run', { view_id: 'workspace_2', value: 'recovered' }, 'bad-recovered'))
+        expect(await recovered.executeTool!('bad_app-Workspace-run', { view_id: 'workspace_2', value: 'recovered' }, 'bad-recovered'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'bad_app', value: 'recovered' } });
         expect(bad.invoked).toEqual(['recovered']);
 
@@ -248,9 +248,9 @@ it('sends no candidate HTTP when A closes or remounts inside B verification', as
             } else {
                 expect(provider.requests).toHaveLength(0);
                 expect(errors).toMatchObject([{ code: 'SEMANTIC_ADOPTION_FAILED', cause: { code: 'OBSERVATION_WINDOW_CHANGED' } }]);
-                expect(await prior.executeTool!('first_app-run', { view_id: 'workspace_1', value: 'rejected' }, 'old-a'))
+                expect(await prior.executeTool!('first_app-Workspace-run', { view_id: 'workspace_1', value: 'rejected' }, 'old-a'))
                     .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'VIEW_INSTANCE_REVOKED' } });
-                expect(await prior.executeTool!('second_app-run', { view_id: 'workspace_1', value: 'retained' }, 'old-b'))
+                expect(await prior.executeTool!('second_app-Workspace-run', { view_id: 'workspace_1', value: 'retained' }, 'old-b'))
                     .toMatchObject({ outcomeStatus: 'succeeded' });
                 expect(a.invoked).toEqual([]);
                 expect(b.invoked).toEqual(['retained']);
@@ -276,24 +276,28 @@ it('sends no candidate HTTP when A closes or remounts inside B verification', as
 it('uses the Host App limit even when an adopted request contains more than 128 sources', async () => {
     const maxApps = 150;
     const frame: AppExecutionProjection = {
-        revision: 1, refs: [], tools: [],
+        sourceEpoch: 1, producerSeq: 1, healthySince: 1, refs: [], tools: [],
         views: [{ id: 'workspace', type: 'Workspace', name: 'Workspace', region: 'dynamic',
-            body: 'Short page.', viewInstanceId: 'workspace-mount', tools: [] }],
+            body: 'Short page.', viewInstanceId: 'm:1', tools: [] }],
     };
     // Use real Runtime registrations and observations with a lightweight execution backend for the 151 Apps.
     const observations: string[] = [];
     const backend: AppExecutionBackend = {
-        start({ instanceId }, emit) {
+        start({ instanceId, acceptProjection }, emit) {
+            let publication: import('@aotui/core/host').SnapshotDraftEnvelope;
             return {
                 send({ kind, id }) {
                     switch (kind) {
                         case 'initialize': return emit({ kind: 'reply', id, status: 'ready' });
-                        case 'open':
-                            emit({ kind: 'projection', frame });
-                            return emit({ kind: 'reply', id, status: 'done' });
+                        case 'open': {
+                            const accepted = acceptProjection(frame, 'authoritative');
+                            if (accepted.status !== 'accepted') throw Error(accepted.issue.code);
+                            publication = accepted.publication;
+                            return emit({ kind: 'reply', id, status: 'done', publication });
+                        }
                         case 'observe':
                             observations.push(instanceId);
-                            return emit({ kind: 'projection', id, frame });
+                            return emit({ kind: 'reply', id, status: 'done', publication });
                         case 'stop':
                             return emit({ kind: 'reply', id, status: 'done', cleanup: { state: 'stopped', issues: [] } });
                         case 'close':

@@ -1,7 +1,9 @@
-import { AOTUIError, copyJson, normalizeProjectionLimits, SnapshotDataError } from '@aotui/core';
-import type { AppInteractionPolicy, ProjectionLimits } from '@aotui/core';
+import { normalizeInteractionLimits } from '@aotui/core/host';
+import { AOTUIError, normalizeProjectionLimits } from '@aotui/core';
+import type { AppInteractionPolicy, ProjectionLimits, InteractionLimits } from '@aotui/core';
+import { captureJsonOption, captureLaunchConfig, isRecord } from './launch-config.js';
 
-const appInteractionFields = { toolsEnabled: 'boolean', projectionLimits: 'object' } as const;
+const appInteractionFields = { toolsEnabled: 'boolean', projectionLimits: 'object', interactionLimits: 'object' } as const;
 export const appInstallFields = {
     installationId: 'string', name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string',
     config: 'object', policy: 'object', ...appInteractionFields,
@@ -10,12 +12,6 @@ export const pendingAppFields = {
     ...appInteractionFields, installationId: 'string', localPath: 'string', command: 'array', backend: 'string',
     name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string', config: 'object',
 } as const;
-
-function isRecord(value: unknown): boolean {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null;
-}
 
 function invalidToolsEnabled(): Error {
     return Object.assign(new Error('toolsEnabled must be an own enumerable boolean data property.'), { code: 'TOOLS_ENABLED_INVALID' });
@@ -27,17 +23,6 @@ function captureLimits(input: unknown, path: string): ProjectionLimits {
     } catch (error) {
         throw new AOTUIError('CONFIG_INVALID', { path: (error as { path?: string })?.path ?? path,
             reason: error instanceof Error ? error.message : 'Invalid projection limits' });
-    }
-}
-
-function captureLaunchConfig(value: object, path: string): object {
-    try {
-        return copyJson(value, { maxDepth: 48, maxNodes: 100_000, maxApproxBytes: 4 * 1024 * 1024 }) as object;
-    } catch (error) {
-        throw new AOTUIError('CONFIG_INVALID', {
-            path: error instanceof SnapshotDataError ? path + error.path.slice(1) : path,
-            reason: error instanceof Error ? error.message : 'Expected JSON launch configuration',
-        });
     }
 }
 
@@ -70,7 +55,8 @@ export function captureOptions<T extends object>(
             throw new AOTUIError('CONFIG_INVALID', { path: fieldPath, reason: `Expected an enumerable ${expected} data property` });
         }
         const value = descriptor.value;
-        captured[key] = (key === 'config' || key === 'command') && value !== undefined ? captureLaunchConfig(value, fieldPath) : value;
+        captured[key] = key === 'config' ? captureLaunchConfig(value, fieldPath) :
+            key === 'command' && value !== undefined ? captureJsonOption(value, fieldPath) : value;
     }
     return captured as T;
 }
@@ -80,13 +66,18 @@ type OptionFields = Readonly<Record<string, 'boolean' | 'string' | 'object' | 'f
 export interface CapturedAppInteractionOptions {
     readonly toolsEnabled: boolean;
     readonly projectionLimits: ProjectionLimits;
+    readonly interactionLimits: InteractionLimits;
 }
 
-export function captureInstallationOptions<T extends { toolsEnabled?: boolean; projectionLimits?: unknown }>(
+export function captureInstallationOptions<T extends { toolsEnabled?: boolean; projectionLimits?: unknown; interactionLimits?: unknown }>(
     options: T | undefined, fields: OptionFields,
 ): T & CapturedAppInteractionOptions {
     const captured = captureOptions(options, fields) ?? (Object.create(null) as T);
+    let interactionLimits: InteractionLimits;
+    try { interactionLimits = normalizeInteractionLimits(captured.interactionLimits); }
+    catch (error) { throw new AOTUIError('CONFIG_INVALID', { path: (error as {path?:string})?.path ?? 'options.interactionLimits', reason: error instanceof Error ? error.message : 'Invalid interaction limits' }); }
     return Object.assign(captured, {
+        interactionLimits,
         toolsEnabled: captured.toolsEnabled !== false,
         projectionLimits: captureLimits(captured.projectionLimits, 'options.projectionLimits'),
     });

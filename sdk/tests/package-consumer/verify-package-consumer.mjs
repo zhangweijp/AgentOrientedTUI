@@ -149,6 +149,8 @@ if (!host) {
     assert.equal(facts.load.builtApp, true);
     assert.equal(facts.load.factory, 'function');
     assert.equal(facts.load.componentFactory, 'undefined');
+    await fs.copyFile(new URL('../../type-tests/canonical-declarations.ts', import.meta.url), path.join(output, 'canonical-declarations.ts'));
+    await compile(`${profile}-canonical-declarations`, { lib: ['ES2022'], types: [], noEmit: true }, ['canonical-declarations.ts']);
     const readme = await stageReadmeExample(sdkRoot, 'ts', 'readme-app.ts');
     await compile(`${profile}-readme`, { lib: ['ES2022'], types: [], declaration: true, rootDir: './readme-src', outDir: './readme-out' }, [readme]);
     const app = path.join(output, 'app');
@@ -219,8 +221,8 @@ if (!plain) {
   await fs.mkdir(app, { recursive: true });
   await fs.writeFile(path.join(app, 'index.mjs'), "import { workItemsApp } from '../core-out/work-items-plain.js';\nexport default workItemsApp('work_items');\n");
   await fs.writeFile(path.join(app, 'aoapp.json'), JSON.stringify({
-    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
-    appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './index.mjs' },
+    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v9',
+    appLifecycleSupport: 'app-lifecycle-v3', entry: { main: './index.mjs' },
   }));
   const { receipt, workspace } = lastJson(await checked('source-host-execution', [path.join(output, 'source-host.mjs'), app]));
   assert.equal(receipt.outcomeStatus, 'succeeded');
@@ -233,8 +235,8 @@ if (!plain) {
   await fs.mkdir(assemblyApp, { recursive: true });
   await fs.writeFile(path.join(assemblyApp, 'index.mjs'), "import { workItemsApp } from '../core-out/work-items-plain.js';\nexport default workItemsApp('work_items');\n");
   await fs.writeFile(path.join(assemblyApp, 'aoapp.json'), JSON.stringify({
-    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
-    appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './index.mjs' },
+    app_name: 'work_items', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v9',
+    appLifecycleSupport: 'app-lifecycle-v3', entry: { main: './index.mjs' },
   }));
   const assembly = await checked('assembly-provider-execution', [
     '--experimental-import-meta-resolve', path.join(output, 'assembly-consumer.mjs'), assemblyApp,

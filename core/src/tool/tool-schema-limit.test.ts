@@ -16,9 +16,9 @@ function boundarySchema(bytes: number) {
 }
 const identity = { appId: 'app', instanceId: 'run' };
 const toolId = JSON.stringify(['app', 'Note', 'read']);
-const draft = (inputSchema: JsonValue, seq: number) => ({
+const draft = (inputSchema: JsonValue, seq: number) => ({ healthySince: 1,
   schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
-  views: [{ toolBindings: [{ toolId, activationId: 'active' }], id: 'note', viewInstanceId: 'mount', type: 'Note', name: 'Note', region: 'dynamic',
+  views: [{ toolBindings: [{ toolId, activationId: 'a:1' }], id: 'note', viewInstanceId: 'm:1', type: 'Note', name: 'Note', region: 'dynamic',
     content: { format: 'markdown-v1', value: String(seq) } }], refs: {},
   tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Note',  description: 'Read', inputSchema } },
 });

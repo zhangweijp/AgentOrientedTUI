@@ -16,5 +16,5 @@ export interface UpdateSignal {
     readonly appId: AppID;
     readonly instanceId: string;
     readonly timestamp: number;
-    readonly reason: 'view_updated' | 'projection_failed' | 'projection_recovered' | 'app_opened' | 'app_closed' | 'attention_requested';
+    readonly reason: 'view_updated' | 'projection_failed' | 'projection_recovered' | 'app_opened' | 'app_closed' | 'app_runtime_changed' | 'attention_requested';
 }

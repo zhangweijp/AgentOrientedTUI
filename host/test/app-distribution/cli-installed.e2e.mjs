@@ -25,18 +25,17 @@ async function waitFor(read, target) {
 
 try {
     await mkdir(home);
-    await writeFile(join(folder, 'entry.mjs'), `
-import { createApp, createView, defineViewType } from '@aotui/sdk';
+    await writeFile(join(folder, 'entry.mjs'), `import { createApp, createView, defineViewType } from '@aotui/sdk';
 const Item = defineViewType({ name: 'Item', multiplicity: 'single', region: 'dynamic' });
-export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ launchConfig, prepareProjection }) {
+export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ launchConfig, publish: publishAuthorFrame }) {
     if (launchConfig?.AOTUI_DATA_DIR !== ${JSON.stringify(dataDir)}) throw Error('Expected the Host data directory in launchConfig.');
-    const current = createView(Item, { id: 'current', render: () => ({ body: 'View from the custom manifest entry' }) });
-    prepareProjection({ views: [current] });
+    const current = (() => { const handle = createView(Item, { id: 'current' }); return { handle, frame: () => handle.frame({ body: 'View from the custom manifest entry' }) }; })();
+    publishAuthorFrame(() => ([current]).map(page => page.frame()));
 }});
 `);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
-        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
-        appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
+        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v9',
+        appLifecycleSupport: 'app-lifecycle-v3', entry: { main: './entry.mjs' },
     }));
     await runCli('install', '.');
     const first = JSON.parse(await readFile(config, 'utf8')).apps[name];

@@ -25,18 +25,15 @@ const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'Detail', 
 const viewTypes = [Guide, FileDetail];
 
 export default createApp({ app_name: 'interaction_example', viewTypes,
-  initialize({ prepareProjection }) {
+  initialize({ publish: commit }) {
     let count = 0, text = 'original';
     const filePath = '/open/note.txt';
-    const root = createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({
-      body: '# File Application Instruction\n\nSelect the receiving View by view_id. Use the published File Ref address.',
-    }) });
-    const detail = createView(FileDetail, { idPrefix: 'detail', region: 'dynamic', render: () => {
+    const root = (() => { const handle = createView(Guide, { idPrefix: 'root', region: 'static' }); return { handle, frame: () => handle.frame({ body: '# File Application Instruction\n\nSelect the receiving View by view_id. Use the published File Ref address.' }) }; })();
+    const detail = (() => { const handle = createView(FileDetail, { idPrefix: 'detail', region: 'dynamic' }); return { handle, frame: () => {
       const file = ref('file', { filePath, text }, { scope: 'protected', refType: 'File', schema: FileSchema });
-      return { refs: [file], body: ['Open file: ' + filePath, formatRef('Current file value', file), text, 'Completed actions: ' + count].join('\n\n'),
-        context: { filePath, edit(value) { text = value; count++; publish(); } } };
-    } });
-    function publish() { prepareProjection({ views: [root, detail] }); }
+      return handle.frame({ refs: [file], body: ['Open file: ' + filePath, formatRef('Current file value', file), text, 'Completed actions: ' + count].join('\n\n'), context: { filePath, edit(value) { text = value; count++; publish(); } } });
+    } }; })();
+    function publish() { commit(() => ([root, detail]).map(page => page.frame())); }
     publish();
   },
 });

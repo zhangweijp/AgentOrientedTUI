@@ -1,6 +1,32 @@
+import type { InteractionIssue } from '@aotui/core';
 import { copyWireJson } from '@aotui/core';
 import { exact, invocationObject } from './worker-message-capture.js';
 import type { WorkerError, WorkerInitializationDiagnostic } from '../spi/worker-protocol/messages.js';
+
+// Only Runtime validation branches can establish this provenance. App issues
+// with an identical code are ordinary startup failures.
+const protocolIssues = new WeakMap<object, InteractionIssue>();
+export function runtimeProtocolError(issue: InteractionIssue): Error & InteractionIssue {
+    const value = Object.freeze({ code: issue.code, message: issue.message,
+        ...(issue.path === undefined ? {} : { path: issue.path }) });
+    const error = Object.assign(new Error(value.message), value);
+    protocolIssues.set(error, value);
+    return error;
+}
+
+export function readRuntimeProtocolIssue(error: unknown): InteractionIssue | undefined {
+    try { for (let depth = 0; depth < 8 && error !== null && typeof error === 'object'; depth++) {
+        const issue = protocolIssues.get(error);
+        if (issue) return issue;
+        // Only the Runtime-owned INSTALL_FAILED wrapper is traversed. In
+        // particular, never elevate an arbitrary diagnostic cause.code.
+        const code = Object.getOwnPropertyDescriptor(error, 'code');
+        if (!code || !('value' in code) || code.value !== 'INSTALL_FAILED') return;
+        const cause = Object.getOwnPropertyDescriptor(error, 'cause');
+        if (!cause || !('value' in cause)) return;
+        error = cause.value;
+    } } catch { /* Untrusted properties do not establish provenance. */ }
+}
 
 type Phase = WorkerInitializationDiagnostic['phase'];
 const limits = { name: 128, message: 2048, code: 128, path: 512, stack: 8192 } as const;
@@ -14,8 +40,13 @@ export function initializationFailure(phase: Phase, thrown: unknown): WorkerErro
             const value = key === 'message' && typeof thrown === 'string' ? thrown
                 : thrown !== null && typeof thrown === 'object' ? (thrown as Record<string, unknown>)[key] : undefined;
             if (typeof value === 'string') {
-                truncated ||= value.length > limits[key];
-                return value.slice(0, limits[key]);
+                if (value.length <= limits[key]) return value;
+                truncated = true;
+                // A partial path or code is not the original identifier.
+                if (key === 'path' || key === 'code') return undefined;
+                const end = limits[key];
+                const last = value.charCodeAt(end - 1);
+                return value.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end);
             }
         } catch { /* A diagnostic getter must not replace the installation failure. */ }
         return fallback;
@@ -65,4 +96,15 @@ export function initializationError(input: unknown, appId: string, phase: Phase)
             Object.defineProperty(error, 'path', { value: diagnostic.path, enumerable: true });
     }
     return error as Error & { readonly code: string };
+}
+
+/** Bound each neutral startup field independently; the original request fixes phase. */
+export function executionStartupError(issue: unknown, appId: string, phase: Phase): Error & { readonly code: string } {
+    const trusted = readRuntimeProtocolIssue(issue);
+    const captured = initializationFailure(phase, issue);
+    const diagnostic = captured.diagnostic!;
+    const error = initializationError({ code: diagnostic.code ?? captured.code,
+        message: diagnostic.message, diagnostic }, appId, phase);
+    if (trusted) protocolIssues.set(error, trusted);
+    return error;
 }

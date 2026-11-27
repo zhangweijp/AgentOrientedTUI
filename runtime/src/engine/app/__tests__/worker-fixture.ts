@@ -5,6 +5,9 @@ import type { TransportEvents } from '../../../adapters/execution-transport.js';
 import { RUNTIME_DEFAULTS } from '../../../spi/config/index.js';
 import type { AppWorkerHost, AppWorkerHostConfig } from '../worker-host.js';
 
+const fixtureWorkers = new WeakMap<AppWorkerHost, Worker>();
+export function fixtureWorker(host: AppWorkerHost): Worker | undefined { return fixtureWorkers.get(host); }
+
 /** A fixture can control the real Node transport without adding a production launch mode. */
 export function fixtureHost<T extends AppWorkerHost>(
     Host: new (options: AppWorkerHostConfig) => T,
@@ -25,7 +28,10 @@ export function fixtureHost<T extends AppWorkerHost>(
         bindExecution: (start: (emit: TransportEvents) => ReturnType<typeof connectNodeWorker>) => void;
     };
     if (worker || script) {
-        const start = (emit: TransportEvents) => connectNodeWorker(worker ?? new Worker(script!), emit);
+        const start = (emit: TransportEvents) => {
+            const physical = worker ?? new Worker(script!); fixtureWorkers.set(host, physical);
+            return connectNodeWorker(physical, host['executionOptions'], emit, host['acceptFrame'], host['kindOf'], options.name);
+        };
         if (attach) internals.bindExecution(start);
         else internals.startExecution = start;
     }
@@ -41,4 +47,17 @@ export function committedSnapshot(host: AppWorkerHost) {
     const state = committedState(host);
     if (state.status !== 'ready') throw new Error('Expected a ready snapshot, received ' + state.status);
     return state.snapshot;
+}
+
+
+export function emitHealthyOpen(worker: { emit(event: string, message: unknown): unknown }, request: {requestId?: string},
+    appId: string, instanceId: string, draft?: Record<string, unknown>) {
+    const publication = { appId, instanceId, sourceEpoch: 1, producerSeq: 1 };
+    const types = new Map<string, 'single' | 'multiple'>();
+    for (const view of (draft?.views ?? []) as { type: string }[]) types.set(view.type, 'multiple');
+    for (const tool of Object.values(draft?.tools ?? {}) as { viewType: string; multiplicity: 'single' | 'multiple' }[]) types.set(tool.viewType, tool.multiplicity);
+    worker.emit('message', { type: 'SNAPSHOT_PREPARED', requestId: request.requestId,
+        viewTypes: [...types].map(([name, multiplicity]) => ({ name, multiplicity })),
+        draft: draft ?? { ...publication, schemaVersion: 9, healthySince: 1, capturedAt: 1, views: [], refs: {}, tools: {} } });
+    return publication;
 }

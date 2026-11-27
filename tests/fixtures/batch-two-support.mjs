@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export const ORIGINAL = ['beta@example.test', 'alpha@example.test', 'beta@example.test'];
 export const CHANGED = ['alpha@example.test', 'beta@example.test'];
-export const MAIL_TOOL = 'mail-set_recipients';
+export const MAIL_TOOL = 'mail-draft-set_recipients';
 export const TO_CONTACTS = { to: '$ref.contacts.list.emails' };
 
 // Some test Apps are compiled as modules in a shared consumer. Give each
@@ -18,7 +18,7 @@ export async function fixtureAppPath(moduleLocation, appName, folder) {
     const modulePath = moduleLocation.startsWith('file:') ? fileURLToPath(moduleLocation) : resolve(moduleLocation);
     await writeFile(join(localPath, 'aoapp.json'), JSON.stringify({
         app_name: appName, version: '0.1.0', entry: { main: modulePath },
-        toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
+        toolAuthoringProtocol: 'view-type-tools-v9', appLifecycleSupport: 'app-lifecycle-v3',
     }));
     return localPath;
 }

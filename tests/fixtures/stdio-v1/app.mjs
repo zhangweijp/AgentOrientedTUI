@@ -8,7 +8,7 @@ const people = { type: 'array', items: {
     type: 'object', properties: { 'display.name': string }, required: ['display.name'], additionalProperties: false,
 } };
 const Index = defineViewType({ name: 'Index', multiplicity: 'single', region: 'static' });
-const File = defineViewType()({
+const File = defineViewType()({ onClose: { enabled: context => !!context.close, execute: ({ context }) => context.close() },
     name: 'File', multiplicity: 'multiple', region: 'dynamic',
     tools: {
         edit: {
@@ -25,7 +25,7 @@ const ok = { success: true };
 export default createApp({
     app_name: 'stdio_files',
     viewTypes: [Index, File],
-    initialize({ launchConfig, prepareProjection, requestAttention, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, requestAttention, registerLifecycle }) {
         const { folder } = launchConfig;
         const path = name => join(folder, name);
         const existed = name => existsSync(path(name));
@@ -37,17 +37,17 @@ export default createApp({
                 await delay(8);
             }
         }
-        const catalog = createView(Index, { render: () => ({ body: '# Files' }) });
+        const catalog = (() => { const handle = createView(Index); return { handle, frame: () => handle.frame({ body: '# Files' }) }; })();
         const files = new Map(['A', 'B'].map(key => {
             const name = key + '.txt';
-            const view = createView(File, { idPrefix: key, name, render() {
+            const view = (() => { const handle = createView(File, { idPrefix: key }); const displayName = name; const closeAction = function() { files.delete(key); render(); return ok; }; return { handle, frame: () => {
                 const text = readFileSync(path(name), 'utf8');
                 const item = arrayRef('people', [{ 'display.name': '小梅 & Team' }], {
                     schema: people, scope: 'public', itemType: 'Person',
                 });
-                return { body: text + '\n' + formatRef('小梅', item, 0), refs: [
+                return handle.frame({ name: displayName, body: text + '\n' + formatRef('小梅', item, 0), refs: [
                     ref('content', text, { schema: string, scope: 'public' }), item,
-                ], context: {
+                ], context: { ...({
                     async save({ text, wait }) {
                         if (wait) {
                             mark('edit-entered');
@@ -58,11 +58,11 @@ export default createApp({
                         render();
                         return { success: true, data: { saved: name } };
                     },
-                } };
-            }, onClose() { files.delete(key); render(); return ok; } });
+                }), close: closeAction } });
+            } }; })();
             return [key, view];
         }));
-        function render() { return prepareProjection({ views: [catalog, ...files.values()] }); }
+        function render() { return commit(() => ([catalog, ...files.values()]).map(page => page.frame())); }
         render();
         const buffer = new Int32Array(new SharedArrayBuffer(4));
         const watching = setInterval(() => {
@@ -77,7 +77,7 @@ export default createApp({
                 render();
             }
         }, 12);
-        registerCleanup({
+        registerLifecycle({
             stop() { clearInterval(watching); },
             async close() {
                 if (existed('close-hold')) {

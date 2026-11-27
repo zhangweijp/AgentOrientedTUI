@@ -1,6 +1,6 @@
 /** Core owns these contracts. The Runtime root also exposes the Host-facing types. */
 import type { AppSnapshot, JsonValue, ViewToolReceiver, ToolDescriptor } from '../snapshot/types.js';
-import type { Observation, ObservedView, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits, ObservationWindowSelection } from './observation-types.js';
+import type { Observation, ObservedView, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits, ObservationWindowSelection, ObservationOptions } from './observation-types.js';
 import type { RefPath } from '../tool/ref-path.js';
 import type { SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
 export type { AppIdentityRead, AppIdentityReader } from '../snapshot/types.js';
@@ -31,6 +31,15 @@ export interface AppInvocation {
   /** Business argument slots. Ref addresses are resolved before application code runs. */
   readonly input:JsonObject;
 }
+/** Internal Core request for a close action selected from an adopted Observation. */
+export interface CloseInvocation {
+  readonly kind: 'closeView';
+  readonly invocationId: string;
+  readonly observationId: string;
+  readonly viewId: string;
+  readonly viewInstanceId: string;
+}
+export type InvocationRequest = AppInvocation | CloseInvocation;
 export interface PublicRefValue {
   readonly appId: string;
   readonly viewId: string;
@@ -56,7 +65,7 @@ export type InspectRefResult = Readonly<{ status: 'ready'; schema: JsonValue }> 
   Readonly<{ status: 'rejected'; issue: Issue }>;
 export interface ActiveTurn {
   readonly isCurrent: boolean;
-  invoke(appId: string, request: AppInvocation, timeoutMs?: number, signal?: CancellationSignal): Promise<InvokeResult>;
+  invoke(appId: string, request: InvocationRequest, timeoutMs?: number, signal?: CancellationSignal): Promise<InvokeResult>;
   readPublicRefs(addresses?: readonly string[]): Promise<ReadPublicRefsResult>;
   inspectRef(address: string, mode: InspectRefMode): Promise<InspectRefResult>;
   release(): readonly Issue[];
@@ -67,25 +76,30 @@ export interface ReceiptQuery {
   readonly observationId: string;
   readonly invocationId: string;
 }
-export interface InvocationSource {
-  readonly appId:string;
-  readonly instanceId:string;
-  readonly snapshotId:string;
-  readonly tool:ToolDescriptor;
-  readonly receiver:ViewToolReceiver;
-}
+export type ViewCloseReceiver = Readonly<{
+  viewId: string;
+  viewInstanceId: string;
+  closeActivationId: string;
+}>;
+export type InvocationOperation =
+  | Readonly<{kind:'tool'; tool:ToolDescriptor; receiver:ViewToolReceiver}>
+  | Readonly<{kind:'closeView'; viewType:string; receiver:ViewCloseReceiver}>;
+export type InvocationSource = Readonly<ObservationSource & { admissionSinceRevision: number }> & InvocationOperation;
+export type ReceiptOperation =
+  | Readonly<{kind:'tool'; toolId:string; viewId?:string}>
+  | Readonly<{kind:'closeView'; viewType:string; receiver:ViewCloseReceiver}>;
 export interface ReceiptMetadata {
   readonly appId:string;
   readonly instanceId:string;
   readonly invocationId:string;
   readonly observationId:string;
-  readonly toolId:string;
+  readonly operation:ReceiptOperation;
   readonly source:ObservationSource|null;
 }
 export interface InvocationReceipt {
   readonly invocationId:string;
   readonly observationId:string;
-  readonly toolId:string;
+  readonly operation:ReceiptOperation;
   readonly source:ObservationSource|null;
   /** When the invocation reached its terminal outcome. */
   readonly completedAt:number;
@@ -94,8 +108,8 @@ export interface InvocationReceipt {
   readonly outcome:InvocationOutcome;
 }
 export type ReceiptAccess =
-  | Readonly<{kind:'receipt'; receipt:InvocationReceipt}>
-  | Readonly<{kind:'unavailable'; code:string; message:string}>;
+  | Readonly<{kind:'receipt'; receipt:InvocationReceipt; locator:ReceiptQuery}>
+  | Readonly<{kind:'unavailable'; code:string; message:string; locator?:ReceiptQuery; executionPhase?:'not-dispatched'}>;
 export type InvokeResult = ReceiptAccess | Readonly<{kind:'refused'} & Issue>;
 export type ObserveResult = Readonly<{status:'observed'; observation:Observation}> | Readonly<{status:'rejected'; issue:Issue}>;
 export type AppPreviewResult = Readonly<{status:'previewed'; source:ObservationSource; views:readonly ObservedView[]}> |
@@ -124,12 +138,12 @@ export interface AppInteractionPolicy {
   canReadReceipt(metadata:ReceiptMetadata, signal:CancellationSignal):boolean|Promise<boolean>;
 }
 export interface AppInteraction {
-  observe():Promise<ObserveResult>;
+  observe(options?: ObservationOptions):Promise<ObserveResult>;
   preview():Promise<AppPreviewResult>;
   /** Adopt the prepared observation and release the previous observation. */
   adoptObservation(observationId:string, windows?: import('./observation-types.js').ObservationWindowSelection):Readonly<{status:'adopted'}>|Readonly<{status:'rejected';issue:Issue}>;
   /** A deadline bounds this wait and the initial invocation's admission. Dispatched work continues to settlement. */
-  invoke(request:AppInvocation, timeoutMs?:number, turn?:ActiveTurn, signal?:CancellationSignal):Promise<InvokeResult>;
+  invoke(request:InvocationRequest, timeoutMs?:number, turn?:ActiveTurn, signal?:CancellationSignal):Promise<InvokeResult>;
   /** Authorize and read the original invocation's terminal receipt. The deadline only bounds this read. */
   readReceipt(query: ReceiptQuery, timeoutMs?:number):Promise<ReceiptAccess>;
   releaseObservation(observationId:string):void;
@@ -142,23 +156,25 @@ export interface AppInteractionSource {
 }
 export type InvocationJsonLimits = Omit<ObservationJsonLimits, 'maxApproxBytes'>;
 export interface InteractionLimits {
-  readonly maxReceiptsPerObservation:number;
-  readonly maxReceipts:number;
-  readonly maxReads:number;
-  readonly receiptTtlMs:number;
-  readonly request:InvocationJsonLimits;
-  readonly rawInput:InvocationJsonLimits;
-  readonly metadata:InvocationJsonLimits;
-  readonly fact:InvocationJsonLimits;
-  readonly receipt:InvocationJsonLimits;
+  readonly maxPendingInvocations: number;
+  readonly maxReads: number;
+  readonly maxEntriesPerScope: number;
+  readonly maxEntries: number;
+  readonly maxReceiptContents: number;
+  readonly maxReceiptBytes: number;
+  readonly receiptTtlMs: number;
 }
-export type InteractionLimitOverrides = {
-  readonly [K in keyof InteractionLimits]?: InteractionLimits[K] extends InvocationJsonLimits ? Partial<InteractionLimits[K]> : number;
-};
+export type InteractionLimitOverrides = Partial<InteractionLimits>;
 export interface InteractionStats {
   readonly closed:boolean;
   readonly activeInvocations:number;
   readonly activeReads:number;
+  readonly queuedInvocations:number;
+  readonly receiptReservations:number;
+  readonly receiptReservedBytes:number;
+  readonly receiptBytes:number;
+  readonly fingerprintBytes:number;
+  readonly metadataBytes:number;
   readonly receiptEntries:number;
   readonly receiptContents:number;
   readonly borrowedSnapshots:number;

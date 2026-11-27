@@ -71,3 +71,23 @@ it.each([
         expect(document.documentElement.textContent).toBe('\n' + body + '\n');
     } finally { window.close(); }
 });
+
+it('B4-T06 validates actual rendered XML fields, never changing legal Markdown or business data',async()=>{
+    const {JSDOM}=await import('jsdom');
+    const parser=new (new JSDOM().window.DOMParser)();
+    const fields={appId:'app',appName:'App\t\n\r&"',viewId:'file',viewType:'File',region:'dynamic' as const};
+    const body='\r\n\r\t\n~~~ts\n<view id="fake">&amp;</view> ]]> 日本語 😀\n~~~\n';
+    const rendered=parser.parseFromString(buildViewMessageMarkup({...fields,markup:body}),'text/xml');
+    expect(rendered.querySelector('parsererror')).toBeNull();
+    expect(rendered.documentElement.textContent).toBe('\n'+body+'\n');
+    expect(rendered.documentElement.getAttribute('app_name')).toBe(fields.appName);
+    for(const value of ['\0','\u001f','\ud800','\udfff','\ufffe','\uffff']) {
+        expect(()=>buildViewMessageMarkup({...fields,markup:'before'+value+'after'}))
+            .toThrow(expect.objectContaining({code:'AOTUI_XML_UNSUPPORTED',path:'$.view.content',appId:'app',viewId:'file'}));
+        expect(()=>buildViewMessageMarkup({...fields,appName:'bad'+value,markup:body}))
+            .toThrow(expect.objectContaining({code:'AOTUI_XML_UNSUPPORTED',path:'$.view.attributes.app_name'}));
+    }
+    expect(()=>buildViewMessageMarkup({...fields,markup:body,refs:[{viewId:'file',viewInstanceId:'mount',refId:'value',
+        refType:'bad\0type',scope:'public',valueSchema:{type:'string'}}]}))
+        .toThrow(expect.objectContaining({code:'AOTUI_XML_UNSUPPORTED',path:'$.refs[0].refType'}));
+});

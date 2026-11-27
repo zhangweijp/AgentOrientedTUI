@@ -94,7 +94,7 @@ async function verifyNpm() {
     await fs.writeFile(join(directory, 'package.json'), JSON.stringify({ name, version, type: 'module', main: './main.mjs' }));
     await fs.writeFile(join(directory, 'main.mjs'), "throw Error('The npm catalog should not import this App');\n");
     await fs.writeFile(join(directory, 'aoapp.json'), JSON.stringify({ app_name: 'npm_catalog_fixture', version,
-        entry: { main: './main.mjs' }, toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2' }));
+        entry: { main: './main.mjs' }, toolAuthoringProtocol: 'view-type-tools-v9', appLifecycleSupport: 'app-lifecycle-v3' }));
     const packed = await execute('npm', ['pack', '--ignore-scripts', '--json'], { cwd: directory,
         env: { ...cliEnv, npm_config_cache: join(state, 'npm-pack-cache') } });
     const tarball = await fs.readFile(join(directory, JSON.parse(packed.stdout)[0].filename));

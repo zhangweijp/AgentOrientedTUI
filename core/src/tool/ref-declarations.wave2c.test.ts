@@ -7,10 +7,10 @@ const input = (refType = 'File') => ({ type: 'object', properties: { file: field
 function schema(refType = 'File'): any {
     const c = compileToolParameters(input(refType)); if (!c.ok) throw Error('fixture'); return c.contract.schema;
 }
-function draft(inputSchema = schema(), activationId = 'active-1', sequence = 1): any {
+function draft(inputSchema = schema(), activationId = 'a:1', sequence = 1): any {
     const id = JSON.stringify(['app', 'FileDetail', 'inspect']);
-    return { schemaVersion: 8, appId: 'app', instanceId: 'run', producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
-        views: [{ toolBindings: [{ toolId: id, activationId }], id: 'fd_A', viewInstanceId: 'mount', type: 'FileDetail', name: 'A', region: 'dynamic', content: { format: 'markdown-v1', value: 'A' } }], refs: {},
+    return { healthySince: 1,  schemaVersion: 9, appId: 'app', instanceId: 'run', producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
+        views: [{ toolBindings: [{ toolId: id, activationId }], id: 'fd_A', viewInstanceId: 'm:1', type: 'FileDetail', name: 'A', region: 'dynamic', content: { format: 'markdown-v1', value: 'A' } }], refs: {},
         tools: { [id]: { multiplicity: 'multiple', id, name: 'inspect', viewType: 'FileDetail',  description: 'Inspect', inputSchema } } };
 }
 const setup = () => createViewOwnedTools('app', 'run');

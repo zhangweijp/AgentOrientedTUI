@@ -8,11 +8,31 @@
   "editSchema": {
     "type": "object",
     "properties": {
-      "view_id": { "type": "string", "description": "Receiving File page XML view_id." },
-      "text": { "type": "string" },
-      "wait": { "type": "boolean" }
+      "view_id": {
+        "type": "string",
+        "description": "Receiving File page XML view_id."
+      },
+      "text": {
+        "type": "string"
+      },
+      "wait": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "string",
+            "description": "A complete $ref.app_id.view_id.ref_id address.",
+            "pattern": "^\\$ref\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\.[A-Za-z_][A-Za-z0-9_]*([.\\[][\\s\\S]*)?$"
+          }
+        ],
+        "description": "A compatible $ref.app_id.view_id.ref_id address is also accepted."
+      }
     },
-    "required": ["view_id", "text"],
+    "required": [
+      "view_id",
+      "text"
+    ],
     "additionalProperties": false
   }
 }

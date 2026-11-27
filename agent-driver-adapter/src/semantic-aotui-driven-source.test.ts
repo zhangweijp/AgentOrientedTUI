@@ -9,7 +9,7 @@ import type { ActiveTurn, IDesktop, AppDiscoveryInfo, ObservationCandidate, Turn
 import type { AppWindows } from '@aotui/runtime';
 import { createCandidateScope } from '../../runtime/src/engine/core/candidate-scope.js';
 import { createProviderToolSchemaPolicy, type MeasureModelRequest } from '@aotui/agent-driver-v2';
-import type { Observation } from '@aotui/core';
+import type { Observation, ObservationOptions } from '@aotui/core';
 import type { InvocationOutcome, InvocationReceipt, InvokeResult, AppInvocation } from '@aotui/core';
 
 const app = (id: string, status: AppDiscoveryInfo['status'] = 'running', appInstanceId: string | null =
@@ -26,7 +26,7 @@ function observation(appId: string, revision = 1, name = 'multi_open_file'): Obs
     };
 }
 function receipt(request: AppInvocation, outcome: InvocationOutcome = { status: 'succeeded', value: null }): InvocationReceipt {
-    return { invocationId: request.invocationId, observationId: request.observationId, toolId: request.toolId,
+    return { invocationId: request.invocationId, observationId: request.observationId, operation: {kind:"tool", toolId:request.toolId},
         source: null, completedAt: 1, expiresAt: 60001, executionPhase: 'entered-returned', outcome };
 }
 function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOptions = {}) {
@@ -41,8 +41,11 @@ function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOpt
         const results = new Map<string, InvocationReceipt>();
         const release = vi.fn();
         return {
-            observe: vi.fn(async () => {
-                const observation = observations.get(appId)!;
+            observe: vi.fn(async (options?: ObservationOptions) => {
+                const captured = observations.get(appId)!;
+                const observation = options?.excludeToolIds?.length
+                    ? { ...captured, observationId: captured.observationId + '-narrow',
+                        tools: captured.tools.filter(tool => !options.excludeToolIds!.includes(tool.id)) } : captured;
                 let removed = false;
                 const discard = () => { if (!removed) { removed = true; release(observation.observationId); } return []; };
                 const candidate: ObservationCandidate = { observation, discard: () => adoptedCandidates.has(candidate) ? [] : discard() };
@@ -84,6 +87,7 @@ function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOpt
         getSystemLogs: vi.fn((): Array<{timestamp: number; message: string}> => []),
         openApp: vi.fn(async (id: string) => { installed.splice(installed.findIndex(item => item.installationId === id), 1, app(id)); return { appId: id }; }),
         beginAppClose: vi.fn(async (_appId: string, _instance: string) => ({ ok: true, resourcesReleased: true })),
+        beginCloseApp: (appId: string, instanceId: string) => ({ completion: desktop.beginAppClose(appId, instanceId) }),
         revokeWindowAccess: vi.fn((_turn: ActiveTurn, _target: { appId: string; instanceId: string }) => {}),
         output: { subscribe: vi.fn((listener: (signal: UpdateSignal) => void) => updates.add(listener)),
             unsubscribe: vi.fn((listener: (signal: UpdateSignal) => void) => updates.delete(listener)) },
@@ -168,7 +172,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         h.desktop.adoptTurn.mockImplementationOnce(selection => ({ ...adopt(selection), cleanupIssues: [cleanup] }));
         const context = await consume(h.source);
         expect(onCleanupIssues).toHaveBeenCalledExactlyOnceWith([cleanup]);
-        expect(await context.executeTool!('one-multi_open_file', {}, 'after-cleanup')).toMatchObject({ outcomeStatus: 'succeeded' });
+        expect(await context.executeTool!('one-AnyView-multi_open_file', {}, 'after-cleanup')).toMatchObject({ outcomeStatus: 'succeeded' });
         await context.release!();
         await h.source.dispose();
     });
@@ -198,7 +202,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(() => next.adopt!()).toThrow(expect.objectContaining({ code: 'SEMANTIC_ADOPTION_FAILED',
             cause: { code: 'OBSERVATION_UNAVAILABLE', message: 'gone' } }));
         expect(h.desktop.adoptTurn.mock.calls[1]?.[0].apps).toHaveLength(2);
-        expect((await first.executeTool!('one-multi_open_file', {}, 'old'))?.outcomeStatus).toBe('succeeded');
+        expect((await first.executeTool!('one-AnyView-multi_open_file', {}, 'old'))?.outcomeStatus).toBe('succeeded');
         for (const item of h.clients) expect(item.client.release).toHaveBeenCalled();
         await next.release!(); await h.source.dispose();
     });
@@ -210,7 +214,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(context.tools.aotui_read_receipt).toBeUndefined();
         expect(context.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(2);
         expect(context.messages.some(message => String(message.content).includes('installation_id: pending'))).toBe(true);
-        for (const entry of h.clients) expect(entry.client.observe).toHaveBeenCalledWith();
+        for (const entry of h.clients) expect(entry.client.observe).toHaveBeenCalledWith(undefined);
         await context.executeTool!(one, {}, 'one-call');
         await context.executeTool!(two, {}, 'two-call');
         expect(h.clients[0].client.invoke).toHaveBeenCalledWith(expect.objectContaining({ observationId: 'one-observation-1', toolId: 'tool' }), undefined, undefined);
@@ -340,7 +344,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(latest.tools['system-expand_app']).toBeUndefined();
         expect((await latest.executeTool!('system-collapse_app', { app_id: 'one' }, 'fresh-collapse'))?.outcomeStatus).toBe('succeeded');
         expect(h.desktop.revokeWindowAccess).toHaveBeenLastCalledWith(expect.objectContaining({ isCurrent: true }),
-            { appId: 'one', instanceId: 'successor-instance' });
+            { appId: 'one', instanceId: 'successor-instance' }, 'all');
         const freshFolded = await consume(h.source);
         expect((await freshFolded.executeTool!('system-expand_app', { app_id: 'one' }, 'fresh-show'))?.outcomeStatus).toBe('succeeded');
         expect(h.desktop.revokeWindowAccess).toHaveBeenCalledTimes(2);
@@ -459,8 +463,8 @@ describe('SemanticAOTUIDrivenSource', () => {
             return create(appId, instanceId);
         });
         const context = await consume(h.source);
-        expect(context.tools['one-multi_open_file']).toBeDefined();
-        expect(context.tools['two-multi_open_file']).toBeUndefined();
+        expect(context.tools['one-AnyView-multi_open_file']).toBeDefined();
+        expect(context.tools['two-AnyView-multi_open_file']).toBeUndefined();
         expect(context.messages.some(message => String(message.content).includes('current one revision 1'))).toBe(true);
         expect(context.messages.some(message => String(message.content).includes('current two revision 1'))).toBe(false);
         expect(context.messages.some(message => String(message.content).includes('AOTUI_APP_PROJECTION_FAILED'))).toBe(true);
@@ -483,8 +487,8 @@ describe('SemanticAOTUIDrivenSource', () => {
         });
         const context = await consume(h.source);
         try {
-            expect(context.tools['one-multi_open_file']).toBeDefined();
-            expect(context.tools['two-multi_open_file']).toBeUndefined();
+            expect(context.tools['one-AnyView-multi_open_file']).toBeDefined();
+            expect(context.tools['two-AnyView-multi_open_file']).toBeUndefined();
             const messages = context.messages.map(message => String(message.content)).join('\n');
             expect(messages).toContain('current one revision 1');
             expect(messages).not.toContain('current two revision 1');
@@ -510,7 +514,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         const name = findTool(context, '-multi_open_file'), signal = new AbortController().signal;
         expect(context.toolsSettlingOnAbort?.has(name)).toBe(true);
         expect(context.toolsSettlingOnAbort?.has('run_code')).toBe(true);
-        h.clients[0].client.invoke.mockResolvedValueOnce({ kind: 'unavailable', code: 'INVOCATION_WAIT_CANCELLED', message: 'wait cancelled' });
+        h.clients[0].client.invoke.mockResolvedValueOnce({ kind: 'unavailable', code: 'INVOCATION_WAIT_CANCELLED', message: 'wait cancelled', locator: {desktopId:'desktop',appId:'one',instanceId:'one-instance',observationId:'one-observation-1',invocationId:'original-native'} });
         const result = await context.executeTool!(name, {}, 'original-native', undefined, signal);
         const [request, , passedSignal] = h.clients[0].client.invoke.mock.calls[0]!;
         expect(request).not.toHaveProperty('inputMode');
@@ -565,17 +569,17 @@ describe('SemanticAOTUIDrivenSource', () => {
         const oversized = 'x'.repeat(65 - 'bad-'.length);
         h.observations.set('bad', observation('bad', 1, oversized));
         const invalid = await h.source.getContext();
-        expect(invalid.tools['good-multi_open_file']).toBeDefined();
-        expect(invalid.tools['bad-' + oversized]).toBeUndefined();
-        expect(invalid.messages.some(message => String(message.content).includes('current bad revision 1'))).toBe(false);
+        expect(invalid.tools['good-AnyView-multi_open_file']).toBeDefined();
+        expect(invalid.tools['bad-AnyView-' + oversized]).toBeUndefined();
+        expect(invalid.messages.some(message => String(message.content).includes('current bad revision 1'))).toBe(true);
         expect(invalid.messages.some(message => String(message.content).includes('AOTUI_TOOL_NAME_INVALID'))).toBe(true);
         await invalid.adopt?.();
-        expect(h.clients.find(entry => entry.appId === 'bad')!.client.release).toHaveBeenCalledOnce();
+        expect(h.clients.find(entry => entry.appId === 'bad')!.client.release).toHaveBeenCalledWith('bad-observation-1');
 
         h.observations.set('bad', observation('bad', 2, 'read'));
         await invalid.release!();
         const recovered = await consume(h.source);
-        expect(recovered.tools['bad-read']).toBeDefined();
+        expect(recovered.tools['bad-AnyView-read']).toBeDefined();
         await invalid.release!(); await recovered.release!();
         h.source.dispose();
     });
@@ -623,7 +627,7 @@ describe('semantic receipt mapping', () => {
                 'Check the current App View for its effects before repeating the operation.',
         },
     ])('maps $code to $status and supplies Agent-facing guidance', async ({ code, message, status, agentMessage }) => {
-        const result = await executeMappedResult({ kind: 'unavailable', code, message });
+        const result = await executeMappedResult({ kind: 'unavailable', code, message, ...(status === 'rejected' ? {executionPhase:'not-dispatched' as const} : {}) });
         expect(result).toEqual({ toolName: expect.any(String), toolCallId: 'call', outcomeStatus: status,
             error: { code, message: agentMessage ?? message } });
     });
@@ -670,14 +674,20 @@ it('reuses a budget report without extending its original lifetime', async () =>
     } finally { h.source.dispose(); time.mockRestore(); }
 });
 
-it('withdraws hinted business routes and retains the strict Console until management-only turns', async () => {
+it('withdraws hinted business routes and fixed optional Console according to the Provider contract', async () => {
     const h = harness([app('one')], { includeInstruction: false });
     const prior = h.observations.get('one')!;
     h.observations.set('one', { ...prior, views: [{ ...prior.views[0]!,
         content: { format: 'markdown-v1', value: 'body '.repeat(800) } }] });
     h.desktop.getAppWindows.mockReturnValue({ appId: h.installed[0]!.appId!, instanceId: 'one-instance',
         views: [{ viewId: 'workspace', viewInstanceId: 'one-view', type: 'AnyView', name: 'Workspace', canClose: true, region: 'dynamic' }] });
-    const policy = await createProviderToolSchemaPolicy({ model: 'fixture', provider: { id: 'openai', toolSchemaMode: 'strict' } });
+    const strictPolicy = await createProviderToolSchemaPolicy({ model: 'fixture', provider: { id: 'openai', toolSchemaMode: 'strict' } });
+    const strictContext = await h.source.getContext(strictPolicy);
+    expect(strictContext.tools.run_code).toBeUndefined();
+    expect(strictContext.tools['system-collapse_view']).toBeUndefined();
+    expect(strictContext.messages.some(message => String(message.content).startsWith('## Console bindings'))).toBe(false);
+    await strictContext.release!();
+    const policy = await createProviderToolSchemaPolicy({ model: 'fixture', provider: { id: 'openai', toolSchemaMode: 'non-strict' } });
     const fit = (messagesBudget: boolean) => h.source.getContext(policy).then(async candidate => {
         const plan = await candidate.fitModelBudget!(async context => {
             const inputBytes = messagesBudget ? Buffer.byteLength(JSON.stringify(context.messages)) : context.managementOnly ? 100 : 4000;
@@ -689,13 +699,13 @@ it('withdraws hinted business routes and retains the strict Console until manage
         const complete = await h.source.getContext(policy);
         const bindings = (context: typeof complete) => context.messages.find(message =>
             String(message.content).startsWith('## Console bindings for this request'));
-        expect(bindings(complete)).toMatchObject({ role: 'user', region: 'dynamic', content: expect.stringContaining('one-multi_open_file') });
+        expect(bindings(complete)).toMatchObject({ role: 'user', region: 'dynamic', content: expect.stringContaining('one-AnyView-multi_open_file') });
         await complete.release?.();
         const hinted = await fit(true);
         expect(hinted.context.messages.some(message => String(message.content).includes('This View is open.'))).toBe(true);
-        expect(hinted.context.tools['one-multi_open_file']).toBeUndefined();
+        expect(hinted.context.tools['one-AnyView-multi_open_file']).toBeUndefined();
         expect(bindings(hinted.context)).toBeDefined();
-        expect(String(bindings(hinted.context)!.content)).not.toContain('one-multi_open_file');
+        expect(String(bindings(hinted.context)!.content)).not.toContain('one-AnyView-multi_open_file');
         expect(hinted.context.tools.run_code?.description).toBe(complete.tools.run_code?.description);
         expect(hinted.context.tools.run_code?.inputSchema).toEqual(complete.tools.run_code?.inputSchema);
         expect(hinted.context.messages.some(message => String(message.content).includes('input tokens'))).toBe(false);
@@ -705,7 +715,7 @@ it('withdraws hinted business routes and retains the strict Console until manage
         const reportId = hinted.context.messages.map(message => String(message.content).match(/report_id ([a-f0-9-]+)/)?.[1]).find(Boolean);
         expect(reportId).toBeDefined();
         const reportTool = hinted.context.tools['system-read_window_budget']!;
-        expect((reportTool.inputSchema as any).jsonSchema.properties.page).toEqual({ type: 'integer' });
+        expect((reportTool.inputSchema as any).jsonSchema.properties.page).toEqual({ type: 'integer', minimum: 1 });
         expect(await hinted.context.executeTool!('system-read_window_budget', { report_id: reportId, page: 0 }, 'bad-page'))
             .toMatchObject({ error: { code: 'WINDOW_BUDGET_REPORT_UNAVAILABLE' } });
         expect(await hinted.context.executeTool!('system-read_window_budget', { report_id: reportId, page: 1 }, 'valid-page'))
@@ -715,7 +725,7 @@ it('withdraws hinted business routes and retains the strict Console until manage
         expect(management.context.managementOnly).toBe(true);
         expect(Object.keys(management.context.tools)).toContain('system-open_app');
         expect(management.context.tools.run_code).toBeUndefined();
-        expect(management.context.tools['one-multi_open_file']).toBeUndefined();
+        expect(management.context.tools['one-AnyView-multi_open_file']).toBeUndefined();
         expect(bindings(management.context)).toBeUndefined();
         management.candidate.release?.();
     } finally { await h.source.dispose(); }
@@ -784,8 +794,8 @@ describe('model-visible presentation contract', () => {
         }
         expect(views.map(view => view.region)).toEqual(['static', 'dynamic']);
         expect(views[0].content).toContain('Available references\n- protected $ref.one.workspace.items (Item[])');
-        expect(Object.keys(context.tools)).toContain('one-multi_open_file');
-        expect((context.tools['one-multi_open_file'].inputSchema as any).jsonSchema).toEqual(source.tools[0].inputSchema);
+        expect(Object.keys(context.tools)).toContain('one-AnyView-multi_open_file');
+        expect((context.tools['one-AnyView-multi_open_file'].inputSchema as any).jsonSchema).toEqual(source.tools[0].inputSchema);
         await context.release!(); h.source.dispose();
     });
 
@@ -888,7 +898,7 @@ describe('model-visible presentation contract', () => {
         const schema = { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'], additionalProperties: false };
         const single: Observation = { ...source, tools: [{ ...source.tools[0]!, multiplicity: 'multiple', inputSchema: schema }] };
         h.observations.set('one', single);
-        const one = await h.source.getContext(), name = 'one-multi_open_file';
+        const one = await h.source.getContext(), name = 'one-AnyView-multi_open_file';
         h.observations.set('one', { ...single, observationId: 'two-views',
             views: [...source.views, { ...source.views[0]!, id: 'second', viewInstanceId: 'second-instance' }],
         });
@@ -915,7 +925,7 @@ describe('model-visible presentation contract', () => {
             views: [...source.views, { ...source.views[0]!, id: 'second', viewInstanceId: 'second-instance' }],
             tools: [{ ...source.tools[0]!, multiplicity: 'multiple', eligibleViewIds: ['second'] }],
         });
-        const context = await consume(h.source), name = 'one-multi_open_file';
+        const context = await consume(h.source), name = 'one-AnyView-multi_open_file';
         expect((context.tools[name].inputSchema as any).jsonSchema.properties.view_id).toMatchObject({ type: 'string' });
         expect((context.tools[name].inputSchema as any).jsonSchema.properties.view_id).not.toHaveProperty('enum');
         expect(context.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(2);
@@ -929,15 +939,15 @@ describe('model-visible presentation contract', () => {
     it('uses distinct tool aliases for simultaneous instances of one declared App name', async () => {
         const h = harness([{ ...app('two'), name: 'same' }, { ...app('one'), name: 'same' }, app('healthy')]);
         const context = await consume(h.source);
-        expect(context.tools['one-multi_open_file']).toBeDefined();
-        expect(context.tools['two-multi_open_file']).toBeDefined();
-        expect(context.tools['healthy-multi_open_file']).toBeDefined();
+        expect(context.tools['one-AnyView-multi_open_file']).toBeDefined();
+        expect(context.tools['two-AnyView-multi_open_file']).toBeDefined();
+        expect(context.tools['healthy-AnyView-multi_open_file']).toBeDefined();
         expect(context.messages.some(message => String(message.content).includes('current one revision 1'))).toBe(true);
         expect(context.messages.some(message => String(message.content).includes('current two revision 1'))).toBe(true);
         expect(context.messages.some(message => String(message.content).includes('current healthy revision 1'))).toBe(true);
-        await context.executeTool!('one-multi_open_file', {}, 'first');
-        await context.executeTool!('two-multi_open_file', {}, 'second');
-        await context.executeTool!('healthy-multi_open_file', {}, 'healthy');
+        await context.executeTool!('one-AnyView-multi_open_file', {}, 'first');
+        await context.executeTool!('two-AnyView-multi_open_file', {}, 'second');
+        await context.executeTool!('healthy-AnyView-multi_open_file', {}, 'healthy');
         expect(h.clients.find(entry => entry.appId === 'one')!.client.invoke).toHaveBeenCalledOnce();
         expect(h.clients.find(entry => entry.appId === 'healthy')!.client.invoke).toHaveBeenCalledOnce();
         expect(h.clients.find(entry => entry.appId === 'two')!.client.invoke).toHaveBeenCalledOnce();
@@ -952,7 +962,7 @@ describe('model-visible presentation contract', () => {
         const tool = { ...source.tools[0]!, viewType: 'A-B', name: 'read' };
         h.observations.set('bad', { ...source, tools: [{ ...source.tools[0]!, name: 'read' }, { ...tool, id: 'other-tool' }] });
         const context = await consume(h.source);
-        expect(context.tools['healthy-multi_open_file']).toBeDefined();
+        expect(context.tools['healthy-AnyView-multi_open_file']).toBeDefined();
         expect(context.tools['bad-A-B-read']).toBeUndefined();
         const desktop = String(context.messages.find(message => String(message.content).startsWith('<desktop>'))?.content);
         expect(desktop).toContain('AOTUI_TOOL_NAME_INVALID: viewType');
@@ -960,7 +970,7 @@ describe('model-visible presentation contract', () => {
         await context.release!();
         h.observations.set('bad', { ...source, tools: [{ ...source.tools[0]!, name: 'read' }] });
         const short = await consume(h.source);
-        expect(short.tools['bad-read']).toBeDefined();
+        expect(short.tools['bad-AnyView-read']).toBeDefined();
         await short.release!();
         h.source.dispose();
     });
@@ -970,8 +980,8 @@ describe('model-visible presentation contract', () => {
         const source = observation('bad');
         h.observations.set('bad', { ...source, tools: [{ ...source.tools[0]!, name: 'read-file' }] });
         const context = await consume(h.source);
-        expect(context.tools['healthy-multi_open_file']).toBeDefined();
-        expect(context.tools['bad-read-file']).toBeUndefined();
+        expect(context.tools['healthy-AnyView-multi_open_file']).toBeDefined();
+        expect(context.tools['bad-AnyView-read-file']).toBeUndefined();
         const desktop = String(context.messages.find(message => String(message.content).startsWith('<desktop>'))?.content);
         expect(desktop).toContain('AOTUI_TOOL_NAME_INVALID: toolName');
         expect(desktop).toContain('Replace hyphens or other separators with underscores.');
@@ -981,7 +991,7 @@ describe('model-visible presentation contract', () => {
     it.each(['has space', 'has-hyphen', '名字', 'has/slash'])('isolates invalid App name %s without sanitizing it', async name => {
         const h = harness([app('healthy'), { ...app('bad'), name }]);
         const context = await consume(h.source);
-        expect(context.tools['healthy-multi_open_file']).toBeDefined();
+        expect(context.tools['healthy-AnyView-multi_open_file']).toBeDefined();
         expect(Object.keys(context.tools).some(tool => tool.startsWith('bad-'))).toBe(false);
         const desktop = String(context.messages.find(message => String(message.content).startsWith('<desktop>'))?.content);
         expect(desktop).toContain('AOTUI_APP_IDENTITY_INVALID:');
@@ -994,14 +1004,14 @@ describe('model-visible presentation contract', () => {
         const source = observation('bad');
         h.observations.set('bad', { ...source, tools: [{ ...source.tools[0]!, inputSchema: null as never }] });
         const invalid = await h.source.getContext();
-        expect(invalid.tools['healthy-multi_open_file']).toBeDefined();
-        expect(invalid.tools['bad-multi_open_file']).toBeUndefined();
-        expect(invalid.messages.some(message => String(message.content).includes('current bad revision 1'))).toBe(false);
-        expect(invalid.messages.some(message => String(message.content).includes('AOTUI_TOOL_SCHEMA_INVALID'))).toBe(true);
+        expect(invalid.tools['healthy-AnyView-multi_open_file']).toBeDefined();
+        expect(invalid.tools['bad-AnyView-multi_open_file']).toBeUndefined();
+        expect(invalid.messages.some(message => String(message.content).includes('current bad revision 1'))).toBe(true);
+        expect(invalid.messages.some(message => String(message.content).includes('MODEL_TOOL_SCHEMA_UNSUPPORTED'))).toBe(true);
         h.observations.set('bad', observation('bad', 2));
         await invalid.release!();
         const recovered = await consume(h.source);
-        expect(recovered.tools['bad-multi_open_file']).toBeDefined();
+        expect(recovered.tools['bad-AnyView-multi_open_file']).toBeDefined();
         await invalid.release!(); await recovered.release!();
         h.source.dispose();
     });
@@ -1014,11 +1024,11 @@ describe('model-visible presentation contract', () => {
             { ...observation('bad', 2).tools[0]!, name: 'bad-tool' },
         ] });
         const current = await h.source.getContext();
-        expect(current.tools['healthy-multi_open_file']).toBeDefined();
-        expect(current.tools['bad-bad-tool']).toBeUndefined();
-        expect(badClient.release).not.toHaveBeenCalledWith('bad-observation-2');
+        expect(current.tools['healthy-AnyView-multi_open_file']).toBeDefined();
+        expect(current.tools['bad-AnyView-bad-tool']).toBeUndefined();
+        expect(badClient.release).toHaveBeenCalledWith('bad-observation-2');
 
-        await previous.executeTool!('bad-multi_open_file', {}, 'prior-binding');
+        await previous.executeTool!('bad-AnyView-multi_open_file', {}, 'prior-binding');
         expect(badClient.invoke).toHaveBeenCalledOnce();
         await previous.release!();
 
@@ -1028,17 +1038,17 @@ describe('model-visible presentation contract', () => {
     });
 
     it.each([63, 64, 65])('validates the full composite length at %i characters', async length => {
-        const h = harness(), name = 'x'.repeat(length - 'one-'.length);
+        const h = harness(), name = 'x'.repeat(length - 'one-AnyView-'.length);
         h.observations.set('one', observation('one', 1, name));
         if (length > 64) {
             const context = await consume(h.source);
-            expect(context.tools[`one-${name}`]).toBeUndefined();
+            expect(context.tools[`one-AnyView-${name}`]).toBeUndefined();
             expect(context.messages.some(message => String(message.content).includes('AOTUI_TOOL_NAME_INVALID'))).toBe(true);
             await context.release!();
         }
         else {
             const context = await consume(h.source);
-            expect(context.tools[`one-${name}`]).toBeDefined();
+            expect(context.tools[`one-AnyView-${name}`]).toBeDefined();
             await context.release!();
         }
         h.source.dispose();
@@ -1050,4 +1060,61 @@ describe('model-visible presentation contract', () => {
         expect(context.messages[0].content).toBe(DEFAULT_AOTUI_SYSTEM_INSTRUCTION);
         await context.release!(); h.source.dispose();
     });
+});
+
+it('B4-T04 rejects a required system schema before adopting, and validates actual fixed Console input', async () => {
+    const h = harness();
+    try {
+        const previous = await consume(h.source);
+        await expect(h.source.getContext({ label: 'restricted', check: schema => {
+            const properties = (schema as { properties?: Record<string, unknown> }).properties;
+            return properties && Object.hasOwn(properties, 'installation_id')
+                ? { path: '$.properties.installation_id', reason: 'required control cannot be represented' } : undefined;
+        }})).rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED' });
+        expect(h.desktop.adoptTurn).toHaveBeenCalledTimes(1);
+        const getter = vi.fn(() => 'console.log(1)');
+        for (const [index, input] of [
+            {}, { code: ' ' }, { code: 'x'.repeat(24 * 1024 + 1) },
+            { code: 'console.log(1)', imports: null },
+            { code: 'console.log(1)', imports: ['not-an-address'] },
+            { code: 'console.log(1)', imports: Array(257).fill('$ref.one.workspace.valid') },
+            { code: 'console.log(1)', reset: null },
+            { code: 'console.log(1)', extra: false },
+            Object.defineProperty({}, 'code', { get: getter, enumerable: true }),
+        ].entries()) {
+            expect(await previous.executeTool!('run_code', input, 'invalid-' + index)).toMatchObject({
+                outcomeStatus: 'rejected', error: { code: 'CONSOLE_INVALID_INPUT' },
+            });
+        }
+        expect(getter).not.toHaveBeenCalled();
+        expect(h.clients[0]!.client.invoke).not.toHaveBeenCalled();
+        await previous.release!();
+    } finally { await h.source.dispose(); }
+});
+
+it('B4-T02 measures multiple layouts without another observation after exactly one narrow preparation', async () => {
+    const h = harness([app('one')], { includeInstruction: false });
+    const source = h.observations.get('one')!;
+    h.observations.set('one', { ...source, views: [{ ...source.views[0]!,
+        content: { format: 'markdown-v1', value: 'original body '.repeat(1000) } }],
+        tools: [...source.tools, { ...source.tools[0]!, id: 'bad', name: 'x'.repeat(80) }] });
+    h.desktop.getAppWindows.mockReturnValue({ appId: h.installed[0]!.appId!, instanceId: 'one-instance',
+        views: [{ viewId: 'workspace', viewInstanceId: 'one-view', type: 'AnyView', name: 'Workspace', canClose: false, region: 'dynamic' }] });
+    try {
+        const prepared = await h.source.getContext();
+        const client = h.clients[0]!.client;
+        expect(client.observe).toHaveBeenCalledTimes(2);
+        expect(client.observe).toHaveBeenLastCalledWith({ excludeToolIds: ['bad'] });
+        expect(client.release).toHaveBeenCalledWith(source.observationId);
+        const trial = await prepared.fitModelBudget!(async context => {
+            const inputBytes = Buffer.byteLength(JSON.stringify(context.messages));
+            return { method: 'utf8-bytes', inputBytes, estimated: inputBytes, safety: 0, inputLimit: 2800, outputReserved: 500 };
+        }, false);
+        expect(trial.context!.messages.some(message => String(message.content).includes('This View is open.'))).toBe(true);
+        expect(client.observe).toHaveBeenCalledTimes(2);
+        await trial.context!.adopt!();
+        expect(client.observe).toHaveBeenCalledTimes(2);
+        expect(h.desktop.adoptTurn).toHaveBeenCalledTimes(1);
+        await prepared.release!();
+    } finally { await h.source.dispose(); }
 });

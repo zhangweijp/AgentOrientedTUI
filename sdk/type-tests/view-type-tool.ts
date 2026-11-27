@@ -25,22 +25,22 @@ const Detail = defineViewType<DetailContext>()({ multiplicity: 'multiple', name:
 } });
 const Empty = defineViewType({ multiplicity: 'multiple', name:'Empty' });
 const detailContext: DetailContext = { record() {} };
-const detail = createView(Detail,{idPrefix:'one',region:'dynamic',render:() => ({body:'Rows',context:detailContext})});
-const empty = createView(Empty,{idPrefix:'empty',region:'static',render:() => ({body:'Hello'})});
+const detail = createView(Detail,{idPrefix:'one',region:'dynamic'});
+const empty = createView(Empty,{idPrefix:'empty',region:'static'});
 const views: readonly ViewHandle[] = [detail,empty];
 export const plain = createApp({app_name:'plain',viewTypes:[Detail,Empty],initialize(context) {
     const limits: ProjectionLimits = context.projectionLimits;
     // @ts-expect-error The Host owns the effective limits, including their nested values.
     limits.metadata.maxNodes = 4;
-    const ready: 'prepared' = context.prepareProjection({views}).status;
-    const opened: 'prepared' | 'rejected' = context.prepareOpeningProjection({views}).status;
+    const ready = context.publish(() => [detail.frame({body:'Rows',context:detailContext}), empty.frame({body:'Hello'})]);
+    const opened = context.publish(() => [], {mode:'candidate'});
     void [ready, opened];
     // @ts-expect-error The old author entry was removed.
     context.publish({views});
     // @ts-expect-error Openings use a separate author entry.
-    context.prepareProjection({views}, {opening:true});
+    context.publish(() => [], {opening:true});
     // @ts-expect-error No App-wide binding map
-    context.prepareProjection({views,bindings:{}});
+    context.publish(() => ({views,bindings:{}}));
 }});
 const oldDeclaration = { name: 'Invalid', tools: { change: { description: 'Modify state' } } };
 // @ts-expect-error Direct declarations only create tool-free ViewTypes
@@ -101,7 +101,7 @@ const Editor = defineViewType<EditorContext>()({ multiplicity: 'multiple', name:
 });
 const editorContext: EditorContext = { writable: true, replace() {} };
 const editorHandle = createView(Editor, {
-    idPrefix: 'editor', region: 'dynamic', render: () => ({ body: 'Content', context: editorContext }),
+    idPrefix: 'editor', region: 'dynamic',
 });
 const heterogeneousViews: readonly ViewHandle[] = [editorHandle, detail, empty];
 const editorTool: keyof typeof Editor.tools = 'replace';
@@ -111,8 +111,8 @@ const resetArgs: ArgsOf<typeof Editor.tools.reset> = {};
 resetArgs.extra;
 void [heterogeneousViews, editorTool, args, resetArgs];
 // @ts-expect-error A plain Tool-owning View requires context
-createView(Editor, { idPrefix: 'editor', region: 'dynamic', render: () => ({ body: 'Content', bindings: {} }) });
-type EditorRender = ReturnType<Parameters<typeof createView<typeof Editor>>[1]['render']>;
+editorHandle.frame({ body: 'Content' });
+type EditorRender = Parameters<typeof editorHandle.frame>[0];
 const invalidRender: EditorRender = {
     body: 'Content',
     context: editorContext,

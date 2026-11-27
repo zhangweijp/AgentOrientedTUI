@@ -52,8 +52,9 @@ async function read(args: Readonly<Record<string, unknown>>): Promise<ToolResult
 registry.defineViewTypes([{ name: "Note", multiplicity: 'multiple', tools: [{ name: 'add', description: 'Add to the counter', inputSchema: addSchema }, { name: 'read', description: 'Inspect a displayed Note', inputSchema: readSchema }] }]);
 const binding: ExecutionBinding = {
   identity: {},
-  isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success,
+  isLive: source => source.kind === "tool" && registry.validateTypeToolBinding(source.tool, source.receiver).success,
   execute: async context => {
+    check(context.source.kind === "tool", "Only Tool operations are granted by this example");
     const terminal = await registry.invokeTypeTool(context.source.tool, context.source.receiver, context.effectiveInput);
     if (terminal.result.success) check(terminal.result.data?.completed === true, 'Expected a concise completion receipt');
     return { kind: 'tool-result', ...terminal } satisfies ExecutionFact;
@@ -75,7 +76,7 @@ function publish(text: string) {
       tools: candidate.tools, accept: candidate.accept,
     };
   });
-  check(prepared.status === 'prepared', 'Expected a complete View, Ref and Tool frame');
+  check(prepared.ok, 'Expected a complete View, Ref and Tool frame');
   const result = projection.publishTo(snapshots.committer);
   check(result.status === 'published', 'Expected a new source version');
 }
@@ -84,7 +85,7 @@ const sample = snapshots.store.readLatest(appId);
 check(sample.status === 'ready', 'Expected a published Note');
 try {
   const { views, refs, tools } = sample.snapshot;
-  const result = preview.committer.accept({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId, instanceId: previewInstanceId,
+  const result = preview.committer.accept({ healthySince: 1,  schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId, instanceId: previewInstanceId,
     producerSeq: 1, sourceEpoch: 1, capturedAt: 0, views, refs, tools });
   check(result.status === 'rejected' && result.issue.path === '$.views', 'The Core retained maxViews: 0');
 } finally { preview.lifecycle.dispose(); }
@@ -142,7 +143,7 @@ try {
   addEnabled = false; publish(noteText);
   addEnabled = true; publish(noteText);
   const stale = await client.invoke(request(fresh, 'add', 'old-binding', { n: 2 }));
-  check(stale.kind === 'receipt' && stale.receipt.outcome.status === 'rejected' && handlerEntries === 3, 'Old activation cannot enter or redirect');
+  check(stale.kind === 'refused' && stale.code === 'TOOL_SOURCE_STALE' && !('locator' in stale) && handlerEntries === 3, 'Old activation cannot enter or redirect');
 
   beforeClosed = authorizations;
   snapshots.lifecycle.stop();

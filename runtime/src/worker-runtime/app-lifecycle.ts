@@ -45,7 +45,6 @@ export function createAppLifecycle(instanceId: string) {
             throw new Error('APP_LIFECYCLE_INVALID');
         owner = Object.freeze({ stop: fields.stop?.value as AppLifecycleCallbacks['stop'], close: fields.close?.value as AppLifecycleCallbacks['close'] });
         if (stopped) stopOwner();
-        return () => { void close(); };
     } });
     return Object.freeze({ port, stop, close, getReport: (): AppCleanupReport => Object.freeze({
         protocol: APP_LIFECYCLE_PROTOCOL, instanceId, state,

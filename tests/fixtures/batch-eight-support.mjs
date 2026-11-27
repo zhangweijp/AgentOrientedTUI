@@ -51,7 +51,7 @@ export function consolePolicy(hooks) {
 }
 
 export const system = (id, name, args) => modelCall(id, 'system-' + name, args);
-export const tool = (name) => TASKS + '-' + name;
+export const tool = (name) => TASKS + '-' + (name === 'edit' ? 'detail' : 'workspace') + '-' + name;
 const names = body => body.tools.map(entry => entry.function.name);
 export function savedResult(message, id) {
     assert.equal(message.role, 'tool');
@@ -68,10 +68,10 @@ export async function strictGeneratedTypes(consumer, body, prefix, hasDetail = f
         'export {};',
         'const email: string = refs.console_catalog.list.people[0].email;',
         'const priority: number = refs.console_tasks.workspace.values[0]!.priority;',
-        'await tools["console_tasks-accept"]({items:refs.console_catalog.list.todos,literal:email,meta:[3,null]});',
-        'await tools["console_tasks-accept"]({items:[{title:"manual",done:true}],literal:email});',
-        'await tools["console_tasks-select"]({item:"$ref.console_catalog.list.todos[0]",items:["$ref.console_catalog.list.todos[1]"]});',
-        'try { await tools["console_tasks-select"]({item:"$ref.console_catalog.list.todos[0]"}); } catch (error) {',
+        'await tools["console_tasks-workspace-accept"]({items:refs.console_catalog.list.todos,literal:email,meta:[3,null]});',
+        'await tools["console_tasks-workspace-accept"]({items:[{title:"manual",done:true}],literal:email});',
+        'await tools["console_tasks-workspace-select"]({item:"$ref.console_catalog.list.todos[0]",items:["$ref.console_catalog.list.todos[1]"]});',
+        'try { await tools["console_tasks-workspace-select"]({item:"$ref.console_catalog.list.todos[0]"}); } catch (error) {',
         '  if (error instanceof ToolCallError) {',
         '    const toolName: keyof typeof tools = error.toolName;',
         '    const name: "ToolCallError" = error.name;',
@@ -83,26 +83,26 @@ export async function strictGeneratedTypes(consumer, body, prefix, hasDetail = f
         '// @ts-expect-error phone was not granted',
         'refs.console_catalog.list.people[0].phone;',
         '// @ts-expect-error the published directory contains contacts',
-        'await tools["console_tasks-accept"]({items:refs.console_catalog.list.people,literal:email});',
+        'await tools["console_tasks-workspace-accept"]({items:refs.console_catalog.list.people,literal:email});',
         '// @ts-expect-error another Todo label does not determine the structure',
         'refs.console_tasks.workspace.values[0]!.title;',
         '// @ts-expect-error whole observed array is readonly',
         'refs.console_catalog.list.todos.push({title:"no",done:true});',
         '// @ts-expect-error an ordinary object cannot claim nominal Ref provenance',
-        'await tools["console_tasks-select"]({item:{title:"manual",done:true}});',
+        'await tools["console_tasks-workspace-select"]({item:{title:"manual",done:true}});',
         '// @ts-expect-error nominal address requires the dollar prefix',
-        'await tools["console_tasks-select"]({item:"console_catalog.list.todos[0]"});',
+        'await tools["console_tasks-workspace-select"]({item:"console_catalog.list.todos[0]"});',
         '// @ts-expect-error single-instance tools have no view_id parameter',
-        'await tools["console_tasks-accept"]({items:[],literal:email,view_id:"workspace"});',
+        'await tools["console_tasks-workspace-accept"]({items:[],literal:email,view_id:"workspace"});',
         '// @ts-expect-error tuple first element must be numeric',
-        'await tools["console_tasks-accept"]({items:[],literal:email,meta:["bad",null]});',
+        'await tools["console_tasks-workspace-accept"]({items:[],literal:email,meta:["bad",null]});',
         '// @ts-expect-error unsupported structural constraint leaves the native Tool only',
-        'tools["console_tasks-native_only"];',
+        'tools["console_tasks-workspace-native_only"];',
         ...(hasDetail ? [
-            'await tools["console_tasks-edit"]({view_id:"detail_1",value:email});',
+            'await tools["console_tasks-detail-edit"]({view_id:"detail_1",value:email});',
             '// @ts-expect-error multiple-instance edit requires view_id',
-            'await tools["console_tasks-edit"]({value:email});',
-        ] : ['// @ts-expect-error the editor was not open in this request', 'tools["console_tasks-edit"];']),
+            'await tools["console_tasks-detail-edit"]({value:email});',
+        ] : ['// @ts-expect-error the editor was not open in this request', 'tools["console_tasks-detail-edit"];']),
     ].join('\n') + '\n');
     await promisify(execFile)(process.execPath, [join(consumer, 'node_modules/typescript/bin/tsc'),
         '--strict', '--exactOptionalPropertyTypes', '--skipLibCheck', 'false', '--noEmit', '--target', 'ES2022',
@@ -131,8 +131,8 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     assert.equal(task.result.app_id, TASKS, JSON.stringify(task.result));
     const cross = await step('original value and two children', codeCall('cross',
         'const x = refs.console_catalog.list; ' +
-        'const stored = await tools["console_tasks-accept"]({items:x.todos,literal:"$$ref.console_catalog.list.todos",meta:[2,null]}); ' +
-        'await tools["console_tasks-select"]({item:"$ref.console_catalog.list.todos[0]",items:["$ref.console_catalog.list.todos[1]","$ref.console_catalog.list.todos[0]","$ref.console_catalog.list.todos[1]"]}); ' +
+        'const stored = await tools["console_tasks-workspace-accept"]({items:x.todos,literal:"$$ref.console_catalog.list.todos",meta:[2,null]}); ' +
+        'await tools["console_tasks-workspace-select"]({item:"$ref.console_catalog.list.todos[0]",items:["$ref.console_catalog.list.todos[1]","$ref.console_catalog.list.todos[0]","$ref.console_catalog.list.todos[1]"]}); ' +
         'inspect(x.people[0].email);'), async () => {
         await catalogState(folder, 'changed', changed);
         await watchUntil(async () => {
@@ -149,7 +149,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         { item: original[0], items: [original[1], original[0], original[1]] },
     ]);
     const declaration = consoleBindings(cross.body);
-    assert.match(declaration, /console_tasks-native_only.+\$\.properties\.constant(?:\.anyOf\[0\])?\.const/);
+    assert.match(declaration, /console_tasks-workspace-native_only.+\$\.properties\.constant(?:\.anyOf\[0\])?\.const/);
     assert.ok(names(cross.body).includes(tool('native_only')));
     for (const hidden of ['phone', 'private_rows', 'team_rows']) assert.equal(declaration.includes(hidden), false);
     assert.equal(JSON.stringify(cross.body).includes('SYNTHETIC_PHONE_NEVER_PUBLISHED'), false);
@@ -162,7 +162,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     const nativeField = await step('native tool cannot pass a Ref with no receiving mounts', modelCall('native-console-only', tool('accept'),
         { items: [], literal: peopleAddress + '[0].email' }));
     assert.match(nativeField.result.code, /^REF_/);
-    const attempt = 'inspect("must not run"); await tools["console_tasks-accept"]({items:[],literal:"must not dispatch"});';
+    const attempt = 'inspect("must not run"); await tools["console_tasks-workspace-accept"]({items:[],literal:"must not dispatch"});';
     const rejected = [];
     for (const [label, address] of [['sibling', peopleAddress + '[0].phone'],
         ['private', '$ref.console_catalog.list.private_rows'], ['protected', '$ref.console_catalog.list.team_rows']]) {
@@ -200,15 +200,15 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     }
     const malformed = await step('no nominal origin', codeCall('bad-address', 'for (const item of ' + JSON.stringify([
         '$ref.console_tasks.workspace.values[0]', '$ref.console_catalog.list.other_kind[0]', '$ref.console_catalog.list.todos[99]',
-    ]) + ') { try { await tools["console_tasks-select"]({item}); } catch (error) { inspect(error.code); } }'));
+    ]) + ') { try { await tools["console_tasks-workspace-select"]({item}); } catch (error) { inspect(error.code); } }'));
     assert.equal(malformed.result.subcalls.length, 3);
     assert.ok(malformed.result.subcalls.every(call => call.phase === 'not-dispatched'));
     summary.rejections = [...rejected, { label: 'Receivers denied', result: nativeField.result }, { label: 'capacity', result: excess.result },
         { label: 'nominal addresses', result: malformed.result }];
-    const partial = await step('forbid synthesized containers', codeCall('partial', 'await tools["console_tasks-accept"]({items:refs.console_catalog.list.people,literal:"bad"})'));
+    const partial = await step('forbid synthesized containers', codeCall('partial', 'await tools["console_tasks-workspace-accept"]({items:refs.console_catalog.list.people,literal:"bad"})'));
     assert.equal(partial.result.code, 'CONSOLE_PROGRAM_FAILED');
     assert.ok(output(partial.result).subcalls.every(call => call.phase === 'not-dispatched'));
-    const nonJson = await step('forbid non-JSON objects', codeCall('non-json', 'await tools["console_tasks-accept"]({items:[],literal:"bad",meta:new Date()})'));
+    const nonJson = await step('forbid non-JSON objects', codeCall('non-json', 'await tools["console_tasks-workspace-accept"]({items:[],literal:"bad",meta:new Date()})'));
     assert.match(nonJson.result.message, /plain JSON/);
     assert.deepEqual(output(nonJson.result).subcalls, []);
     assert.equal((await journal(folder, 'writes')).length, 2);
@@ -217,7 +217,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         'for (const name of ' + JSON.stringify(cases) + ') { try { await tools[name]({}); } catch (error) { ' +
         'if (!(error instanceof ToolCallError) || !(error instanceof Error)) throw error; ' +
         'inspect(JSON.stringify({name:error.name,toolName:error.toolName,code:error.code,message:error.message})); }} ' +
-        'await tools["console_tasks-open"]({}); inspect(typeof tools["console_tasks-edit"]);'));
+        'await tools["console_tasks-workspace-open"]({}); inspect(typeof tools["console_tasks-detail-edit"]);'));
     const [one, two, lastOutput] = opening.result.output;
     assert.equal(lastOutput, 'undefined');
     const toolErrors = [JSON.parse(one), JSON.parse(two)];
@@ -227,10 +227,10 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     summary.toolErrors = { toolErrors, result: opening.result };
     assert.ok(!names(opening.body).includes(tool('edit')));
     const next = await step('new detail tool', codeCall('detail',
-        'await tools["console_tasks-edit"]({view_id:"detail_1",value:"$original literal"});'));
+        'await tools["console_tasks-detail-edit"]({view_id:"detail_1",value:"$original literal"});'));
     assert.ok(names(next.body).includes(tool('edit')));
     assert.equal(next.body.messages.filter(message => message.role === 'tool' && message.tool_call_id === 'open-detail').length, 1);
-    assert.match(consoleBindings(next.body), /"console_tasks-edit".+view_id: string/);
+    assert.match(consoleBindings(next.body), /"console_tasks-detail-edit".+view_id: string/);
     if (declarationFolder) summary.detailStrict = await strictGeneratedTypes(declarationFolder, next.body, 'actual-b8-edit', true);
     const native = await step('unsupported schema stays native', modelCall('native-only', tool('native_only'), { constant: { mark: 'native' } }));
     assert.equal(native.result.saved, true);
@@ -250,7 +250,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
         return result;
     };
     const withdrawnWork = step('revoke before dispatch', codeCall('withdraw',
-        'await tools["console_tasks-accept"]({items:[],literal:"withdraw"});'));
+        'await tools["console_tasks-workspace-accept"]({items:[],literal:"withdraw"});'));
     try {
         await Promise.race([authorization.promise, withdrawnWork.then(result => { throw new Error(JSON.stringify(result.result)); })]);
         const tasks = appClient(desktop, TASKS).app;
@@ -266,7 +266,7 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     assert.equal((await journal(folder, 'writes')).length, 4);
     const fold = await step('fold the tasks App', system('fold-tasks', 'collapse_app', { app_id: TASKS }));
     assert.ok(fold.result.success);
-    const collapsed = await step('collapsed keeps console', codeCall('still-console', 'inspect(typeof tools["console_tasks-edit"]);'));
+    const collapsed = await step('collapsed keeps console', codeCall('still-console', 'inspect(typeof tools["console_tasks-detail-edit"]);'));
     assert.deepEqual(collapsed.result.output, ['undefined']);
     const expand = await step('expand the tasks App', system('expand-tasks', 'expand_app', { app_id: TASKS }));
     assert.ok(expand.result.success);
@@ -291,8 +291,8 @@ export async function exerciseConsole({ turn, install, runtime, desktop, folder,
     await writeFile(join(folder, 'park'), '');
     try {
         const late = await step('keep admitted child', codeCall('late',
-            'const first = tools["console_tasks-accept"]({items:[],literal:"park"}); ' +
-            'const second = tools["console_tasks-accept"]({items:[],literal:"must not start"}); await Promise.all([first,second]);'));
+            'const first = tools["console_tasks-workspace-accept"]({items:[],literal:"park"}); ' +
+            'const second = tools["console_tasks-workspace-accept"]({items:[],literal:"must not start"}); await Promise.all([first,second]);'));
         assert.equal(late.result.code, 'CONSOLE_TIMEOUT');
         const subcalls = output(late.result).subcalls;
         assert.equal(subcalls[0].phase, 'unknown');

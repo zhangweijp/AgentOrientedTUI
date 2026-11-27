@@ -1,9 +1,9 @@
 import { plainConfigObject } from '../snapshot/projection-limits.js';
 import type { AppSnapshot } from '../snapshot/types.js';
 import type { RefArgumentSource } from '../tool/snapshot-value-arguments.js';
-import type { ActiveTurn, AdoptTurnResult, AppInteraction, AppInvocation, CancellationSignal, InvokeResult,
+import type { ActiveTurn, AdoptTurnResult, AppInteraction, InvocationRequest, CancellationSignal, InvokeResult,
     Issue, ObservationCandidate, PrepareObservationResult, InspectRefMode, InspectRefResult, ReadPublicRefsResult, TurnSelection } from './app-interaction-types.js';
-import type { ObservedRef, ViewIdentity } from './observation-types.js';
+import type { ObservedRef, ViewIdentity, ObservationOptions } from './observation-types.js';
 import { installObservationAdoptions, noObservationCleanupIssues, releaseObservationHolds, type ObservationAdoption } from './observation-registry.js';
 import { inspectTurnRef, readTurnPublicRefs } from './public-refs.js';
 
@@ -13,6 +13,7 @@ export interface RefSourceHold {
     refresh?(): Promise<void>;
     current(): AppSnapshot | undefined;
     isRefView(viewId: string, viewInstanceId: string): boolean;
+    stillEligible(viewId: string, viewInstanceId: string): boolean;
     markDispatched(): void;
     release(): void;
 }
@@ -21,7 +22,7 @@ export interface RequestSourceAuthority {
     readonly appId: string;
     acquire(observationId: string): RefSourceHold | { issue: Issue };
     prepare(observationId: string, windows: unknown): { status: 'ready'; plan: ObservationAdoption } | { status: 'rejected'; issue: Issue };
-    revokeWindows(target?: ViewIdentity): void;
+    revokeWindows(target?: ViewIdentity, channel?: 'body' | 'close' | 'all'): void;
     detach(observationId: string): (() => void) | undefined;
 }
 
@@ -106,9 +107,9 @@ export function createTurnCoordinator() {
         return retire(binding);
     }
 
-    async function prepareObservation(client: RequestSourceClient, isLive: () => boolean): Promise<PrepareObservationResult> {
+    async function prepareObservation(client: RequestSourceClient, isLive: () => boolean, options?: ObservationOptions): Promise<PrepareObservationResult> {
         if (closed || !isLive()) return rejectTurn(unavailable);
-        const result = await client.observe();
+        const result = await client.observe(options);
         if (result.status === 'rejected') return result;
         const authority = authorities.get(client);
         if (!authority) return rejectTurn(unavailable);
@@ -168,7 +169,7 @@ export function createTurnCoordinator() {
         }
         const turn: ActiveTurn = Object.freeze({
             get isCurrent() { return binding.isCurrent(); },
-            invoke(appId: string, request: AppInvocation, timeoutMs?: number, signal?: CancellationSignal) {
+            invoke(appId: string, request: InvocationRequest, timeoutMs?: number, signal?: CancellationSignal) {
                 const client = apps.get(appId)?.client.deref();
                 if (!binding.isCurrent()) return Promise.resolve(refused(inactive));
                 if (!client || !requestAppIsAvailable(binding, appId)) return Promise.resolve(refused(unavailable));
@@ -191,12 +192,12 @@ export function createTurnCoordinator() {
             const source = bindings.get(turn)?.apps.get(appId);
             return source && { instanceId: source.instanceId, observationId: source.observationId };
         },
-        revokeWindowAccess(turn: ActiveTurn, client: RequestSourceClient, view?: ViewIdentity): Issue | undefined {
+        revokeWindowAccess(turn: ActiveTurn, client: RequestSourceClient, view?: ViewIdentity, channel?: 'body' | 'close' | 'all'): Issue | undefined {
             const target = view && { viewId: view.viewId, viewInstanceId: view.viewInstanceId };
             if (!current || bindings.get(turn) !== current) return inactive;
             const authority = authorities.get(client);
             if (!authority) return unavailable;
-            authority.revokeWindows(target);
+            authority.revokeWindows(target, channel);
         },
         eligibilityChanged: () => { revision = Symbol(); },
         close: () => { closed = true; return current ? release(current) : noObservationCleanupIssues; },

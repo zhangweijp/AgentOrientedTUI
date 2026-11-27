@@ -15,8 +15,7 @@ type Capture =
     | { type: 'SNAPSHOT_PREPARE_FAILED'; producerSeq: number; error: { code: string; message: string } };
 
 function appSource(): string {
-    return `
-        import { parentPort } from 'node:worker_threads';
+    return `import { parentPort } from 'node:worker_threads';
         import Type from 'typebox';
         import { createApp, createView, defineViewType, ref, formatRef } from '@aotui/sdk';
         const inputSchema = Type.Object({}, { additionalProperties: false });
@@ -34,19 +33,18 @@ function appSource(): string {
         } });
 
         export default createApp({ viewTypes: [ParentType, SiblingType], app_name: 'nested_view_rejection',
-            initialize({ prepareProjection, registerCleanup }) {
+            initialize({ publish: publishAuthorFrame, registerLifecycle }) {
                 let parentText = 'PARENT_INITIAL_MARKER', invalid = false;
-                const parent = createView(ParentType, { idPrefix: 'parent', region: 'dynamic', render() {
+                const parent = (() => { const handle = createView(ParentType, { idPrefix: 'parent', region: 'dynamic' }); return { handle, frame: () => {
                     const selection = ref('parent_ref', { owner: 'parent' }, { schema: { type: 'object' }, scope: 'protected' });
-                    return { body: ['PARENT_SECTION', formatRef('PARENT_REF_MARKER', selection), parentText].join('\\n'),
-                        refs: invalid ? [selection, selection] : [selection], context: {} };
-                } });
-                const newSibling = () => createView(SiblingType, { idPrefix: 'sibling', region: 'dynamic', render() {
+                    return handle.frame({ body: ['PARENT_SECTION', formatRef('PARENT_REF_MARKER', selection), parentText].join('\\n'), refs: invalid ? [selection, selection] : [selection], context: {} });
+                } }; })();
+                const newSibling = () => (() => { const handle = createView(SiblingType, { idPrefix: 'sibling', region: 'dynamic' }); return { handle, frame: () => {
                     const selection = ref('sibling_ref', { owner: 'sibling' }, { schema: { type: 'object' }, scope: 'protected' });
-                    return { body: formatRef('SIBLING_REF_MARKER', selection), refs: [selection], context: {} };
-                } });
+                    return handle.frame({ body: formatRef('SIBLING_REF_MARKER', selection), refs: [selection], context: {} });
+                } }; })();
                 let sibling = newSibling();
-                const publish = () => prepareProjection({ views: sibling ? [parent, sibling] : [parent] });
+                const publish = () => publishAuthorFrame(() => (sibling ? [parent, sibling] : [parent]).map(page => page.frame()));
                 const receive = message => {
                     if (message.type !== 'TEST_COMMAND') return;
                     switch (message.command) {
@@ -58,7 +56,7 @@ function appSource(): string {
                     try { publish(); } catch { /* Runtime reports the failed projection. */ }
                 };
                 parentPort.on('message', receive);
-                registerCleanup({ stop() { parentPort.off('message', receive); } });
+                registerLifecycle({ stop() { parentPort.off('message', receive); } });
                 publish();
             },
         });
@@ -200,7 +198,7 @@ describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
             expect(committedState(host)).toMatchObject({
                 status: 'degraded', issue: { code: 'SNAPSHOT_INVALID' }, lastGood: { id: previousGood.id },
             });
-            expect(healthNotifications.at(-1)).toBe('projection_failed');
+            expect(healthNotifications.filter(reason=>reason!=='app_runtime_changed').at(-1)).toBe('projection_failed');
             expect(previousGood.views.map((view: any) => view.id).sort()).toEqual(['parent_1', 'sibling_2']);
             expect(previousGood.views.some((view: any) => view.content.value.includes('PARENT_INVALID_ATTEMPT'))).toBe(false);
 
@@ -209,7 +207,7 @@ describe('R2 bad SDK Ref rejects the whole real Worker projection', () => {
             expect(committedSnapshot(host).views).toHaveLength(2);
             expect(committedSnapshot(host).views.find((view: any) => view.id === 'parent_1').content.value)
                 .toContain('PARENT_RECOVERED_MARKER');
-            expect(healthNotifications.at(-1)).toBe('projection_recovered');
+            expect(healthNotifications.filter(reason=>reason!=='app_runtime_changed').at(-1)).toBe('projection_recovered');
             expect(await invokeObservedTool(host!, 'parent_action', {}, 'parent_1'))
                 .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
 

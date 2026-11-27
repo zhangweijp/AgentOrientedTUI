@@ -1,7 +1,7 @@
 import type { LanguageModelUsage as AIUsage } from 'ai';
 import type { AgentDriverV2Config, LanguageModelUsage } from '@aotui/agent-driver-v2';
 import type { IDesktop } from '@aotui/runtime';
-import type { AppInstance } from '@aotui/core';
+import type { RuntimeContext } from '@aotui/core';
 // @ts-expect-error The type belongs to the Driver's host contract.
 import type { LLMUsageEvent } from '@aotui/runtime';
 // @ts-expect-error There is no App-side usage hook.
@@ -20,7 +20,7 @@ export const onUsage: NonNullable<AgentDriverV2Config['onLLMUsage']> = (usage: L
     value.completionTokens;
     void [input, output, source];
 };
-export function retiredMethods(app: AppInstance, desktop: IDesktop) {
+export function retiredMethods(app: RuntimeContext, desktop: IDesktop) {
     // @ts-expect-error Usage notifications stay in the Host.
     app.onLLMUsage;
     // @ts-expect-error Desktops do not broadcast model usage.

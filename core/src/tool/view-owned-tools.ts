@@ -1,6 +1,6 @@
 import type { ToolResult, ToolResultData } from './tool-result.js';
 import { canonicalJson, checkJsonLimits, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
-import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS } from '../snapshot/snapshot-support.js';
+import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS, VIEW_METADATA_BYTES } from '../snapshot/snapshot-support.js';
 import type { JsonValue, ToolDescriptor, ToolRoute, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
 import { isInstanceName, isViewTypeName, type ViewMultiplicity } from '../snapshot/types.js';
 import { compileToolParameters, type ToolParameterContract } from './tool-parameters.js';
@@ -50,6 +50,8 @@ type Mounted = {
     readonly view: ViewInstance;
     readonly bindings: ReadonlyMap<string, Binding>;
     readonly naming: string;
+    readonly bindingKey?: string | number;
+    readonly closeActivationId?: string;
     readonly onClose?: ViewCandidate['onClose'];
 };
 type ViewCandidate = {
@@ -58,6 +60,7 @@ type ViewCandidate = {
     readonly type: string;
     readonly owner: object;
     readonly bindings: readonly AppFrameBinding[];
+    readonly bindingKey?: string | number;
     readonly onClose?: () => ToolResult | Promise<ToolResult>;
 };
 
@@ -116,7 +119,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         if (!isInstanceName(id)) fail('VIEW_INVALID', 'Expected a View ID using ASCII letters, digits or underscores, with at least one nondigit');
         if (id.length + type.length > maxRetainedBytes) fail('VIEW_CAPACITY', 'View identity exceeds retention limit');
         if (!Number.isSafeInteger(sequence)) fail('VIEW_CAPACITY', 'View mount sequence exhausted');
-        return Object.freeze({ viewId: id, viewType: type, viewInstanceId: 'vi:v1:' + JSON.stringify([appInstanceId, sequence]) });
+        return Object.freeze({ viewId: id, viewType: type, viewInstanceId: 'm:' + sequence });
     }
 
     function current(tool: ToolRoute, receiver: ViewToolReceiver) {
@@ -204,10 +207,18 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
 
             // Pass 1: validate every candidate and reserve fixed single-instance IDs
             // before allocating any multi-instance sequences, so frame order never collides.
-            const staged = views.map(({ id: override, idPrefix, type, owner, bindings, onClose }) => {
+            const staged = views.map(({ id: override, idPrefix, type, owner, bindings, onClose, bindingKey }, index) => {
                 if (owners.has(owner)) fail('VIEW_DUPLICATE', 'Duplicate View owner for ' + type);
                 if (!owner || typeof owner !== 'object') fail('VIEW_INVALID', 'View requires a stable owner');
                 owners.add(owner);
+                if (bindingKey !== undefined) {
+                    const path = '$.views[' + index + '].bindingKey';
+                    if (!(typeof bindingKey === 'string' || typeof bindingKey === 'number' && Number.isSafeInteger(bindingKey) && !Object.is(bindingKey, -0)))
+                        throw new SnapshotDataError('TOOL_BINDING_INVALID', path, 'Expected a string or safe integer other than negative zero');
+                    if (utf8Size(canonicalJson(bindingKey)) > VIEW_METADATA_BYTES)
+                        throw new SnapshotDataError('TOOL_BINDING_INVALID', path, 'Binding key exceeds View metadata budget');
+                    bytes += utf8Size(canonicalJson(bindingKey));
+                }
                 const definition = declared.get(type);
                 if (!definition) fail('VIEW_INVALID', 'Register ViewType ' + type + ' before mounting it');
                 const single = definition.multiplicity === 'single';
@@ -226,11 +237,11 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     }
                     occupied.add(naming);
                 }
-                return { definition, single, naming, continuous, type, owner, bindings, onClose };
+                return { definition, single, naming, continuous, type, owner, bindings, onClose, bindingKey };
             });
 
             // Pass 2: assign sequential IDs for newly opened multi-instance Views and bind Tools.
-            const instances = staged.map(({ definition, single, naming, continuous, type, owner, bindings, onClose }) => {
+            const instances = staged.map(({ definition, single, naming, continuous, type, owner, bindings, onClose, bindingKey }) => {
                 let id = continuous?.view.viewId ?? naming;
                 if (!continuous && !single) {
                     let sequence = nextSequences.get(naming) ?? 0;
@@ -251,6 +262,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 entries += bindings.length;
                 if (entries > maxBindings) fail('TOOL_CAPACITY', 'App frame exceeds the View Tool binding limit');
                 bytes += utf8Size(canonicalJson(view as unknown as JsonValue));
+                const reset = resetActivations || !Object.is(continuous?.bindingKey, bindingKey);
                 const active = new Map<string, Binding>();
                 const seen = new Set<string>();
                 const toolBindings: ViewToolBinding[] = [];
@@ -262,9 +274,9 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     if (!enabled) continue;
                     const toolId = tool.descriptor.id;
                     // A recovered frame needs a newly adopted tool binding even on an unchanged mount.
-                    const old = resetActivations ? undefined : continuous?.bindings.get(toolId);
+                    const old = reset ? undefined : continuous?.bindings.get(toolId);
                     if (!old && nextActivationSequence >= Number.MAX_SAFE_INTEGER) fail('TOOL_CAPACITY', 'Tool activation sequence exhausted');
-                    const activationId = old?.activationId ?? 'ta:v2:' + ++nextActivationSequence;
+                    const activationId = old?.activationId ?? 'a:' + ++nextActivationSequence;
                     const reference = Object.freeze({ toolId, activationId });
                     bytes += utf8Size(canonicalJson(reference));
                     count++;
@@ -272,10 +284,28 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     tools.set(toolId, tool.descriptor);
                     toolBindings.push(reference);
                 }
+                let closeActivationId: string | undefined;
+                if (onClose) {
+                    if (!reset && continuous?.closeActivationId) closeActivationId = continuous.closeActivationId;
+                    else {
+                        if (nextActivationSequence >= Number.MAX_SAFE_INTEGER) fail('TOOL_CAPACITY', 'Close activation sequence exhausted');
+                        closeActivationId = 'a:' + ++nextActivationSequence;
+                    }
+                    bytes += utf8Size(closeActivationId);
+                    if (++entries > maxBindings) fail('TOOL_CAPACITY', 'App frame exceeds the View binding limit');
+                    count++;
+                }
                 if (bytes + staticBytes > maxRetainedBytes) fail('TOOL_CAPACITY', 'View Tool retention limit exceeded');
-                next.set(id, { owner, view, naming, bindings: active, ...(onClose ? { onClose } : {}) });
-                return { ...view, toolBindings: Object.freeze(toolBindings), ...(onClose ? { canClose: true as const } : {}) };
+                next.set(id, { owner, view, naming, bindings: active, ...(bindingKey === undefined ? {} : { bindingKey }),
+                    ...(onClose ? { onClose, closeActivationId: closeActivationId! } : {}) });
+                return { ...view, toolBindings: Object.freeze(toolBindings), ...(closeActivationId ? { closeActivationId } : {}) };
             });
+            // Prefix counters survive unmounts. Charge every retained pair, including
+            // counter digit growth, before the inventory and its accounting are installed.
+            for (const entry of nextSequences) {
+                bytes += utf8Size(canonicalJson(entry));
+                if (bytes + staticBytes > maxRetainedBytes) fail('TOOL_CAPACITY', 'View Tool retention limit exceeded');
+            }
             return {
                 instances,
                 tools: [...tools.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
@@ -292,16 +322,19 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             };
         },
 
+        viewTypes() {
+            return Object.freeze([...declared].map(([name, { multiplicity }]) => Object.freeze({ name, multiplicity })));
+        },
         getView(id: string): ViewInstance | undefined { return mounted.get(id)?.view; },
         readViewId(owner: object): string | undefined {
             for (const entry of mounted.values()) if (entry.owner === owner) return entry.view.viewId;
         },
-        async closeView(viewId: string, viewInstanceId: string): Promise<ViewToolInvocationTerminal> {
+        async closeView(viewId: string, viewInstanceId: string, closeActivationId: string): Promise<ViewToolInvocationTerminal> {
             const selected = mounted.get(viewId);
             if (selected?.view.viewInstanceId !== viewInstanceId)
                 return { phase: 'not-entered', result: rejected('VIEW_INSTANCE_REVOKED', 'The selected View closed or was replaced.') };
             const close = selected.onClose;
-            if (!close) return { phase: 'not-entered', result: rejected('VIEW_CLOSE_UNAVAILABLE', 'This View has no close action.') };
+            if (!close || selected.closeActivationId !== closeActivationId) return { phase: 'not-entered', result: rejected('VIEW_CLOSE_SOURCE_STALE', 'The original close activation is no longer current.') };
             return { phase: 'entered-returned', result: await close() };
         },
         inspect(): ViewOwnedToolsStats {

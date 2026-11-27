@@ -3,11 +3,12 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { threadId } from 'node:worker_threads';
 import Type from 'typebox';
-import { arrayRef, createApp, createView, defineViewType, refParam, type ViewHandle, type ToolResult } from '@aotui/sdk';
+import { arrayRef, createApp, createView, defineViewType, refParam, type ViewHandle, type ViewFrame, type ToolResult } from '@aotui/sdk';
+type FixturePage = { handle: ViewHandle; frame(): ViewFrame };
 
 const todo = Type.Object({ title: Type.String(), done: Type.Boolean() }, { additionalProperties: false });
 type Writer = { write(label: string, value: object): Promise<ToolResult> };
-const detail = defineViewType<Writer>()({ name: 'detail', multiplicity: 'multiple', region: 'dynamic',
+const detail = defineViewType<(Writer) & { close?: (() => ToolResult) | undefined }>()({ onClose: { enabled: context => !!context.close, execute: ({ context }) => context.close!() },  name: 'detail', multiplicity: 'multiple', region: 'dynamic',
     tools: { edit: { description: 'Edit the open detail.', inputSchema: Type.Object({ value: Type.String() }, { additionalProperties: false }),
         execute: ({ input, context }) => context.write('edit', input) } },
 });
@@ -31,10 +32,10 @@ const workspace = defineViewType<Writer & { open(): ToolResult }>()({ name: 'wor
 });
 
 export default createApp({ app_name: 'console_tasks', viewTypes: [workspace, detail],
-    initialize({ launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const folder = String(launchConfig?.folder);
         const log = (name: string, value: object) => appendFileSync(join(folder, name + '.jsonl'), JSON.stringify({ ...value, threadId }) + '\n');
-        let details: ViewHandle | undefined, last = 'empty';
+        let details: FixturePage | undefined, last = 'empty';
         let count = 0;
         const owner: Writer = { async write(label, value) {
             log('entered', { label, value });
@@ -49,17 +50,15 @@ export default createApp({ app_name: 'console_tasks', viewTypes: [workspace, det
             return { success: true, data: { saved: true, label, undisplayed: 'TOOL_DATA_NOT_INSPECTED' } };
         } };
         function open(): ToolResult {
-            if (!details) details = createView(detail, { idPrefix: 'detail', render: () => ({ body: '# Detail available', context: owner }),
-                onClose: () => { details = undefined;publish();return { success: true }; } });
+            if (!details) details = (() => { const handle = createView(detail, { idPrefix: 'detail' }); const closeAction = () => { details = undefined;publish();return { success: true }; }; return { handle, frame: () => handle.frame({ body: '# Detail available', context: { ...(owner), close: closeAction } }) }; })();
             publish();
             return { success: true, data: { opened: true } };
         }
-        const page = createView(workspace, { render: () => ({ body: '# Tasks last operation ' + last,
-            context: { ...owner, open }, refs: [arrayRef('values', [{ priority: 7 }], { itemType: 'Todo',
-                scope: 'public', schema: Type.Array(Type.Object({ priority: Type.Integer() }, { additionalProperties: false })) })] }) });
-        const publish = () => prepareProjection({ views: details ? [page, details] : [page] });
+        const page = (() => { const handle = createView(workspace); return { handle, frame: () => handle.frame({ body: '# Tasks last operation ' + last, context: { ...owner, open }, refs: [arrayRef('values', [{ priority: 7 }], { itemType: 'Todo',
+                scope: 'public', schema: Type.Array(Type.Object({ priority: Type.Integer() }, { additionalProperties: false })) })] }) }; })();
+        const publish = () => commit(() => (details ? [page, details] : [page]).map(page => page.frame()));
         publish();
         log('tasks-life', { event: 'start' });
-        registerCleanup({ stop: () => { log('tasks-life', { event: 'stop' }); } });
+        registerLifecycle({ stop: () => { log('tasks-life', { event: 'stop' }); } });
     },
 });

@@ -10,24 +10,23 @@ type Contacts = { emails: string[]; scope?: 'public' | 'protected'; withdrawn?: 
 export default createApp({
     app_name: 'contacts',
     viewTypes: [List],
-    initialize({ launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const folder = launchConfig?.folder;
         if (typeof folder !== 'string') throw new Error('Missing contacts folder');
         const stateFile = join(folder, 'contacts.json');
         const witness = join(folder, 'contacts-lifecycle.jsonl');
         let last = readFileSync(stateFile, 'utf8');
         let state = JSON.parse(last) as Contacts;
-        const list = createView(List, { render() {
+        const list = (() => { const handle = createView(List); return { handle, frame: () => {
             const schema = Type.Array(Type.String());
             const recipients = arrayRef('emails', state.emails, { scope: state.scope ?? 'public', schema });
             const personal = arrayRef('personal', state.emails, { scope: 'private', schema });
             const team = arrayRef('team', state.emails, { scope: 'protected', schema });
-            return { body: ['# Contacts', state.emails.join(', '),
+            return handle.frame({ body: ['# Contacts', state.emails.join(', '),
                 ...(state.withdrawn ? [] : [formatRef('Recipients', recipients), ...state.emails.map((email, index) => formatRef(email, recipients, index))]),
-                formatRef('My contacts', personal), formatRef('Team contacts', team)].join('\n'),
-            refs: [...(state.withdrawn ? [] : [recipients]), personal, team] };
-        } });
-        function publish() { prepareProjection({ views: [list] }); }
+                formatRef('My contacts', personal), formatRef('Team contacts', team)].join('\n'), refs: [...(state.withdrawn ? [] : [recipients]), personal, team] });
+        } }; })();
+        function publish() { commit(() => ([list]).map(page => page.frame())); }
         publish();
         appendFileSync(witness, JSON.stringify({ event: 'start', threadId }) + '\n');
         const timer = setInterval(() => {
@@ -37,7 +36,7 @@ export default createApp({
             last = next;
             publish();
         }, 15);
-        registerCleanup({ stop: () => {
+        registerLifecycle({ stop: () => {
             clearInterval(timer);
             appendFileSync(witness, JSON.stringify({ event: 'stop', threadId }) + '\n');
         } });

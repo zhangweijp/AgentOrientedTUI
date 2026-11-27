@@ -1,4 +1,4 @@
-import { fixtureHost } from './__tests__/worker-fixture.js';
+import { fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { ActiveTurn, AppInvocation } from '@aotui/core';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
@@ -87,7 +87,7 @@ async function start(options: any = {}) {
   worker.postMessage = (m: any) => { attempted.push(m); if (!hold?.(m)) { sent.push(m); post(m); } };
   worker.stdout?.on('data', (b: any) => logs.push(String(b))); worker.stderr?.on('data', (b: any) => logs.push(String(b)));
   const authorization = policyProbe();
-  const host = fixtureHost(Host, { policy: options.policy ?? authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile,
+  const host = fixtureHost(Host, { policy: options.policy ?? authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile, interactionLimits: {maxPendingInvocations:1},
     toolsEnabled: options.toolsEnabled,
     config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } }, { worker, timeoutMs: options.timeout ?? NORMAL_HOST_TIMEOUT_MS });
   worker.on('message', (m: any) => messages.push(m));
@@ -95,7 +95,7 @@ async function start(options: any = {}) {
     entries: () => messages.filter(m => m.type === 'TEST_HANDLER_ENTER'), posts: () => sent.filter(isInvoke),
     snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };
   closing.push(async () => { facts.push({ messages, sent, attempted, scopes: x.scopeFacts ?? [], logs, resourceReport: host.getResourceReport() });
-    const owned = host.worker === worker; host.terminate();
+    const owned = fixtureWorker(host) === worker && host.getResourceReport().worker === 'owned'; host.terminate();
     if (owned) { await worker.terminate(); await host.waitForResourceRelease(); } });
   await host.start(); await host.open(); await wait(x, m => m.type === 'SNAPSHOT_PREPARED'); return x;
 }
@@ -118,7 +118,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     legacySdkAppFile = join(temporary, 'legacy-sdk-app.mjs');
     await writeFile(legacySdkAppFile, `export default {
       app_name: 'legacy_sdk',
-      appLifecycleSupport: 'app-lifecycle-v2',
+      appLifecycleSupport: 'app-lifecycle-v3',
       initialize() { throw new Error('UNSUPPORTED_FACTORY_EXECUTED'); }
     };\n`);
     facts.push({ kind: 'current emitted inputs', runtime, sdk, node: process.version, appFile, workerFile });

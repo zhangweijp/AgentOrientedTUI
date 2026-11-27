@@ -3,7 +3,7 @@ import type { WorkerCapacity } from '../app/worker-capacity.js';
 import type { ActiveTurn as CoreTurn, DesktopID, AppID, InstanceInteraction } from '@aotui/core';
 import type { UpdateSignal } from '../../spi/core/signals.js';
 import type { ActiveTurn, AdoptTurnResult, CreateDesktopOptions, IDesktop, AppDiscoveryInfo, OpenAppOptions, ReceiptAccess, ReceiptLocator,
-    RunningApp, RunningAppResult } from '../../spi/runtime/kernel.interface.js';
+    RunningApp, RunningAppResult, CloseViewRequest, CloseViewOptions, InvokeResult } from '../../spi/runtime/kernel.interface.js';
 import { AOTUIError, captureAppMetadata } from '@aotui/core';
 import { SignalBus, type SignalListener } from './signal-bus.js';
 import type { AppCloseHandle, DesktopCloseHandle, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
@@ -12,9 +12,9 @@ import { DesktopLogger, type LogEntry } from './desktop-logger.js';
 import { AppManager } from '../app/manager.js';
 import { RUNTIME_DEFAULTS, type RuntimeConfig } from '../../spi/config/index.js';
 import { appInteractionUnavailable } from '../../spi/runtime/app-interaction.interface.js';
-import type { ReceiptQuery, TurnSelection } from '@aotui/core';
+import type { ObservationOptions, ReceiptQuery, TurnSelection } from '@aotui/core';
 import type { AppWindowTarget, ViewWindowTarget } from '../../spi/runtime/windows.js';
-import { createTurnCoordinator } from '@aotui/core/host';
+import { captureObservationOptions, createTurnCoordinator } from '@aotui/core/host';
 import { captureInstallationOptions, captureOptions, pendingAppFields } from '../app/interaction-config.js';
 import { createCandidateScope } from './candidate-scope.js';
 import { readAppManifest } from '../app/manifest.js';
@@ -85,7 +85,7 @@ export class Desktop implements IDesktop {
         return owned;
     }
 
-    revokeWindowAccess(turn: ActiveTurn, target: AppWindowTarget | ViewWindowTarget): void {
+    revokeWindowAccess(turn: ActiveTurn, target: AppWindowTarget | ViewWindowTarget, channel: 'body' | 'close' | 'all' = 'body'): void {
         this.assertActive();
         const owned = this.requireTurn(turn);
         const { appId, instanceId } = target;
@@ -97,15 +97,21 @@ export class Desktop implements IDesktop {
         if ('viewId' in target && !view) throw closeError('VIEW_INSTANCE_REVOKED');
         const current = this.appManager.getAppInteraction(appId, instanceId);
         if (current.status === 'rejected') throw closeError('APP_INSTANCE_CHANGED');
-        const problem = this.turns.revokeWindowAccess(owned, current.interaction, view);
+        const problem = this.turns.revokeWindowAccess(owned, current.interaction, view, channel);
         if (problem) throw closeError(problem.code);
     }
 
-    async closeView(target: ViewWindowTarget, turn?: ActiveTurn) {
-        this.assertActive();
-        if (turn !== undefined) this.requireTurn(turn);
-        this.turns.eligibilityChanged();
-        return this.appManager.closeView(target, turn && (() => this.requireTurn(turn)));
+    async closeView(request: CloseViewRequest, options?: CloseViewOptions): Promise<InvokeResult> {
+        const { turn, target, invocationId } = request;
+        const owned = this.managedTurns.get(turn);
+        if (!owned?.isCurrent || this.isClosing) return Object.freeze({kind:'refused',code:'TURN_NOT_ACTIVE',message:'The original turn is no longer active.'});
+        const original = this.turns.locate(owned, target.appId);
+        if (!original || original.instanceId !== target.instanceId)
+            return Object.freeze({kind:'refused',code:'TURN_SELECTION_INVALID',message:'The target instance does not belong to the active turn.'});
+        return this.invokeOwned(owned, target.appId, {
+            kind:'closeView', invocationId, observationId: original.observationId,
+            viewId: target.viewId, viewInstanceId: target.viewInstanceId,
+        }, options?.timeoutMs, options?.signal);
     }
 
     // --- Core Methods ---
@@ -130,8 +136,8 @@ export class Desktop implements IDesktop {
             throw new AOTUIError('CONFIG_INVALID', { path: 'options.installationId', reason: 'Provide a stable installation key' });
         this.assertActive();
         const { localPath, backend, command } = captured;
-        const { installationId, config, toolsEnabled, projectionLimits } = captured;
-        const common = { installationId, config: config ?? {}, toolsEnabled, projectionLimits };
+        const { installationId, config, toolsEnabled, projectionLimits, interactionLimits } = captured;
+        const common = { installationId, ...(config === undefined ? {} : { config }), toolsEnabled, projectionLimits, interactionLimits };
         if (localPath !== undefined) {
             if (!localPath.trim() || command !== undefined || captured.name !== undefined)
                 throw new AOTUIError('CONFIG_INVALID', { path: 'options.localPath', reason: 'Provide the local App path and read its metadata from the manifest' });
@@ -179,19 +185,22 @@ export class Desktop implements IDesktop {
         const desktopId = this.id;
         const app: RunningApp = Object.freeze({
             appId: appId as AppID, instanceId: expectedInstanceId,
-            observe: () => current()
-                ? owner.prepareObservation(client => this.turns.prepareObservation(client, current))
-                : Promise.resolve(appInteractionUnavailable()),
+            observe: (options?: ObservationOptions) => {
+                if (!current()) return Promise.resolve(appInteractionUnavailable());
+                const captured = captureObservationOptions(options);
+                if (captured.status === 'rejected') return Promise.resolve(captured);
+                return owner.prepareObservation(client => this.turns.prepareObservation(client, current, captured.options));
+            },
             preview: () => current() ? owner.preview() : Promise.resolve(appInteractionUnavailable()),
             async readReceipt(query: ReceiptQuery, timeoutMs?: number) {
                 const unavailable = () => Object.freeze({ kind: 'unavailable' as const, ...appInteractionUnavailable().issue });
                 if (!current()) return unavailable();
                 const result = await interaction.readReceipt(query, timeoutMs ?? owner.timeout);
-                if (!current()) return unavailable();
-                if (result.kind !== 'receipt') return result;
-                const { observationId, invocationId } = result.receipt;
+                if (!result.locator) return result as ReceiptAccess;
+                if (result.kind === 'receipt' && !current()) return Object.freeze({ kind:'unavailable', ...appInteractionUnavailable().issue,
+                    locator: Object.freeze({ desktopId, appId: appId as AppID, instanceId: expectedInstanceId, ...result.locator }) });
                 return Object.freeze({ ...result, locator: Object.freeze({
-                    desktopId, appId: appId as AppID, instanceId: expectedInstanceId, observationId, invocationId,
+                    desktopId, appId: appId as AppID, instanceId: expectedInstanceId, ...result.locator,
                 }) });
             },
             beginClose: () => owner.beginClose(),
@@ -200,30 +209,39 @@ export class Desktop implements IDesktop {
         return Object.freeze({ status: 'ready', app });
     }
 
+    beginCloseApp(appId: string, expectedInstanceId: string): AppCloseHandle {
+        const owner = this.appManager.getManagedApp(appId as AppID);
+        if (!owner) throw closeError('APP_INTERACTION_UNAVAILABLE');
+        if (owner.appInstanceId !== expectedInstanceId) throw closeError('APP_INSTANCE_MISMATCH');
+        return owner.beginClose();
+    }
+
     createCandidateScope() { return createCandidateScope(); }
 
     adoptTurn(input: TurnSelection): AdoptTurnResult {
         const result = this.turns.adoptTurn(input);
         if (result.status === 'rejected') return result;
         const { turn } = result;
-        const invoke: ActiveTurn['invoke'] = async (appId, request, timeoutMs, signal) => {
-            const original = this.turns.locate(turn, appId);
-            let requestedId: unknown;
-            try { requestedId = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value; }
-            catch { /* Core reports a malformed invocation. */ }
-            const owner = original && this.appManager.getManagedApp(appId as AppID);
-            const timeout = timeoutMs ?? (owner && owner.appInstanceId === original?.instanceId ? owner.timeout : undefined);
-            const invoked = await turn.invoke(appId, request, timeout, signal);
-            if (!original || invoked.kind === 'refused') return invoked;
-            const invocationId = invoked.kind === 'receipt' ? invoked.receipt.invocationId : requestedId;
-            if (typeof invocationId !== 'string') return invoked;
-            const locator = Object.freeze({ desktopId: this.id, appId: appId as AppID, ...original, invocationId });
-            return Object.freeze({ ...invoked, locator });
-        };
+        const invoke: ActiveTurn['invoke'] = (appId, request, timeoutMs, signal) =>
+            this.invokeOwned(turn, appId, request, timeoutMs, signal);
         const active: ActiveTurn = Object.freeze({ invoke, get isCurrent() { return turn.isCurrent; },
             readPublicRefs: turn.readPublicRefs, inspectRef: turn.inspectRef, release: turn.release });
         this.managedTurns.set(active, turn);
         return Object.freeze({ ...result, turn: active });
+    }
+
+    private async invokeOwned(turn: CoreTurn, appId: string, request: Parameters<CoreTurn['invoke']>[1],
+        timeoutMs?: number, signal?: import('@aotui/core').CancellationSignal): Promise<InvokeResult> {
+        const original = this.turns.locate(turn, appId);
+        const owner = original && this.appManager.getManagedApp(appId as AppID);
+        const timeout = timeoutMs ?? (owner && owner.appInstanceId === original?.instanceId ? owner.timeout : undefined);
+        const invoked = await turn.invoke(appId, request, timeout, signal);
+        if (invoked.kind === 'refused') return invoked;
+        if (!invoked.locator) return invoked as InvokeResult;
+        if (!original || original.observationId !== invoked.locator.observationId)
+            return Object.freeze({kind:'unavailable',code:'RESULT_UNAVAILABLE',message:'The original receipt source is unavailable.'});
+        return Object.freeze({...invoked, locator: Object.freeze({ desktopId:this.id, appId:appId as AppID,
+            instanceId:original.instanceId, ...invoked.locator })});
     }
 
     async readReceipt(locator: ReceiptLocator, timeoutMs?: number): Promise<ReceiptAccess> {

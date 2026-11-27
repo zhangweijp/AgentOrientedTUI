@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,16 +11,18 @@ afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 
 function fixture() {
     const directory = mkdtempSync(join(tmpdir(), 'aotui-publication-'));
+    const worker=Object.assign(new EventEmitter(),{postMessage:vi.fn(),terminate:vi.fn(async()=>{worker.emit('exit',0);return 0;})});
     const host = fixtureHost(AppWorkerHost, { appId: 'app' as any, desktopId: 'desktop' as any,
-        appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory } });
-    cleanups.push(() => { (host as any).snapshotReceiver.close();rmSync(directory, { recursive: true, force: true }); });
-    const send = (message: unknown) => (host as any).handleMessage(message);
-    const draft = (seq: number, content = 'current') => ({ schemaVersion: 8, appId: 'app',
+        appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory } },{worker:worker as any,attach:true});
+    (host as any).initializeSent=true;
+    cleanups.push(() => { host.terminate();(host as any).snapshotReceiver.close();rmSync(directory, { recursive: true, force: true }); });
+    const send = (message: unknown) => worker.emit('message',message);
+    const draft = (seq: number, content = 'current') => ({ schemaVersion: 9, healthySince: 1, appId: 'app',
         instanceId: (host as any).appInstanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 1,
-        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'view-instance', type: 'File', name: 'File', region: 'dynamic',
+        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'm:1', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value: content } }], refs: {}, tools: {} });
     const publish = (seq: number, content = 'current') =>
-        send({ type: 'SNAPSHOT_PREPARED', draft: draft(seq, content) });
+        send({ type: 'SNAPSHOT_PREPARED',draft:draft(seq, content),...(seq===1?{viewTypes:[{name:'File',multiplicity:'single'}]}:{}) });
     return { host, send, draft, publish };
 }
 
@@ -36,14 +39,14 @@ describe('Semantic commit notifications', () => {
         f.publish(1);
         expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 1, views: [expect.any(Object)] } });
         f.publish(2);
-        expect(observed).toHaveLength(0);
+        expect(observed).toHaveLength(1);
         f.publish(3, 'changed in the same millisecond');
-        expect(observed).toHaveLength(0);
+        expect(observed).toHaveLength(1);
         expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 2 } });
         f.publish(2, 'late');
         f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(4), instanceId: 'foreign' } });
         f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(5), appId: 'foreign' } });
-        expect(observed).toHaveLength(0);
+        expect(observed).toHaveLength(1);
         expect(committedState(f.host)).toMatchObject({
             status: 'ready', snapshot: { revision: 2, views: [{ content: { value: 'changed in the same millisecond' } }] },
         });
@@ -53,13 +56,13 @@ describe('Semantic commit notifications', () => {
         const f = fixture(), update = vi.fn();f.host.onUpdate = update;
         f.publish(1, 'passive');
         expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 1 } });
-        expect(update).not.toHaveBeenCalled();
+        expect(update).toHaveBeenCalledTimes(1);
         f.publish(2, 'passive changed');
         expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 2 } });
-        expect(update).not.toHaveBeenCalled();
+        expect(update).toHaveBeenCalledTimes(1);
     });
 
-    it('reports one fault while two identical failures are received and accepts an unchanged repair', () => {
+    it('reports one fault while two identical failures are received and opens a new period on identical repair', () => {
         const f = fixture(), health: unknown[] = [];
         f.host.onUpdate = () => health.push(committedState(f.host).status);
         f.publish(1);
@@ -67,17 +70,17 @@ describe('Semantic commit notifications', () => {
             instanceId: f.draft(seq).instanceId, producerSeq: seq, sourceEpoch: seq,
             error: { code: 'SNAPSHOT_SERIALIZATION_ERROR', message: 'Cannot serialize capture' } });
         fail(2);fail(3);
-        expect(health).toEqual(['degraded']);
-        f.publish(4);
-        expect(health).toEqual(['degraded']);
-        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 1 } });
+        expect(health).toEqual(['ready','degraded','degraded']);
+        f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(4), healthySince: 4 } });
+        expect(health).toEqual(['ready','degraded','degraded','ready']);
+        expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 2, admissionSinceRevision: 2 } });
     });
 
     it('publishes the last View closing as a legal empty state', () => {
         const f = fixture(), update = vi.fn();f.host.onUpdate = update;
         f.publish(1);
         f.send({ type: 'SNAPSHOT_PREPARED', draft: { ...f.draft(2), views: [] } });
-        expect(update).not.toHaveBeenCalled();
+        expect(update).toHaveBeenCalledTimes(1);
         expect(committedState(f.host)).toMatchObject({ status: 'ready', snapshot: { revision: 2, views: [], tools: {} } });
     });
 
@@ -89,7 +92,7 @@ describe('Semantic commit notifications', () => {
             f.publish(1);
             expect(f.host.getStatus()).toBe('error');
             expect(committedState(f.host).status).toBe('stopped');
-            expect(update).not.toHaveBeenCalled();
+            expect(update).toHaveBeenCalledTimes(1);
         } finally { log.mockRestore(); }
     });
 });

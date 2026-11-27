@@ -41,7 +41,7 @@ export async function exerciseRefresh(turn, runtime, desktop, folder, events, bu
     const current = (index = 0) => desktop.listApps().find(item => item.installationId === installations[index]);
     const mount = () => desktop.getAppWindows(current().appId, current().appInstanceId).views
         .find(view => view.viewId === 'editor')?.viewInstanceId;
-    const native = (id, tool, input = {}, owner = app) => modelCall(id, owner + '-' + tool, input);
+    const native = (id, tool, input = {}, owner = app) => modelCall(id, owner + '-' + (tool === 'open_file' ? 'workspace' : 'editor') + '-' + tool, input);
     const open = (id, index = 0) => modelCall(id, 'system-open_app', { installation_id: installations[index] });
     const close = (id, owner = app) => modelCall(id, 'system-close_app', { app_id: owner });
     const checkText = (id, owner) => native(id, 'read_file', { text: '$ref.' + owner + '.editor.content' }, owner);
@@ -131,13 +131,13 @@ export async function exerciseRefresh(turn, runtime, desktop, folder, events, bu
     assert.doesNotMatch(diagnostic(recovered.body), /SNAPSHOT_SERIALIZATION_ERROR/);
 
     const pageClosed = await run('close-file', [modelCall('close-file', 'system-close_view', { app_id: app, view_id: 'editor' })]);
-    assert.equal(pageClosed.outputs[0].value.closed, true);
+    assert.equal(pageClosed.outputs[0].value.removal, 'unconfirmed');
     assert.equal(mount(), undefined);
     const removed = await run('reopen-file', [native('new-file', 'open_file')]);
     assert.deepEqual(pages(removed.body, app).map(page => page.content), [
         '<view view_id="workspace" view_type="workspace" app_id="refresh_files" app_name="refresh_files" region="static">\nTest file workspace\n</view>',
     ]);
-    assert.equal(tools(removed.body).includes(app + '-read_file'), false);
+    assert.equal(tools(removed.body).includes(app + '-editor-read_file'), false);
     const reopenedMount = mount();
     assert.ok(reopenedMount && reopenedMount !== originalMount);
     await run('fault-before-management', [close('remove-neighbor', neighbor), native('damage', 'fail_projection')]);

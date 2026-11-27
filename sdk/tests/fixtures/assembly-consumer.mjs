@@ -37,7 +37,6 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
         appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, register(owner) {
             assert.equal(cleanup, undefined);
             cleanup = owner;
-            return () => { void closeCleanup(); };
         } },
         defineViewTypes: definitions => { projection.assertWritable(); registry.defineViewTypes(definitions); },
         readViewId: owner => projection.readViewId(owner, registry),
@@ -46,11 +45,11 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
             assert.equal(options, undefined, 'Work Items only uses ordinary commits in this scenario');
             const result = commitAppFrame(projection, registry, build);
             const publication = projection.publishTo(core.committer);
-            if (result.status === 'prepared') assert.ok(['published', 'unchanged'].includes(publication.status));
+            if (result.ok) assert.ok(['published', 'unchanged'].includes(publication.status));
             return result;
         },
     };
-    const instance = await factory.initialize(context);
+    assert.equal(await factory.initialize(context), undefined);
     const binding = {
         identity: {},
         isLive: ({ tool, receiver }) => !controller.signal.aborted && !projection.failed &&
@@ -78,7 +77,7 @@ async function openLocalWorkItems(factory, desktopId, projectionLimits, appId) {
             core.lifecycle.stop();
             authority.close();
             stopCleanup();
-            try { await authority.whenClosed(); await instance.close(); await closeCleanup(); }
+            try { await authority.whenClosed(); await closeCleanup(); }
             finally { projection.close(); registry.dispose(); core.lifecycle.dispose(); }
             const { activeInvocations, activeReads, borrowedSnapshots, observations } = authority.inspect();
             const released = { activeInvocations, activeReads, borrowedSnapshots, observationSlots: observations.observationSlots,
@@ -167,7 +166,7 @@ try {
                 const observed = candidates.get(appId).observation;
                 assert.equal(request.observationId, observed.observationId);
                 const captured = turn.calls.find(([id]) => id === request.invocationId);
-                const tool = observed.tools.find(tool => appId + '-' + tool.name === captured[1]);
+                const tool = observed.tools.find(tool => appId + '-' + tool.viewType + '-' + tool.name === captured[1]);
                 assert.equal(request.toolId, tool.id);
                 const { view_id, ...input } = captured[2];
                 assert.equal(request.viewId, view_id);
@@ -249,11 +248,11 @@ try {
     }
     prior.turn.release();
     const scripts = name => [
-        [name + '-reverse', name + '-update', { view_id: 'workspace_1', operation: 'reverse' }],
-        [name + '-remember', name + '-inspect', { view_id: 'b_1', selected: '$ref.' + name + '.' + list + '.items[0]' }],
-        [name + '-close', name + '-update', { view_id: 'workspace_1', operation: 'close' }],
-        [name + '-open', name + '-update', { view_id: 'workspace_1', operation: 'open' }],
-        [name + '-stale', name + '-inspect', { view_id: list, selected: '$ref.' + name + '.b_1.selected' }],
+        [name + '-reverse', name + '-Workspace-update', { view_id: 'workspace_1', operation: 'reverse' }],
+        [name + '-remember', name + '-Item-inspect', { view_id: 'b_1', selected: '$ref.' + name + '.' + list + '.items[0]' }],
+        [name + '-close', name + '-Workspace-update', { view_id: 'workspace_1', operation: 'close' }],
+        [name + '-open', name + '-Workspace-update', { view_id: 'workspace_1', operation: 'open' }],
+        [name + '-stale', name + '-Item-inspect', { view_id: list, selected: '$ref.' + name + '.b_1.selected' }],
     ];
     const calls = [...scripts(managed.name), ...scripts(local.app.name)];
     const before = await run('operate', calls);
@@ -261,19 +260,25 @@ try {
     assert.equal(receipts.length, calls.length);
     for (const [i, { request, result }] of receipts.entries()) {
         assert.equal(request.invocationId, calls[i][0]);
-        assert.equal(result.kind, 'receipt');
-        const { outcome, executionPhase } = result.receipt;
         if (request.invocationId.endsWith('-stale')) {
-            assert.equal(outcome.status, 'rejected');
-            assert.equal(outcome.code, 'VIEW_INSTANCE_REVOKED');
-            assert.equal(executionPhase, 'not-dispatched');
+            if (result.kind === 'refused') {
+                assert.equal(result.code, 'VIEW_INSTANCE_REVOKED');
+                assert.equal(result.locator, undefined);
+            } else {
+                assert.equal(result.kind, 'receipt');
+                assert.equal(result.receipt.outcome.status, 'rejected');
+                assert.equal(result.receipt.outcome.code, 'VIEW_INSTANCE_REVOKED');
+                assert.equal(result.receipt.executionPhase, 'not-dispatched');
+            }
         } else {
+            assert.equal(result.kind, 'receipt');
+            const { outcome } = result.receipt;
             assert.equal(outcome.status, 'succeeded', JSON.stringify(outcome));
             assert.deepEqual(Object.keys(outcome.value), ['success']);
             assert.equal(outcome.value.success, true);
         }
     }
-    const after = await run('observe', [[managed.name + '-close-list', managed.name + '-update', { view_id: 'workspace_1', operation: 'close' }]]);
+    const after = await run('observe', [[managed.name + '-close-list', managed.name + '-Workspace-update', { view_id: 'workspace_1', operation: 'close' }]]);
     assert.ifError(after.error);
     for (const { appId, name } of [managed, local.app]) {
         const view = (step, viewId) => step.requests[0].messages.filter(m => m.role === 'user' &&
@@ -284,7 +289,7 @@ try {
         assert.doesNotMatch(view(after, reopenedList)[0].content, /items\[4\]/);
         assert.match(view(before, 'workspace_1')[0].content, /Inspections: 0/);
         assert.match(view(after, 'workspace_1')[0].content, /Inspections: 1[\s\S]*"selected":0/);
-        const tools = after.requests[0].tools.filter(tool => tool.function.name === name + '-inspect');
+        const tools = after.requests[0].tools.filter(tool => tool.function.name === name + '-Item-inspect');
         assert.equal(tools.length, 1);
         assert.ok(tools[0].function.parameters.required.includes('view_id'));
     }
@@ -300,13 +305,18 @@ try {
     assert.equal(recovered.requests.length, 1);
     for (const { appId, request: { observationId, invocationId }, result } of receipts) {
         assert.notEqual(observationId, candidates.get(appId).observation.observationId);
-        assert.deepEqual(await clients.get(appId).readReceipt({ observationId, invocationId }), result);
+        const read = await clients.get(appId).readReceipt({ observationId, invocationId });
+        if (result.kind === 'refused') {
+            assert.equal(read.kind, 'unavailable');
+            assert.equal(read.code, 'RESULT_UNAVAILABLE');
+            assert.equal(read.locator, undefined);
+        } else assert.deepEqual(read, result);
     }
     const recovery = recovered.requests[0];
     const listMessages = recovery.messages.filter(m => typeof m.content === 'string' && m.content.startsWith('<view view_id="' + reopenedList + '"'));
     assert.equal(listMessages.length, 1);
     assert.ok(listMessages[0].content.includes('app_id="local"'));
-    assert.ok(recovery.tools.some(tool => tool.function.name === managed.name + '-inspect'), 'Second Item still receives the shared Tool');
+    assert.ok(recovery.tools.some(tool => tool.function.name === managed.name + '-Item-inspect'), 'Second Item still receives the shared Tool');
     release[managed.appId] = await left.close();
     activeApps.delete(left);
     owners.splice(owners.indexOf(left), 1);
@@ -314,7 +324,7 @@ try {
     assert.ifError(remaining.error);
     const last = remaining.requests[0];
     assert.ok(last.tools.every(tool => !tool.function.name.startsWith(managed.name + '-')));
-    assert.ok(last.tools.some(tool => tool.function.name === 'local-inspect'));
+    assert.ok(last.tools.some(tool => tool.function.name === 'local-Item-inspect'));
     assert.ok(last.messages.every(m => typeof m.content !== 'string' || !m.content.startsWith('<view ') ||
         !m.content.includes('app_id="' + managed.appId + '"')));
 } finally {
@@ -326,6 +336,8 @@ try {
     for (const owner of owners) release[owner.app.appId] = await owner.close();
 }
 console.log(JSON.stringify({ turns: requests, resolutions, appEntrySHA256: createHash('sha256').update(await readFile(fileURLToPath(entry))).digest('hex'),
-    checkedReceipts: receipts.length, receipts: receipts.map(({ appId, request, result }) => ({
-        appId, ...request, outcome: result.receipt.outcome, executionPhase: result.receipt.executionPhase,
-    })), release }));
+    checkedInvocations: receipts.length,
+    checkedReceipts: receipts.filter(({ result }) => result.kind === 'receipt').length,
+    receipts: receipts.map(({ appId, request, result }) => result.kind === 'receipt' ? ({
+        appId, ...request, kind: result.kind, outcome: result.receipt.outcome, executionPhase: result.receipt.executionPhase,
+    }) : ({ appId, ...request, kind: result.kind, code: result.code, path: result.path })), release }));

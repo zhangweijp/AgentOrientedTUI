@@ -16,7 +16,7 @@ class MemoryTaskApp {
     private items = new Map<string, { id: string; title: string; revision: number; done: boolean }>();
     private order = ['a', 'b'];
     private producerSeq = 0;
-    private sourceEpoch = 0;
+    private sourceEpoch = 1;
     constructor() {
         this.items.set('a', { id: 'a', title: 'Stable', revision: 1, done: false });
         this.items.set('b', { id: 'b', title: 'Stable', revision: 1, done: false });
@@ -40,18 +40,18 @@ class MemoryTaskApp {
         for (const [index, id] of this.order.entries()) {
             const task = this.items.get(id)!;
             const refId = 'pending_' + index;
-            refs[refKey('task_list', 'mount_1', refId)] = { valueSchema: { type: 'object' }, scope: 'protected',
-                id: refId, ownerViewId: 'task_list', ownerViewInstanceId: 'mount_1',
+            refs[refKey('task_list', 'm:1', refId)] = { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected',
+                id: refId, ownerViewId: 'task_list', ownerViewInstanceId: 'm:1',
                 refType: 'Task',
                 target: { kind: 'snapshot-value', payload: { id: task.id, revision: task.revision } },
             };
             labels.push('[' + task.title + '](' + refId + ')');
         }
-        return {
-            schemaVersion: 8, appId: this.appId, instanceId: this.instanceId,
+        return { healthySince: 1,
+            schemaVersion: 9, appId: this.appId, instanceId: this.instanceId,
             producerSeq: ++this.producerSeq, sourceEpoch: this.sourceEpoch, capturedAt: this.producerSeq,
             views: [{
-                toolBindings: [{ toolId, activationId: 'active-complete' }], id: 'task_list', viewInstanceId: 'mount_1', type: 'TaskList',
+                toolBindings: [{ toolId, activationId: 'a:1' }], id: 'task_list', viewInstanceId: 'm:1', type: 'TaskList',
                 name: 'Tasks', region: 'dynamic',
                 content: { format: 'markdown-v1', value: labels.join('\n') },
             }],
@@ -78,7 +78,7 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
         const held = core.store.acquire(originalId); if (held.status !== 'acquired') throw Error('holder');
         const old = core.store.resolveRef({
             snapshotId: originalId, appId: app.appId, instanceId: app.instanceId,
-            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending_0',
+            viewId: 'task_list', viewInstanceId: 'm:1', refId: 'pending_0',
         });
         expect(old.status).toBe('resolved');
         if (old.status !== 'resolved') throw Error('Expected historical Ref');
@@ -95,7 +95,7 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
 
         const stillOld = core.store.resolveRef({
             snapshotId: originalId, appId: app.appId, instanceId: app.instanceId,
-            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending_0',
+            viewId: 'task_list', viewInstanceId: 'm:1', refId: 'pending_0',
         });
         expect(stillOld.status).toBe('resolved');
         expect(stillOld).toMatchObject({ target: { kind: 'snapshot-value', payload: { id: 'a', revision: 1 } } });

@@ -10,6 +10,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { createRequestToolCheck } from './provider-request-tools.js';
 import { OpenAICompatibleChatLanguageModel } from '@ai-sdk/openai-compatible';
 import { asSchema, streamText, wrapLanguageModel, type LanguageModelUsage, type Tool, type ModelMessage } from 'ai';
 import type { LLMConfig, LLMResponse, ModelInputLimits, ModelInputMeasurement } from './interfaces.js';
@@ -51,13 +53,22 @@ async function encodedInput(input: Parameters<typeof fetch>[0], options?: Reques
     return body;
 }
 
-function measureInput(limits: ModelInputLimits, request: string, params: StreamParams): ModelInputMeasurement {
-    const inputBytes = Buffer.byteLength(request, 'utf8');
-    let encoded: Record<string, unknown>;
+function parseEncodedRequest(request: string): Record<string, unknown> {
+    let encoded: unknown;
     try { encoded = JSON.parse(request); }
-    catch { throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not send JSON model input.'); }
+    catch { throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not encode JSON model input.'); }
     if (!encoded || typeof encoded !== 'object' || Array.isArray(encoded))
-        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not send a JSON model request.');
+        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not encode a JSON model request.');
+    return encoded as Record<string, unknown>;
+}
+
+function measureInput(limits: ModelInputLimits, request: string, params: StreamParams, encoded = parseEncodedRequest(request)): ModelInputMeasurement {
+    const inputBytes = Buffer.byteLength(request, 'utf8');
+    const generation = decodedObject(encoded.generationConfig);
+    const outputLimits = [encoded.max_tokens, encoded.max_completion_tokens, encoded.max_output_tokens, generation?.maxOutputTokens]
+        .filter(value => value !== undefined);
+    if (outputLimits.length !== 1 || outputLimits[0] !== limits.maxOutputTokens)
+        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The actual encoded request does not preserve the reserved output limit.');
     const messages = encoded.messages ?? encoded.input ?? encoded.contents;
     const messageCount = Array.isArray(messages) ? messages.length : params.prompt.length;
     const toolCount = Array.isArray(encoded.tools) ? encoded.tools.length : params.tools?.length ?? 0;
@@ -128,7 +139,8 @@ export class LLMClient {
     }
 
     private async prepareInput(messages: ModelMessage[], tools: Record<string, Tool>, budget: ModelInputLimits | undefined,
-        preserveTools: boolean): ReturnType<typeof prepareOpenAIResponsesInput> {
+        preserveTools: boolean): Promise<Awaited<ReturnType<typeof prepareOpenAIResponsesInput>> & { sourceTools: ReadonlySet<string> }> {
+        const sourceTools = new Set(Object.keys(tools));
         const capabilities = budget?.capabilities ?? this.config.modelCapabilities;
         messages = this.applyInputCapabilityGuard(messages, capabilities);
         if (budget && hasUnmeasurableParts(messages)) {
@@ -140,7 +152,7 @@ export class LLMClient {
         if (capabilities?.toolCall === false && Object.keys(tools).length > 0) {
             if (preserveTools) throw new ProviderToolSchemaError((await this.toolSchemaPolicy()).label,
                 'required tools', '$', 'The selected model does not support the tools required by this context.');
-            return { messages: anthropic ? withoutAnthropicSearchHistory(messages) : messages, tools: {} };
+            return { messages: anthropic ? withoutAnthropicSearchHistory(messages) : messages, tools: {}, sourceTools: new Set() };
         }
         const policy = await this.toolSchemaPolicy();
         const definitions: [string, Tool][] = [];
@@ -155,7 +167,7 @@ export class LLMClient {
         }
         const input = await prepareOpenAIResponsesInput(this.config, messages, Object.fromEntries(definitions));
         const replay = anthropic ? prepareAnthropicSearchErrorReplay(input.messages) : undefined;
-        return replay ? { ...input, ...replay } : input;
+        return { ...input, ...replay, sourceTools };
     }
 
     /** Run the real Provider encoder with a local fetch that cannot send. */
@@ -165,17 +177,23 @@ export class LLMClient {
         return async (messages: ModelMessage[], tools: Record<string, Tool>, preserveTools: boolean): Promise<ModelInputMeasurement> => {
             const input = await this.prepareInput(messages, tools, budget, preserveTools);
             let params: StreamParams | undefined;
+            let checkTools: Awaited<ReturnType<typeof createRequestToolCheck>>;
             let measurement: ModelInputMeasurement | undefined;
             let failure: unknown;
             const capture: typeof fetch = async (url, init) => {
                 try {
                     if (!params) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'No Provider input to count.');
                     const encoded = await encodedInput(url, init);
-                    measurement = measureInput(budget, input.rewriteRequestBody?.(encoded) ?? encoded, params);
+                    const body = input.rewriteRequestBody?.(encoded) ?? encoded;
+                    const logical = parseEncodedRequest(body);
+                    checkTools(logical);
+                    measurement = measureInput(budget, body, params, logical);
                 } catch (error) { failure = error; }
                 throw new Error('Local model input measurement completed');
             };
-            const model = wrapLanguageModel({ model: this.createProvider(capture, capture), middleware: {
+            const provider = this.createProvider(capture, capture);
+            checkTools = await createRequestToolCheck(input, provider.provider, this.config.model, (await this.toolSchemaPolicy()).label);
+            const model = wrapLanguageModel({ model: provider, middleware: {
                 specificationVersion: 'v3',
                 wrapStream: ({ params: value, doStream }) => {
                     verifyMeasurable(value, budget);
@@ -209,14 +227,20 @@ export class LLMClient {
         callbacks?: {
             onTextDelta?: (delta: string) => void;
             onReasoningDelta?: (delta: string) => void;
-            beforeRequest?: (signature: string) => void | Promise<void>;
+            beforeRequest?: (signature: string, sourceTools?: ReadonlySet<string>) => void | Promise<void>;
             preserveTools?: boolean;
+            signal?: AbortSignal;
         }
     ): Promise<LLMResponse> {
         let requestFailure: unknown;
+        let admitted: Promise<void> | undefined;
+        const signal = callbacks?.signal;
         try {
+            signal?.throwIfAborted();
             const budget = await this.inputLimits();
+            signal?.throwIfAborted();
             const input = await this.prepareInput(messages, tools, budget, !!callbacks?.preserveTools);
+            signal?.throwIfAborted();
             messages = input.messages;
             const effectiveTools = input.tools;
 
@@ -230,50 +254,67 @@ export class LLMClient {
             const hasTools = Object.keys(effectiveTools).length > 0;
             const streamEnd = hasTools ? observeChatStreamEnd() : undefined;
             const recordSearchHistory = this.config.provider.id === 'anthropic' && Object.values(effectiveTools).some(isAnthropicSearchTool);
-            const wireAdmission = !!(budget || input.rewriteRequestBody);
-            let admitted: Promise<void> | undefined;
             let paramsForFetch: StreamParams | undefined;
+            let checkTools: Awaited<ReturnType<typeof createRequestToolCheck>>;
+            let firstRequest: { url: string; body: string; logical: unknown } | undefined;
             let requestTools: StreamParams['tools'];
-            const admit = (input: string, output: number | undefined) => {
+            const admit = (body: string, output: number | undefined) => {
                 if (!callbacks?.beforeRequest) return;
                 const signature = createHash('sha256')
-                    .update(JSON.stringify([this.config.provider.id, this.config.model])).update(input)
+                    .update(JSON.stringify([this.config.provider.id, this.config.model])).update(body)
                     .update(String(output)).digest('hex');
-                return admitted ??= Promise.resolve().then(() => callbacks.beforeRequest!(signature));
+                // One adoption belongs to this call, not to each SDK transport attempt.
+                return admitted ??= Promise.resolve().then(() => {
+                    signal?.throwIfAborted();
+                    return callbacks.beforeRequest!(signature, input.sourceTools);
+                });
             };
             const guard = (send: typeof fetch): typeof fetch => async (url, init) => {
+                let body: string;
                 try {
+                    signal?.throwIfAborted();
                     if (!paramsForFetch) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'No encoded Provider input to adopt.');
                     const encoded = await encodedInput(url, init);
-                    const body = input.rewriteRequestBody?.(encoded) ?? encoded;
+                    body = input.rewriteRequestBody?.(encoded) ?? encoded;
+                    const logical = parseEncodedRequest(body);
+                    checkTools(logical);
+                    const endpoint = url instanceof Request ? url.url : String(url);
+                    if (firstRequest) {
+                        if (firstRequest.url !== endpoint || !isDeepStrictEqual(firstRequest.logical, logical))
+                            throw new ProviderToolSchemaError((await this.toolSchemaPolicy()).label, 'request', '$',
+                                'The actual model request changed during a transport retry.');
+                        // Preserve the first verified bytes, including across harmless key-order changes.
+                        body = firstRequest.body;
+                    }
                     if (budget) {
-                        const cost = measureInput(budget, body, paramsForFetch);
+                        const cost = measureInput(budget, body, paramsForFetch, logical);
                         if (cost.estimated > cost.inputLimit) throw inputBudgetExceeded(cost);
                     }
+                    firstRequest ??= { url: endpoint, body, logical };
                     await admit(body, paramsForFetch.maxOutputTokens);
-                    if (body !== encoded) init = { ...init, body };
-                } catch (error) { requestFailure = error; throw error; }
-                return send(url, init);
+                    signal?.throwIfAborted();
+                } catch (error) { requestFailure ??= error; throw error; }
+                // The checked string is the one actually sent, not a mutable pre-adoption body.
+                return send(url, { ...init, body });
             };
-            const provider = this.createProvider(wireAdmission ? guard(streamEnd?.fetch ?? globalThis.fetch) : streamEnd?.fetch,
-                wireAdmission ? guard(globalThis.fetch) : undefined);
-            const model = wireAdmission || callbacks?.beforeRequest || recordSearchHistory ? wrapLanguageModel({ model: provider, middleware: {
+            const provider = this.createProvider(guard(streamEnd?.fetch ?? globalThis.fetch), guard(globalThis.fetch));
+            checkTools = await createRequestToolCheck(input, provider.provider, this.config.model, (await this.toolSchemaPolicy()).label);
+            signal?.throwIfAborted();
+            const model = wrapLanguageModel({ model: provider, middleware: {
                 specificationVersion: 'v3',
-                wrapStream: async ({ params, doStream }) => {
+                wrapStream: ({ params, doStream }) => {
                     try {
+                        signal?.throwIfAborted();
                         if (recordSearchHistory) requestTools = params.tools;
                         if (budget) verifyMeasurable(params, budget);
-                        if (wireAdmission) paramsForFetch = params;
-                        else if (callbacks?.beforeRequest) await admit(
-                            JSON.stringify({ messages: params.prompt, tools: params.tools ?? [], toolChoice: params.toolChoice,
-                                providerOptions: params.providerOptions }), params.maxOutputTokens);
+                        paramsForFetch = params;
                     } catch (error) {
-                        requestFailure = error;
+                        requestFailure ??= error;
                         throw error;
                     }
                     return doStream();
                 },
-            } }) : provider;
+            } });
 
             let streamRaw: RawUsage | undefined;
             const searchErrors = new Map<string, AnthropicSearchError>();
@@ -286,6 +327,7 @@ export class LLMClient {
                 model,
                 messages,
                 tools: effectiveTools,
+                abortSignal: signal,
                 providerOptions: input.providerOptions,
                 maxOutputTokens: budget?.maxOutputTokens,
                 temperature: this.config.temperature ?? 0.7,
@@ -300,6 +342,7 @@ export class LLMClient {
 
             if (callbacks?.onTextDelta || callbacks?.onReasoningDelta) {
                 for await (const part of result.fullStream) {
+                    signal?.throwIfAborted();
                     switch (part.type) {
                         case 'error': throw part.error;
                         case 'text-delta':
@@ -314,6 +357,7 @@ export class LLMClient {
 
             const { messages: history } = await result.response;
             if (requestFailure !== undefined) throw requestFailure;
+            signal?.throwIfAborted();
 
             const toolMessages = history.filter(message => message.role === 'tool');
             const completed = new Set(toolMessages.flatMap(getToolResultIds));
@@ -324,6 +368,7 @@ export class LLMClient {
                 throw new Error('The model stream ended without a termination signal. Tool calls require a complete response.');
             }
             const usage = reportedUsage(await result.usage, streamRaw);
+            signal?.throwIfAborted();
 
             let assistantMessage = history.find(message => message.role === 'assistant');
             if (assistantMessage && requestTools) assistantMessage = recordAnthropicSearchTools(assistantMessage, requestTools, searchErrors);
@@ -346,6 +391,10 @@ export class LLMClient {
             this.logger.error('LLM call failed', { model: this.config.model, providerId: this.config.provider.id,
                 message: error instanceof Error ? error.message : String(error) });
             throw error;
+        } finally {
+            // A transport abort cannot settle an already-started Source adoption.
+            // The run still owns its contexts until that callback has finished.
+            await admitted?.catch(() => {});
         }
     }
 

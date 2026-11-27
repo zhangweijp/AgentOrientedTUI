@@ -64,7 +64,7 @@ export async function exerciseCatalog(turn, desktop, workerEvents) {
 
     const first = await run('manual-open', 'system-open_app', { installation_id: manualEntry });
     assert.ok(JSON.stringify(first).includes(manualEntry));
-    assert.deepEqual(viewsAndTools['manual-open'].nativeTools.map(tool => tool.name).sort(), [appName + '-lookup', appName + '-save']);
+    assert.deepEqual(viewsAndTools['manual-open'].nativeTools.map(tool => tool.name).sort(), [appName + '-Draft-lookup', appName + '-Draft-save']);
     assert.equal(pages(first).length, 1);
     assert.equal(results['manual-open'].output.value.app_id, appName + '_1');
 
@@ -79,12 +79,12 @@ export async function exerciseCatalog(turn, desktop, workerEvents) {
         return result;
     };
     let both;
-    try { both = await run('save-one', appName + '-save', { text: draftText }); }
+    try { both = await run('save-one', appName + '-Draft-save', { text: draftText }); }
     finally { desktop.adoptTurn = adopt; }
     assert.ok(observationId, 'The save request adopted the original App observation');
     assert.deepEqual(pages(both).map(page => / app_id="([^"]+)"/.exec(page)?.[1]), [appName, appName + '_1']);
     assert.deepEqual(viewsAndTools['save-one'].nativeTools.map(tool => tool.name).sort(), [
-        appName + '-lookup', appName + '-save', appName + '_1-lookup', appName + '_1-save',
+        appName + '-Draft-lookup', appName + '-Draft-save', appName + '_1-Draft-lookup', appName + '_1-Draft-save',
     ]);
     const save = workerEvents.find(event => event.type === 'invoke' && event.name === 'save');
     assert.equal(save?.appId, appName);
@@ -97,7 +97,7 @@ export async function exerciseCatalog(turn, desktop, workerEvents) {
     assert.equal(original.receipt.invocationId, query.invocationId);
     assert.equal(original.receipt.source.instanceId, save.instanceId);
 
-    const updated = await run('read-isolated', appName + '_1-lookup', {});
+    const updated = await run('read-isolated', appName + '_1-Draft-lookup', {});
     assert.ok(pages(updated).some(page => page.includes('app_id="' + appName + '"') && page.includes(draftText)));
     assert.ok(pages(updated).some(page => page.includes('app_id="' + appName + '_1"') && page.includes('Draft: empty')));
     const previous = await run('manual-close', 'system-close_app', { app_id: appName + '_1' });
@@ -105,6 +105,6 @@ export async function exerciseCatalog(turn, desktop, workerEvents) {
     const last = await run('remaining', undefined, {});
     assert.equal(pages(last).length, 1);
     assert.match(pages(last)[0], /Draft: One persisted draft/);
-    assert.deepEqual(viewsAndTools.remaining.nativeTools.map(tool => tool.name).sort(), [appName + '-lookup', appName + '-save']);
+    assert.deepEqual(viewsAndTools.remaining.nativeTools.map(tool => tool.name).sort(), [appName + '-Draft-lookup', appName + '-Draft-save']);
     return { query, original: original.receipt, viewsAndTools, results };
 }

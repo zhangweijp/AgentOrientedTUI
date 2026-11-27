@@ -86,8 +86,8 @@ try {
     await writeFile(join(folder, 'park'), '');
     try {
         const call = scopedCall('scope-timeout', 'inspect("before timeout"); const discarded = 99; ' +
-            'const first = tools["console_tasks-accept"]({items:[],literal:"park"}); ' +
-            'const second = tools["console_tasks-accept"]({items:[],literal:"after timeout"}); await Promise.all([first,second]);');
+            'const first = tools["console_tasks-workspace-accept"]({items:[],literal:"park"}); ' +
+            'const second = tools["console_tasks-workspace-accept"]({items:[],literal:"after timeout"}); await Promise.all([first,second]);');
         const result = savedResult((await a.turn('timeout preserves the original child receipt', call)).message, call.id);
         assert.equal(result.code, 'CONSOLE_TIMEOUT');
         assert.match(result.message, /local variables and closures were lost/);

@@ -1,5 +1,6 @@
 import Type from 'typebox';
-import { arrayRef, createApp, createView, defineViewType, formatRef, ref, refParam, type ToolResult, type ViewHandle } from '@aotui/sdk';
+import { arrayRef, createApp, createView, defineViewType, formatRef, ref, refParam, type ToolResult, type ViewHandle, type ViewFrame } from '@aotui/sdk';
+type FixturePage = { handle: ViewHandle; frame(): ViewFrame };
 
 const NoteSchema = Type.Object({ id: Type.String(), title: Type.String(), text: Type.String() },
   { additionalProperties: false });
@@ -51,58 +52,43 @@ const notes = [
 ];
 export default createApp({
   app_name: 'notes_example', viewTypes: noteViewTypes,
-  initialize({ prepareProjection, prepareOpeningProjection, readViewId }) {
-    let detail: ViewHandle | undefined;
+  initialize({ publish: commit, readViewId }) {
+    let detail: FixturePage | undefined;
     let inspection = 'No inspection requested.';
     let opening = false;
-    const root = createView(RootType, {
-      idPrefix: 'root', region: 'static', name: 'Notes instructions',
-      render: () => ({ body: '# Notes Example Application Instruction\n\nOpen Notes from Workspace and select Refs from the Detail page.' }),
-    });
-    const workspace = createView(WorkspaceType, {
-      idPrefix: 'workspace', region: 'dynamic', name: 'Notes workspace',
-      render: () => ({
-        body: 'Notes are an in-memory example. Open the page to inspect them.',
-        context: { opened: opening || !!detail, setOpened },
-      }),
-    });
+    const root = (() => { const handle = createView(RootType, { idPrefix: 'root', region: 'static' }); const displayName = 'Notes instructions'; return { handle, frame: () => handle.frame({ name: displayName, body: '# Notes Example Application Instruction\n\nOpen Notes from Workspace and select Refs from the Detail page.' }) }; })();
+    const workspace = (() => { const handle = createView(WorkspaceType, { idPrefix: 'workspace', region: 'dynamic' }); const displayName = 'Notes workspace'; return { handle, frame: () => handle.frame({ name: displayName, body: 'Notes are an in-memory example. Open the page to inspect them.', context: { opened: opening || !!detail, setOpened } }) }; })();
     function inspect(selected: readonly Readonly<Type.Static<typeof NoteSchema>>[]): ToolResult {
       if (!detail || selected.some(note => !notes.some(current => current.id === note.id))) return {
         success: false, error: { code: 'NOTE_NOT_AVAILABLE', message: 'Open Notes, refresh, and choose its current Ref.' },
       };
       inspection = selected.length ? selected.map(note => `${note.title}: ${note.text}`).join('\n') : 'No notes selected.';
-      prepareProjection({ views: [root, workspace, detail] });
-      return { success: true, data: { view_id: readViewId(detail)!, inspected: true } };
+      commit(() => ([root, workspace, detail!]).map(page => page.frame()));
+      return { success: true, data: { view_id: readViewId(detail.handle)!, inspected: true } };
     }
     function setOpened(want: boolean): ToolResult {
       if (want && !detail) {
-        const proposed = createView(NoteDetailType, {
-          idPrefix: 'detail', region: 'dynamic', name: 'Notes',
-          render: () => {
+        const proposed = (() => { const handle = createView(NoteDetailType, { idPrefix: 'detail', region: 'dynamic' }); const displayName = 'Notes'; return { handle, frame: () => {
             const current = ref('current', notes[0]!, noteRefOptions);
             const list = arrayRef('notes', notes, notesRefOptions);
-            return {
-              refs: [current, list], context: { inspect },
-              body: [
+            return handle.frame({ name: displayName, refs: [current, list], context: { inspect }, body: [
                 formatRef('Current note: First note', current), formatRef('All notes', list),
                 ...notes.flatMap((note, index) => [formatRef(note.title, list, index), note.text]),
                 '## Inspection', inspection,
-              ].join('\n\n'),
-            };
-          },
-        });
+              ].join('\n\n') });
+          } }; })();
         opening = true;
         try {
-          const result = prepareOpeningProjection({ views: [root, workspace, proposed] });
-          if (result.status === 'rejected') return { success: false, error: { code: result.issue.code, message: result.issue.message } };
+          const result = commit(() => ([root, workspace, proposed]).map(page => page.frame()), { mode: 'candidate' });
+          if (!result.ok) return { success: false, error: { code: result.issue.code, message: result.issue.message } };
           detail = proposed;
         } finally { opening = false; }
       } else if (!want && detail) {
         detail = undefined;
-        prepareProjection({ views: [root, workspace] });
+        commit(() => ([root, workspace]).map(page => page.frame()));
       }
       return { success: true, data: { message: want ? 'Read Notes.' : 'Notes closed.' } };
     }
-    prepareProjection({ views: [root, workspace] });
+    commit(() => ([root, workspace]).map(page => page.frame()));
   },
 });

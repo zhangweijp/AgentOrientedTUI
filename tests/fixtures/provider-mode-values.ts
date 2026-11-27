@@ -28,23 +28,23 @@ const Draft = defineViewType<{ save(field: string, value: unknown): ToolResult }
 
 export default createApp({
     app_name: 'reference_draft', viewTypes: [Options, Draft],
-    initialize({ launchConfig, prepareProjection }) {
+    initialize({ launchConfig, publish: commit }) {
         const configured = launchConfig?.folder;
         if (typeof configured !== 'string') throw new Error('A fixture folder is required');
         const folder = configured;
-        const options = createView(Options, { render() {
+        const options = (() => { const handle = createView(Options); return { handle, frame: () => {
             const mode = ref('mode', 'fast', { scope: 'protected', schema: Type.String() });
-            return { body: 'Preferred mode: ' + formatRef('fast', mode), refs: [mode] };
-        } });
+            return handle.frame({ body: 'Preferred mode: ' + formatRef('fast', mode), refs: [mode] });
+        } }; })();
         let content = 'Untouched draft';
-        const draft = createView(Draft, { render: () => ({ body: content, context: { save(field, value) {
+        const draft = (() => { const handle = createView(Draft); return { handle, frame: () => handle.frame({ body: content, context: { save(field, value) {
             content = JSON.stringify({ field, value });
             writeFileSync(join(folder, 'ref-draft.json'), content);
             appendFileSync(join(folder, 'ref-writes.jsonl'), JSON.stringify({ field, value, threadId }) + '\n');
             publish();
             return { success: true };
-        } } }) });
-        function publish() { prepareProjection({ views: [options, draft] }); }
+        } } }) }; })();
+        function publish() { commit(() => ([options, draft]).map(page => page.frame())); }
         publish();
     },
 });

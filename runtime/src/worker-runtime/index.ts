@@ -1,5 +1,5 @@
 import {
-    AOTUIError, APP_LIFECYCLE_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL,
+    AOTUIError, APP_LIFECYCLE_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL, DEFAULT_SNAPSHOT_LIMITS,
     captureAppMetadata, normalizeProjectionLimits, readAppFactory,
 } from '@aotui/core';
 import { WORKER_PROTOCOL } from '../spi/worker-protocol/types.js';
@@ -70,8 +70,8 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 toolsEnabled: current.toolsEnabled && current.generation === lifecycleGeneration,
                 validateBinding: (tool, receiver) => kernel.validateBoundTypeTool(tool, receiver),
                 isRefViewLive: (id, instanceId) => kernel.isRefViewLive(id, instanceId),
-                refScope: (id, instanceId, refId) => kernel.refScope(id, instanceId, refId),
-                invokeBinding: (tool, receiver, args) => kernel.invokeBoundTypeTool(tool, receiver, args),
+                refDescriptor: (id, instanceId, refId) => kernel.refDescriptor(id, instanceId, refId),
+                invokeBinding: (tool, receiver, args, capture) => kernel.invokeBoundTypeTool(tool, receiver, args, capture),
             } : undefined);
             if (response) parentPort?.postMessage(response);
         } catch { /* No trusted terminal: Host records unknown. */ }
@@ -79,16 +79,17 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
     }
     if (msg.type === 'VIEW_CLOSE') {
         const current = app;
-        let terminal: import('../spi/worker-protocol/messages.js').ViewToolInvokeResponse['terminal'];
+        let response: ReturnType<typeof toolInvocationResponse> = null;
         if (!current?.toolsEnabled || current.generation !== lifecycleGeneration ||
             current.appId !== msg.appId || current.instanceId !== msg.instanceId) {
-            terminal = { phase: 'not-entered', result: { success: false,
-                error: { code: 'VIEW_CLOSE_UNAVAILABLE', message: 'The App no longer accepts this close action.' } } };
+            response = toolInvocationResponse(msg, { phase: 'not-entered', result: { success: false,
+                error: { code: 'VIEW_CLOSE_UNAVAILABLE', message: 'The App no longer accepts this close action.' } } });
         } else {
-            try { terminal = await current.kernel.closeView(msg.viewId, msg.viewInstanceId); }
-            catch { terminal = { phase: 'finished-unknown' }; }
+            try {
+                response = await current.kernel.closeView(msg.viewId, msg.viewInstanceId, msg.closeActivationId, terminal => toolInvocationResponse(msg, terminal));
+            } catch { /* No confirmed terminal. */ }
         }
-        const response = toolInvocationResponse(msg, terminal) ?? toolInvocationResponse(msg, { phase: 'finished-unknown' });
+        response ??= toolInvocationResponse(msg, { phase: 'finished-unknown' });
         if (response) parentPort?.postMessage(response);
         return;
     }
@@ -157,9 +158,12 @@ async function handleInit(msg: InitMessage): Promise<void> {
         if (factory === 'APP_INVALID_EXPORT') {
             throw new AOTUIError(factory, { modulePath: msg.appModulePath });
         }
+        if (factory === 'APP_LIFECYCLE_UNSUPPORTED') {
+            sendFactoryRejection(msg.requestId, factory, 'factory.appLifecycleSupport', APP_LIFECYCLE_PROTOCOL);
+            return;
+        }
         if (factory === 'APP_AUTHORING_PROTOCOL_UNSUPPORTED') {
-            sendError(msg.requestId, factory,
-                'This Runtime requires a TUIAppFactory using ' + VIEW_TYPE_TOOL_PROTOCOL);
+            sendFactoryRejection(msg.requestId, factory, 'factory.toolAuthoringProtocol', VIEW_TYPE_TOOL_PROTOCOL);
             return;
         }
         const metadata = captureAppMetadata({ app_name: factory.app_name });
@@ -183,7 +187,7 @@ async function handleInit(msg: InitMessage): Promise<void> {
             projectionLimits,
         } satisfies WorkerToMainMessage);
     } catch (error) {
-        const failure = initializationFailure('INIT', error);
+        const failure = startupFailure('INIT', error);
         if (generation === lifecycleGeneration) lifecycleGeneration++;
         if (app) await closeApplication(app.kernel);
         sendError(msg.requestId, failure.code, failure.message, failure.diagnostic);
@@ -201,7 +205,7 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
     const { kernel } = openingApp;
     try { await kernel.onOpen(); }
     catch (error) {
-        const failure = initializationFailure('OPEN', error);
+        const failure = startupFailure('OPEN', error);
         await closeApplication(kernel);
         sendLifecycleResponse(requestId, failure, kernel);
         return;
@@ -231,9 +235,9 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
         fault = nextFault;
         epoch = current.epoch;
     });
-    pushSemanticSnapshot();
-
-    sendLifecycleResponse(requestId);
+    const publication = pushSemanticSnapshot(requestId);
+    if (!publication) { sendError(requestId, "SNAPSHOT_UNAVAILABLE", "Initial Frame is not healthy"); return; }
+    sendLifecycleResponse(requestId, undefined, kernel, publication);
 }
 
 async function handleAppClose(requestId: RequestID): Promise<void> {
@@ -263,15 +267,19 @@ function flushInteractionProjection(requestId: RequestID, known?: SnapshotDraftE
     } else pushSemanticSnapshot(requestId);
 }
 
-function pushSemanticSnapshot(requestId?: RequestID): void {
+let sentViewTypes = false;
+
+function pushSemanticSnapshot(requestId?: RequestID): SnapshotDraftEnvelope | undefined {
     if (!app || !parentPort) return;
     const projection = app.kernel.getProjectionCoordinator();
     if (!projection.token().ready) return;
     const publication = projection.nextPublication();
     const delivery = requestId ? { requestId } : {};
     if ('draft' in publication) {
-        parentPort.postMessage({ type: 'SNAPSHOT_PREPARED', draft: publication.draft, ...delivery } satisfies WorkerToMainMessage);
-        return;
+        parentPort.postMessage({ type: 'SNAPSHOT_PREPARED', draft: publication.draft, ...delivery,
+            ...(!sentViewTypes ? { viewTypes: app.kernel.getViewTypes() } : {}) } satisfies WorkerToMainMessage);
+        sentViewTypes = true;
+        return captureSnapshotDraftEnvelope(publication.draft);
     }
     const { issue, ...source } = publication.failure;
     parentPort.postMessage({
@@ -280,12 +288,13 @@ function pushSemanticSnapshot(requestId?: RequestID): void {
     } satisfies WorkerToMainMessage);
 }
 
-function sendLifecycleResponse(requestId: RequestID, failure?: WorkerError, kernel = app?.kernel): void {
+function sendLifecycleResponse(requestId: RequestID, failure?: WorkerError, kernel = app?.kernel, publication?: SnapshotDraftEnvelope): void {
     const appCleanup = kernel?.getAppCleanupReport();
     parentPort?.postMessage({
         type: 'LIFECYCLE_RESPONSE',
         requestId,
         success: !failure,
+        ...(publication ? { publication } : {}),
         ...(appCleanup ? { appCleanup } : {}),
         ...(failure ? { error: failure } : {}),
     } satisfies WorkerToMainMessage);
@@ -298,4 +307,21 @@ function sendError(requestID: RequestID, code: string, message: string, diagnost
         success: false,
         error: { code, message, ...(diagnostic ? { diagnostic } : {}) },
     } as WorkerToMainMessage);
+}
+
+function sendFactoryRejection(requestId: RequestID, code: string,
+    protocolRejection: 'factory.toolAuthoringProtocol' | 'factory.appLifecycleSupport', required: string): void {
+    parentPort?.postMessage({ type: 'ERROR_RESPONSE', requestId, success: false, protocolRejection,
+        error: code === 'APP_LIFECYCLE_UNSUPPORTED' ? initializationFailure('INIT', Object.assign(new Error('This Runtime requires a TUIAppFactory using ' + required), { code, path: 'appLifecycleSupport' })) : { code, message: 'This Runtime requires a TUIAppFactory using ' + required } } satisfies WorkerToMainMessage);
+}
+
+function startupFailure(phase: 'INIT' | 'OPEN', error: unknown): WorkerError {
+    const failure = initializationFailure(phase, error);
+    const diagnostic = failure.diagnostic;
+    if (diagnostic?.code === 'VIEW_CAPACITY' && diagnostic.path === 'viewTypes' &&
+        diagnostic.message.includes('App ViewType definition limit exceeded')) {
+        return { code: 'SNAPSHOT_CAPACITY', message: 'ViewType declaration count exceeds ' + DEFAULT_SNAPSHOT_LIMITS.maxViews,
+            diagnostic: { ...diagnostic, code: 'SNAPSHOT_CAPACITY', path: '$.viewTypes' } };
+    }
+    return failure;
 }

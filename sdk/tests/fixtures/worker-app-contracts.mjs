@@ -112,7 +112,7 @@ if (profile === 'full') {
     await fs.mkdir(appFolder, { recursive: true });
     await fs.writeFile(new URL('aoapp.json', appFolder), JSON.stringify({
      app_name: 'copy_views', version: '0.1.0', entry: { main: '../copy-' + mode + '.mjs' },
-     toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
+     toolAuthoringProtocol: 'view-type-tools-v9', appLifecycleSupport: 'app-lifecycle-v3',
     }));
     const installationId = await desktop.registerPendingApp({
      installationId: mode, localPath: fileURLToPath(appFolder), config: { word: mode },
@@ -185,7 +185,7 @@ if (profile === 'full') {
    source = new SemanticAOTUIDrivenSource(desktop, { includeInstruction: false });
    const messages = c => c.messages.map(m => String(m.content));
    const views = (c, app, id) => messages(c).filter(m => m.startsWith('<view ') && m.includes('app_id="'+app+'"') && (!id || m.includes('view_id="'+id+'"')));
-   const name = (c, app, tool) => { const n = app+'-'+tool; assert.ok(c.tools[n], 'Tool available: '+n); return n; };
+   const name = (c, app, tool) => { const n = app+'-'+(tool === 'edit_file' ? 'FileDetail' : 'Workspace')+'-'+tool; assert.ok(c.tools[n], 'Tool available: '+n); return n; };
    async function capture(ready) {
     const end = Date.now()+15000;
     for (;;) {
@@ -200,16 +200,16 @@ if (profile === 'full') {
     const result = await c.executeTool(name(c,app,tool), { view_id: 'workspace_1', ...args }, 'files-'+facts.calls.length);
     facts.calls.push({ app, tool, result }); return result;
    }
-   let current = await capture(c => ['file_demo','file_demo_1'].every(app=>c.tools[app+'-open_file']));
+   let current = await capture(c => ['file_demo','file_demo_1'].every(app=>c.tools[app+'-Workspace-open_file']));
    const catalog = views(current,'file_demo','root_1')[0]; assert.ok(catalog);
    assert.ok(catalog.includes('edit_file'));
    assert.ok(!catalog.includes('Edit an opened demo file and read its updated View.'));
    assert.ok(!catalog.includes('inputSchema') && !catalog.includes('additionalProperties'));
    assert.equal(Object.keys(current.tools).filter(n=>n.endsWith('-edit_file')).length,0);
    for (const [app, file] of [['file_demo','a.txt'],['file_demo','b.txt'],['file_demo_1','a.txt']]) assert.equal((await call(current,app,'open_file',{filePath:file})).outcomeStatus,'succeeded');
-   current = await capture(c=>views(c,'file_demo').length===4 && c.tools['file_demo-edit_file'] && c.tools['file_demo_1-edit_file']);
+   current = await capture(c=>views(c,'file_demo').length===4 && c.tools['file_demo-FileDetail-edit_file'] && c.tools['file_demo_1-FileDetail-edit_file']);
    const observed = current;
-   assert.equal(Object.keys(current.tools).filter(n=>n==='file_demo-edit_file').length,1);
+   assert.equal(Object.keys(current.tools).filter(n=>n==='file_demo-FileDetail-edit_file').length,1);
    const edit = await call(current,'file_demo','edit_file',{view_id:'file_a_1',content:'UPDATED_A'});
    assert.equal(edit.outcomeStatus,'succeeded'); assert.ok(!JSON.stringify(edit).includes('UPDATED_A'));
    assert.equal((await call(current,'file_demo','close_file',{filePath:'b.txt'})).outcomeStatus,'succeeded');
@@ -221,10 +221,10 @@ if (profile === 'full') {
    assert.equal(views(current,'file_demo','root_1')[0],catalog);
    assert.equal((await call(current,'file_demo','close_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
    const stale = await call(observed,'file_demo','edit_file',{view_id:'file_a_1',content:'STALE'});assert.equal(stale.outcomeStatus,'rejected');
-   current = await capture(c=>!c.tools['file_demo-edit_file'] && views(c,'file_demo').length===2);
-   assert.ok(current.tools['file_demo_1-edit_file'],'Other App still active');
+   current = await capture(c=>!c.tools['file_demo-FileDetail-edit_file'] && views(c,'file_demo').length===2);
+   assert.ok(current.tools['file_demo_1-FileDetail-edit_file'],'Other App still active');
    assert.equal((await call(current,'file_demo','open_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
-   current = await capture(c=>!!c.tools['file_demo-edit_file']);
+   current = await capture(c=>!!c.tools['file_demo-FileDetail-edit_file']);
    assert.equal((await call(observed,'file_demo','edit_file',{view_id:'file_a_1',content:'STALE_AGAIN'})).outcomeStatus,'rejected');
    assert.equal(views(current,'file_demo','root_1')[0],catalog);
    facts.fileExample = true;
@@ -252,10 +252,10 @@ if (profile === 'full') {
      await new Promise(r => setTimeout(r, 20));
     }
    }
-   let context = await observe(c => c.tools['notes_example-open_notes']);
-   assert.ok(!context.tools['notes_example-inspect_note']);
-   assert.equal((await context.executeTool('notes_example-open_notes', { view_id: 'workspace_1' }, 'notes-open')).outcomeStatus, 'succeeded');
-   context = await observe(c => c.tools['notes_example-inspect_note'] && c.tools['notes_example-inspect_notes']);
+   let context = await observe(c => c.tools['notes_example-Workspace-open_notes']);
+   assert.ok(!context.tools['notes_example-NoteDetail-inspect_note']);
+   assert.equal((await context.executeTool('notes_example-Workspace-open_notes', { view_id: 'workspace_1' }, 'notes-open')).outcomeStatus, 'succeeded');
+   context = await observe(c => c.tools['notes_example-NoteDetail-inspect_note'] && c.tools['notes_example-NoteDetail-inspect_notes']);
    for (const ref of ['private current: Note', 'private notes: Note[]', '(notes[0])']) assert.ok(text(context).includes(ref));
    for (const [tool, args, expected] of [
     ['inspect_note', { note: '$ref.notes_example.detail_1.current' }, 'First note: First line'],
@@ -264,7 +264,7 @@ if (profile === 'full') {
     ['inspect_selection', { selected: ['$ref.notes_example.detail_1.notes[1]', '$ref.notes_example.detail_1.notes[0]', '$ref.notes_example.detail_1.notes[1]'], primary: '$ref.notes_example.detail_1.current', whole: '$ref.notes_example.detail_1.notes' }, 'Second note: Another note'],
     ['inspect_selection', { selected: [] }, 'No notes selected.'],
    ]) {
-    const result = await context.executeTool('notes_example-' + tool, { view_id: 'detail_1', ...args }, 'ref-' + facts.calls.length);
+    const result = await context.executeTool('notes_example-NoteDetail-' + tool, { view_id: 'detail_1', ...args }, 'ref-' + facts.calls.length);
     facts.calls.push({ app: 'notes', tool, args, result });
     assert.equal(result.outcomeStatus, 'succeeded');
     assert.ok(!JSON.stringify(result).includes('First line'), 'Business content stays in the View');
@@ -280,14 +280,14 @@ if (profile === 'full') {
     ['inspect_selection', { selected: [], primary: null }],
     ['inspect_selection', { selected: ['$ref.notes_example.detail_1.missing'] }],
    ]) {
-    const result = await context.executeTool('notes_example-' + tool, { view_id: 'detail_1', ...args }, 'invalid-' + facts.calls.length);
+    const result = await context.executeTool('notes_example-NoteDetail-' + tool, { view_id: 'detail_1', ...args }, 'invalid-' + facts.calls.length);
     assert.equal(result.outcomeStatus, 'rejected');
     facts.calls.push({ app: 'notes', tool, args, result });
    }
    const old = context;
-   assert.equal((await context.executeTool('notes_example-close_notes', { view_id: 'workspace_1' }, 'notes-close')).outcomeStatus, 'succeeded');
-   context = await observe(c => !c.tools['notes_example-inspect_note']);
-   assert.equal((await old.executeTool('notes_example-inspect_note', { view_id: 'detail_1', note: '$ref.notes_example.detail_1.current' }, 'closed-note')).outcomeStatus, 'rejected');
+   assert.equal((await context.executeTool('notes_example-Workspace-close_notes', { view_id: 'workspace_1' }, 'notes-close')).outcomeStatus, 'succeeded');
+   context = await observe(c => !c.tools['notes_example-NoteDetail-inspect_note']);
+   assert.equal((await old.executeTool('notes_example-NoteDetail-inspect_note', { view_id: 'detail_1', note: '$ref.notes_example.detail_1.current' }, 'closed-note')).outcomeStatus, 'rejected');
    assert.ok(!text(context).includes('(notes[0])'));
    facts.refExample = true;
   } finally {
@@ -303,7 +303,7 @@ if (profile === 'full') {
    await fs.mkdir(localPath, { recursive: true });
    await fs.writeFile(new URL('aoapp.json', localPath), JSON.stringify({
     app_name: 'interaction_example', version: '0.1.0', entry: { main: '../managed-host-app.mjs' },
-    toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
+    toolAuthoringProtocol: 'view-type-tools-v9', appLifecycleSupport: 'app-lifecycle-v3',
    }));
    const result = await runManagedHost(fileURLToPath(localPath), data);
    assert.equal(result.outcomes.length,2);assert.ok(result.outcomes.every(o=>o.status==='succeeded'));

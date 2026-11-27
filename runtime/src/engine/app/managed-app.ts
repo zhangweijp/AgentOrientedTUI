@@ -14,7 +14,7 @@ export class ManagedApp {
 
     constructor(config: AppWorkerHostConfig, private readonly onClosing: () => void, private onReleased?: () => void) {
         this.host = new AppWorkerHost(config);
-        this.host.onUpdate = reason => { if (!this.closeHandle) this.onUpdate?.(reason); };
+        this.host.onUpdate = reason => { if (!this.closeHandle || reason === 'app_runtime_changed') this.onUpdate?.(reason); };
     }
 
     get appId() { return this.host.appId; }
@@ -22,6 +22,7 @@ export class ManagedApp {
     get timeout() { return this.host.timeout; }
     get status() { return this.host.getStatus(); }
     get isClosing() { return !!this.closeHandle; }
+    readRunFacts() { return this.host.readRunFacts(); }
     get windowActions() { return !this.closeHandle && this.status === 'running' ? this.host : undefined; }
 
     getAppInteraction(expectedInstanceId: string) {
@@ -90,6 +91,7 @@ export class ManagedApp {
         recordAppClose(state, host, { desktopId, appId }, this.issues);
         return snapshotClose({ ...state, scope: 'app', desktopId, appId,
             instanceId: this.appInstanceId, worker: host.worker,
+            ...(host.appCleanup?.report ? { appCleanupReport: host.appCleanup.report } : {}),
             ...(host.closingInvocation ? { closingInvocation: host.closingInvocation } : {}) });
     }
 }

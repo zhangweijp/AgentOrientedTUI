@@ -16,9 +16,8 @@ describe('App installation directory', () => {
         await expect(manager.openApp('nonexistent_app')).rejects.toHaveProperty('code', 'LIFECYCLE_CONFLICT');
         expect(manager.listApps()).toEqual([]);
     });
-    it('rejects View closure for an absent App instance', async () => {
-        await expect(manager.closeView({ appId: 'nonexistent_app' as AppID, instanceId: 'absent', viewId: 'view', viewInstanceId: 'mount' }))
-            .rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
+    it('rejects original invocation access for an absent App instance', async () => {
+        expect(manager.getAppInteraction('nonexistent_app' as AppID, 'absent')).toMatchObject({ status: 'rejected' });
     });
 
     describe('Lazily Loaded Apps', () => {

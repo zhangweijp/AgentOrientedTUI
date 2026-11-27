@@ -1,4 +1,5 @@
 import type { InteractionStats } from '@aotui/core';
+import type { AppCleanupReport } from './app-lifecycle.interface.js';
 
 export interface InteractionCloseReport {
     readonly verified: boolean;
@@ -42,6 +43,8 @@ export interface AppCloseReport extends CloseReport {
     readonly instanceId: string;
     readonly worker: 'not-created' | 'owned' | 'retiring' | 'exited';
     readonly closingInvocation?: NonNullable<InteractionStats['closingInvocation']>;
+    /** Last validated single-instance cleanup fact, distinct from execution release. */
+    readonly appCleanupReport?: AppCleanupReport;
 }
 export interface DesktopCloseReport extends CloseReport { readonly scope: 'desktop'; readonly desktopId: string }
 export interface RuntimeCloseReport extends CloseReport { readonly scope: 'runtime' }

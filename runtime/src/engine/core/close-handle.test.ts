@@ -73,7 +73,7 @@ it('records a clean App close without any persistence field', () => {
 it('keeps callback failure separate from released resources through Runtime aggregation', async () => {
     const input = envelope({ state: 'settled', resourcesReleased: true });
     input.host = { ...input.host, state: 'settled', worker: 'exited', resourcesReleased: true,
-        appCleanup: { support: 'managed', report: { protocol: 'app-lifecycle-v2', instanceId: 'i',
+        appCleanup: { support: 'managed', report: { protocol: 'app-lifecycle-v3', instanceId: 'i',
             state: 'failed', issues: ['APP_CLEANUP_FAILED'] } } };
     const child = appReport(input);
     expect(child).toMatchObject({ ok: false, hasFailures: true, resourcesReleased: true,

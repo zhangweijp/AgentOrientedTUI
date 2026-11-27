@@ -31,8 +31,10 @@ function selectedRef(hold: RefSourceHold, refs: readonly ObservedRef[], address:
     if (!visible || !hold.isRefView(visible.viewId, visible.viewInstanceId)) return rejected(hidden);
     const key = refKey(visible.viewId, visible.viewInstanceId, visible.refId);
     // A different App's read adapter can publish while the batch checks its sources.
-    const original = hold.snapshot.refs[key], live = currentPublishedSnapshot(hold.snapshot)?.refs[key];
-    if (!original || !live) return rejected(hidden);
+    const current = currentPublishedSnapshot(hold.snapshot);
+    if (!current || current.admissionSinceRevision !== hold.snapshot.admissionSinceRevision) return rejected(hidden);
+    const original = hold.snapshot.refs[key], live = current.refs[key];
+    if (!original || !live || original.continuity[0] !== live.continuity[0]) return rejected(hidden);
     if (mode === 'schema') {
         const schema = declaredRefSchema(original.valueSchema, address.path);
         return schema === undefined ? rejected(hidden) : Object.freeze({ status: 'ready' as const, schema });
@@ -40,6 +42,7 @@ function selectedRef(hold: RefSourceHold, refs: readonly ObservedRef[], address:
     if (original.scope !== 'public' || live.scope !== 'public') return rejected({
         code: 'REF_VALUE_PRIVATE', message: 'Only a visible public Ref can be read directly. Pass a private or protected address to an authorized page.',
     });
+    if (original.continuity[2] !== live.continuity[2]) return rejected(hidden);
     const value = readRefPath(original.target.payload, address.path);
     return value.found ? Object.freeze({ status: 'ready' as const, value: value.value }) : rejected(hidden);
 }

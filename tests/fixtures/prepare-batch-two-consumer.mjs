@@ -54,7 +54,7 @@ export async function call(desktop: IDesktop, source: RunningApp, target: Runnin
   try {
     const result = await turn.invoke(target.appId, { observationId: mail.candidate.observation.observationId,
       toolId: 'tool', invocationId: 'call', input: { to: '$ref.contacts.list.emails' } });
-    if (result.locator) return desktop.readReceipt(result.locator);
+    if (result.kind !== "refused" && result.locator) return desktop.readReceipt(result.locator);
     return result;
   } finally { turn.release(); }
 }

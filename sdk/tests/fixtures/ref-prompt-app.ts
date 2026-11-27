@@ -53,7 +53,7 @@ export const viewTypes = [List, Editor];
 export function refPromptApp(refId = 'items') {
   return createApp({
     app_name: 'refs', viewTypes,
-    initialize({ prepareProjection }) {
+    initialize({ publish: commit }) {
       let entries = files;
       let actions: string[] = [];
       const context = {
@@ -61,35 +61,25 @@ export function refPromptApp(refId = 'items') {
         record(value: string) { actions = [...actions, value]; publish(); },
         reverse() { entries = [...entries].reverse(); publish(); },
       };
-      const list = createView(List, {
-        idPrefix: 'files', region: 'dynamic',
-        render: () => {
+      const list = (() => { const handle = createView(List, { idPrefix: 'files', region: 'dynamic' }); return { handle, frame: () => {
           const items = arrayRef(refId, entries, refOptions);
           const first = formatRef('label', items, 0), second = formatRef('other file', items, 1);
           const rows = ['Open file', 'Open file', '**Status:** ready', 'password', 'Nested file', 'State *ready* now',
             '*password*', '[Open](#editor) editor', 'Move ``  say ` hi  `` to ' + formatRef('inline ref', items, 0)];
-          return { refs: [items], body: [
+          return handle.frame({ refs: [items], body: [
             '- test.txt — View editor', '- FileDetail: edit, close', '- **Status:** ready', '- password',
             '- Open ' + first + ' & ``  say ` hi  ``', '    1. password', '    2. *Choose* ' + second,
             '- ' + formatRef('all files', items), ...rows.map(row => '- ' + row),
             '- Inline boundaries', ...rows.map((row, i) => '    ' + (i + 1) + '. ' + row),
-          ].join('\n') + '\n' };
-        },
-      });
-      const tasks = createView(List, {
-        idPrefix: 'tasks', region: 'dynamic',
-        render: () => {
+          ].join('\n') + '\n' });
+        } }; })();
+      const tasks = (() => { const handle = createView(List, { idPrefix: 'tasks', region: 'dynamic' }); return { handle, frame: () => {
           const item = ref('items', { name: 'review task' }, { scope: 'protected', refType: 'Task', schema: Task });
-          return { body: formatRef('review task', item), refs: [item] };
-        },
-      });
-      const editor = createView(Editor, {
-        idPrefix: 'editor', region: 'dynamic', render: () => ({ body: JSON.stringify(actions), context }),
-      });
-      const readOnly = createView(Editor, {
-        idPrefix: 'read_only', region: 'dynamic', render: () => ({ body: 'Read only', context: { ...context, enabled: false } }),
-      });
-      function publish() { prepareProjection({ views: [list, tasks, editor, readOnly] }); }
+          return handle.frame({ body: formatRef('review task', item), refs: [item] });
+        } }; })();
+      const editor = (() => { const handle = createView(Editor, { idPrefix: 'editor', region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: JSON.stringify(actions), context }) }; })();
+      const readOnly = (() => { const handle = createView(Editor, { idPrefix: 'read_only', region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: 'Read only', context: { ...context, enabled: false } }) }; })();
+      function publish() { commit(() => ([list, tasks, editor, readOnly]).map(page => page.frame())); }
       publish();
     },
   });

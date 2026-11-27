@@ -27,21 +27,21 @@ function fixture() {
     const tool = { id: JSON.stringify(['app', 'list', 'take']), name: 'take', viewType: 'list',
         multiplicity: 'single' as const, description: 'Select a value', inputSchema: contract.schema };
     function ref(id: string, payload: JsonValue, valueSchema: JsonValue, extra: Partial<RefDescriptor> = {}): RefDescriptor {
-        return { id, ownerViewId: 'list', ownerViewInstanceId: 'live', refType: 'Contact', scope: 'protected',
+        return { continuity: [1,1,0] as const,  id, ownerViewId: 'list', ownerViewInstanceId: 'm:1', refType: 'Contact', scope: 'protected',
             target: { kind: 'snapshot-value', payload }, valueSchema, ...extra };
     }
     function publish(sequence: number, value: typeof body) {
         const values = [
             ref('people', [value], { type: 'array', items: item }, { array: true }),
             ref('plain', [value], { type: 'array', items: item }),
-            ref('number', 42, number), ref('secret', 'restricted', string, { scope: 'private' }),
+            ref('number', 42, number), ref('secret', 'restricted', string, { scope: 'private', continuity: [1,0,0] }),
             ref('wideA', '字'.repeat(116_000), string), ref('wideB', '字'.repeat(116_000), string),
         ];
-        const result = core.committer.accept({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId: 'app', instanceId: 'run',
+        const result = core.committer.accept({ healthySince: 1,  schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId: 'app', instanceId: 'run',
             producerSeq: sequence, sourceEpoch: sequence, capturedAt: 1,
-            views: [{ id: 'list', type: 'list', viewInstanceId: 'live', name: 'List', region: 'dynamic',
-                content: { format: 'markdown-v1', value: 'Contacts' }, toolBindings: [{ toolId: tool.id, activationId: 'active' }] }],
-            refs: Object.fromEntries(values.map(ref => [refKey('list', 'live', ref.id), ref])),
+            views: [{ id: 'list', type: 'list', viewInstanceId: 'm:1', name: 'List', region: 'dynamic',
+                content: { format: 'markdown-v1', value: 'Contacts' }, toolBindings: [{ toolId: tool.id, activationId: 'a:1' }] }],
+            refs: Object.fromEntries(values.map(ref => [refKey('list', 'm:1', ref.id), ref])),
             tools: { [tool.id]: tool },
         });
         if (result.status === 'rejected') throw Error(result.issue.message);
@@ -51,13 +51,13 @@ function fixture() {
     const held = core.store.acquire(original.id);
     if (held.status !== 'acquired') throw Error(held.issue.code);
     const store = { ...core.store, resolveRef: vi.fn(core.store.resolveRef) };
-    const grants = Object.values(original.refs).map(ref => ({ refId: ref.id, viewId: 'list', viewInstanceId: 'live' }));
+    const grants = Object.values(original.refs).map(ref => ({ refId: ref.id, viewId: 'list', viewInstanceId: 'm:1' }));
     return {
         publish, original, core, store, grants, close() { held.hold.release(); core.lifecycle.dispose(); },
-        prepare(input: unknown, visibleRefs: readonly RefGrant[] = grants, viewInstanceId = 'live') {
+        prepare(input: unknown, visibleRefs: readonly RefGrant[] = grants, viewInstanceId = 'm:1') {
             const owned = copyWireJson(input, RAW_TOOL_ARGUMENT_LIMITS) as Readonly<Record<string, JsonValue>>;
             return prepareViewTypeParameters(store, { appId: 'app', instanceId: 'run', snapshotId: original.id, tool,
-                receiver: { viewId: 'list', viewInstanceId, activationId: 'active' } }, contract, owned, visibleRefs, 'obs');
+                receiver: { viewId: 'list', viewInstanceId, activationId: 'a:1' } }, contract, owned, visibleRefs, 'obs');
         },
     };
 }
@@ -120,7 +120,7 @@ it('checks exact receiver identities for a private Ref and a Host allowlist', ()
             status: 'rejected', issue: { code: 'TOOL_PERMISSION_DENIED' },
         });
         const grant = { ...f.grants.find(ref => ref.refId === 'secret')!, consumers: [{
-            appId: 'app', instanceId: 'new-run', viewId: 'list', viewInstanceId: 'live',
+            appId: 'app', instanceId: 'new-run', viewId: 'list', viewInstanceId: 'm:1',
         }] };
         expect(f.prepare({ text: addr('secret') }, [grant])).toMatchObject({ status: 'rejected', issue: { code: 'REF_NOT_VISIBLE' } });
 

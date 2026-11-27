@@ -15,8 +15,7 @@ type Capture =
     | { type: 'SNAPSHOT_PREPARE_FAILED'; producerSeq: number; error: { code: string; message: string } };
 
 function appSource(): string {
-    return `
-        import { parentPort } from 'node:worker_threads';
+    return `import { parentPort } from 'node:worker_threads';
         import Type from 'typebox';
         import { createApp, createView, defineViewType, ref, formatRef } from '@aotui/sdk';
         const DetailType = defineViewType()({ multiplicity: 'multiple', name: 'Detail', tools: {
@@ -35,21 +34,21 @@ function appSource(): string {
         const oversizedData = { payload: 'x'.repeat(9 * 1024 * 1024) };
 
         export default createApp({ viewTypes: [DetailType], app_name: 'strict_json_capture',
-            initialize({ prepareProjection, registerCleanup }) {
+            initialize({ publish: publishAuthorFrame, registerLifecycle }) {
                 let mode = 'valid';
-                const detail = createView(DetailType, { idPrefix: 'detail', region: 'dynamic', render() {
+                const detail = (() => { const handle = createView(DetailType, { idPrefix: 'detail', region: 'dynamic' }); return { handle, frame: () => {
                     const data = mode === 'getter' ? getterData : mode === 'oversized' ? oversizedData : { value: 'valid' };
                     const payload = ref('payload', data, { schema: { type: 'object' }, scope: 'protected' });
-                    return { body: mode + ' ' + formatRef('payload', payload), refs: [payload], context: {} };
-                } });
-                const publish = () => prepareProjection({ views: [detail] });
+                    return handle.frame({ body: mode + ' ' + formatRef('payload', payload), refs: [payload], context: {} });
+                } }; })();
+                const publish = () => publishAuthorFrame(() => ([detail]).map(page => page.frame()));
                 const receive = message => {
                     if (message.type !== 'TEST_COMMAND' || !['getter', 'oversized', 'recover'].includes(message.command)) return;
                     mode = message.command === 'recover' ? 'valid' : message.command;
                     try { publish(); } catch { /* Runtime reports the failed projection. */ }
                 };
                 parentPort.on('message', receive);
-                registerCleanup({ stop() { parentPort.off('message', receive); } });
+                registerLifecycle({ stop() { parentPort.off('message', receive); } });
                 publish();
             },
         });
@@ -164,7 +163,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             expect(accessorFailure.error.message).toContain('Accessors');
             expect(committedState(host)).toMatchObject({ status: 'degraded', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
             expect(captures.map(message => message.type)).toEqual(['SNAPSHOT_PREPARED', 'SNAPSHOT_PREPARE_FAILED']);
-            expect(healthNotifications).toEqual(['projection_failed']);
+            expect(healthNotifications.filter(reason=>reason!=='app_runtime_changed')).toEqual(['projection_failed']);
 
             const oversizedFailure = await publishEvent('oversized');
             expect(oversizedFailure).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED',
@@ -174,7 +173,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             expect(committedState(host)).toMatchObject({ status: 'degraded',
                 issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: oversizedFailure.error.path } });
             expect(oversizedFailure.error.path).not.toBe(accessorFailure.error.path);
-            expect(healthNotifications).toEqual(['projection_failed', 'projection_failed']);
+            expect(healthNotifications.filter(reason=>reason!=='app_runtime_changed')).toEqual(['projection_failed', 'projection_failed']);
 
             const recovery = await publishEvent('recover');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');
@@ -182,7 +181,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             expect(captures.map(message => message.type)).toEqual([
                 'SNAPSHOT_PREPARED', 'SNAPSHOT_PREPARE_FAILED', 'SNAPSHOT_PREPARE_FAILED', 'SNAPSHOT_PREPARED',
             ]);
-            expect(healthNotifications).toEqual(['projection_failed', 'projection_failed', 'projection_recovered']);
+            expect(healthNotifications.filter(reason=>reason!=='app_runtime_changed')).toEqual(['projection_failed', 'projection_failed', 'projection_recovered']);
 
             const statsResult = await invokeObservedTool(host, 'stats');
             expect(statsResult).toMatchObject({ kind: 'receipt', receipt: {

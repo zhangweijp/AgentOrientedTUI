@@ -169,14 +169,13 @@ async function runNpm(facts) {
             name: packageName, version, type: 'module', main: './app.js', files: ['app.js', 'aoapp.json'],
         }));
         await createFile(join(folder, 'aoapp.json'), JSON.stringify({ app_name: appName, version, entry: { main: entry },
-            toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2' }));
-        await createFile(join(folder, 'entry.mjs'), `
-import { createApp, createView, defineViewType } from ${JSON.stringify(sdkEntry)};
+            toolAuthoringProtocol: 'view-type-tools-v9', appLifecycleSupport: 'app-lifecycle-v3' }));
+        await createFile(join(folder, 'entry.mjs'), `import { createApp, createView, defineViewType } from ${JSON.stringify(sdkEntry)};
 const Notes = defineViewType({ name: 'Notes', multiplicity: 'single', region: 'dynamic' });
 export default createApp({ app_name: ${JSON.stringify(appName)}, viewTypes: [Notes],
-    initialize({ prepareProjection }) {
-        const note = createView(Notes, { render: () => ({ body: ${JSON.stringify(body)} }) });
-        prepareProjection({ views: [note] });
+    initialize({ publish: publishAuthorFrame }) {
+        const note = (() => { const handle = createView(Notes); return { handle, frame: () => handle.frame({ body: ${JSON.stringify(body)} }) }; })();
+        publishAuthorFrame(() => ([note]).map(page => page.frame()));
     },
 });
 `);

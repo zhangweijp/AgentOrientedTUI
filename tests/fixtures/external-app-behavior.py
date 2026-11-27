@@ -72,11 +72,8 @@ class ProbeApp(files.FilesApp):
         wait_for(self.folder / "attention")
         self.request_attention()
 
-    def bindings(self, page):
-        active = super().bindings(page)
-        if page and page.name == "B.txt" and self.disable_b_edit:
-            active.pop("edit", None)
-        return active
+    def edit_enabled(self, page):
+        return super().edit_enabled(page) and not (page.name == "B.txt" and self.disable_b_edit)
 
     def change(self, trigger):
         signal = self.folder / trigger
@@ -87,7 +84,7 @@ class ProbeApp(files.FilesApp):
         if change == "mount":
             page = self.files["B.txt"]
             self.mounts += 1
-            self.publish({**self.files, "B.txt": files.replace(page, mount=f"重开:{self.mounts}")}, opening=True)
+            self.publish({**self.files, "B.txt": files.replace(page, mount=f"m:{self.mounts + 1}")}, opening=True)
         elif change == "scope":
             self.a_writable = False
             self.publish(self.files)

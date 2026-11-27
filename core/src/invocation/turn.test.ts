@@ -13,21 +13,26 @@ function fixture(coordinator: Coordinator, appId: string, copyReads = false) {
     const contract = compileToolParameters({ type: 'object', properties: { text: { type: 'string' } }, required: ['text'] });
     if (!contract.ok) throw new Error('Expected fixture schema');
     const toolSchema = contract.contract.schema;
-    let sequence = 0;
+    let sequence = 0, mountCount = 0, actCount = 0;
+    let mount = '', activation = '', continuity: [number,number,number] = [0,0,0];
     function publish(mode: 'open' | 'closed' | 'remount' | 'text' | 'narrow' | 'deactivate' = 'open') {
-        const mount = (mode === 'remount' ? 'new-mount-' : 'mount-') + appId;
+        const seq = ++sequence;
+        if (!mount || mode === 'remount') { mount = 'm:' + ++mountCount; activation = ''; continuity = [0,0,0]; }
         const value = mode === 'text' ? appId + ' changed' : appId;
         const open = mode !== 'closed';
         const enabled = open && mode !== 'deactivate';
-        expect(core.committer.accept({ appId, instanceId, schemaVersion: SNAPSHOT_SCHEMA_VERSION, sourceEpoch: ++sequence,
+        activation = enabled ? activation || 'a:' + ++actCount : '';
+        continuity = open ? [continuity[0] || seq, mode === 'narrow' ? 0 : continuity[1] || seq, mode === 'narrow' ? 0 : continuity[2] || seq] : [0,0,0];
+        expect(core.committer.accept({ healthySince: 1, appId, instanceId, schemaVersion: SNAPSHOT_SCHEMA_VERSION, sourceEpoch: seq,
             producerSeq: sequence, capturedAt: 0,
             views: open ? [{ id: 'file', name: 'File', type: 'File', region: 'dynamic', viewInstanceId: mount,
-                content: { format: 'markdown-v1', value }, toolBindings: enabled ? [{ toolId, activationId: mount + '-activation' }] : [] }] : [],
+                content: { format: 'markdown-v1', value }, toolBindings: enabled ? [{ toolId, activationId: activation }] : [] }] : [],
             refs: open ? { [refKey('file', mount, 'text')]: { valueSchema: fixtureJsonSchema, id: 'text', ownerViewId: 'file', ownerViewInstanceId: mount,
-                refType: 'String', scope: mode === 'narrow' ? 'private' : 'public', target: { kind: 'snapshot-value', payload: value } } } : {},
+                refType: 'String', continuity, scope: mode === 'narrow' ? 'private' : 'public', target: { kind: 'snapshot-value', payload: value } } } : {},
             tools: enabled ? { [toolId]: { id: toolId, name: 'update', viewType: 'File', description: 'Record selected text',
                 multiplicity: 'single',  inputSchema: toolSchema } } : {},
         }).status).toBe('published');
+        if (!open) mount = '';
     }
     publish();
     const control = { read: () => {}, release: () => {}, dispatch: async () => {}, authorize: (): boolean | Promise<boolean> => true };
@@ -53,7 +58,7 @@ function fixture(coordinator: Coordinator, appId: string, copyReads = false) {
     } };
     const client = createAppInteraction(store, { namespace: appId, now: Date.now, appId, instanceId,
         policy: { project: projectCompleteViews, authorize: () => control.authorize(), canReadReceipt: () => true }, execution: { resolve: () => binding } });
-    return { client, control, values, publish, holds: () => core.store.inspect().activeHolds,
+    return { client, control, values, publish, fault: () => core.lifecycle.invalidatePublication({ code: 'SNAPSHOT_UNAVAILABLE', message: 'Receiver fault' }), holds: () => core.store.inspect().activeHolds,
         async prepare() {
             const result = await coordinator.prepareObservation(client, () => true);
             if (result.status !== 'prepared') throw new Error(result.issue.code);
@@ -148,7 +153,7 @@ it.each(windowCases)('checks the selected mount when B verification publishes $c
         b.control.read = () => {};
         verifyOrder.push('b');
         if (change === 'revoke')
-            expect(coordinator.revokeWindowAccess(old, a.client, { viewId: 'file', viewInstanceId: 'mount-a' })).toBeUndefined();
+            expect(coordinator.revokeWindowAccess(old, a.client, { viewId: 'file', viewInstanceId: 'm:1' })).toBeUndefined();
         else a.publish(change);
     };
     const outcome = coordinator.adoptTurn(selection(nextA, nextB));
@@ -163,9 +168,7 @@ it.each(windowCases)('checks the selected mount when B verification publishes $c
         expect(old.isCurrent).toBe(true);
         if (change === 'deactivate') {
             expect(await old.inspectRef('$ref.a.file.text', 'value')).toEqual({ status: 'ready', value: 'a' });
-            expect(await old.invoke('a', a.request(firstA, 'cannot-dispatch'))).toMatchObject({ kind: 'receipt', receipt: {
-                executionPhase: 'not-dispatched', outcome: { code: 'TOOL_SOURCE_STALE' },
-            } });
+            expect(await old.invoke('a', a.request(firstA, 'cannot-dispatch'))).toMatchObject({ kind: 'refused', code: 'TOOL_SOURCE_STALE' });
         } else expect(await old.inspectRef('$ref.a.file.text', 'value')).toMatchObject({ status: 'rejected' });
         expect(await old.inspectRef('$ref.b.file.text', 'value')).toEqual({ status: 'ready', value: 'b' });
         expect(await old.invoke('b', b.request(firstB, 'still-current'))).toMatchObject(succeeded);
@@ -240,7 +243,8 @@ function multiViewFixture(coordinator: Coordinator, appId: string, options: {
     const contract = compileToolParameters({ type: 'object', properties: { text: { type: 'string' } }, required: ['text'] });
     if (!contract.ok) throw new Error('Expected fixture schema');
     const toolSchema = contract.contract.schema;
-    let sequence = 0;
+    let sequence = 0, mountCount = 0, actCount = 0;
+    let mounts = new Map<string, {id:string, activation:string, refs:Map<string,readonly [number,number,number]>}>();
     const initialViews = options.views ?? [
         { id: 'v_1', refs: [{ id: 'val', scope: 'public', payload: 30 }] },
         { id: 'v_2', refs: [{ id: 'val', scope: 'public', payload: { 'a.b': [10], nested: { leaf: 'ok' } } }] },
@@ -256,19 +260,29 @@ function multiViewFixture(coordinator: Coordinator, appId: string, options: {
     };
     function publish(nextViews = initialViews, remount = false) {
         const seq = ++sequence;
-        const suffix = remount ? '-reopened-' + seq : '';
-        expect(core.committer.accept({
+        const next = new Map<string, {id:string, activation:string, refs:Map<string,readonly [number,number,number]>}>();
+        for (const v of nextViews) {
+            const old = remount ? undefined : mounts.get(v.id);
+            const refs = new Map<string, readonly [number,number,number]>();
+            for (const r of v.refs) {
+                const before = old?.refs.get(r.id);
+                refs.set(r.id,[before?.[0] || seq,r.scope === 'private' ? 0 : before?.[1] || seq,r.scope === 'private' || r.scope === 'protected' ? 0 : before?.[2] || seq]);
+            }
+            next.set(v.id,{id:old?.id ?? 'm:' + ++mountCount,activation:old?.activation ?? 'a:' + ++actCount,refs});
+        }
+        mounts = next;
+        expect(core.committer.accept({ healthySince: 1,
             appId, instanceId, schemaVersion: SNAPSHOT_SCHEMA_VERSION, sourceEpoch: seq, producerSeq: seq, capturedAt: 0,
             views: nextViews.map(v => ({
-                id: v.id, name: v.id, type: 'File', region: 'dynamic', viewInstanceId: 'mount-' + appId + '-' + v.id + suffix,
+                id: v.id, name: v.id, type: 'File', region: 'dynamic', viewInstanceId: mounts.get(v.id)!.id,
                 content: { format: 'markdown-v1', value: v.id },
-                toolBindings: [{ toolId, activationId: 'act-' + v.id + suffix }],
+                toolBindings: [{ toolId, activationId: mounts.get(v.id)!.activation }],
             })),
             refs: Object.fromEntries(nextViews.flatMap(v => v.refs.map(r => {
-                const mount = 'mount-' + appId + '-' + v.id + suffix;
+                const mount = mounts.get(v.id)!.id;
                 return [refKey(v.id, mount, r.id), {
                     valueSchema: fixtureJsonSchema, id: r.id, ownerViewId: v.id, ownerViewInstanceId: mount,
-                    refType: 'Json', scope: r.scope ?? 'public', target: { kind: 'snapshot-value', payload: r.payload },
+                    refType: 'Json', continuity: mounts.get(v.id)!.refs.get(r.id)!, scope: r.scope ?? 'public', target: { kind: 'snapshot-value', payload: r.payload },
                 }];
             }))),
             tools: nextViews.length ? {
@@ -313,7 +327,7 @@ it('suspends both tool and Ref eligibility for omitted views under activeViews a
 
     const turn1 = adopted(coordinator.adoptTurn({ apps: [{ candidate: cand1, windows: { activeViews: [v2] } }] })).turn;
     expect(await turn1.invoke('a', a.request(cand1, 'call-v1', 'v_1'))).toMatchObject({
-        kind: 'receipt', receipt: { executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'TOOL_UNAVAILABLE' } },
+        kind: 'refused', code: 'TOOL_UNAVAILABLE',
     });
     expect(await turn1.invoke('a', a.request(cand1, 'call-v2', 'v_2', 'body-only'))).toMatchObject(succeeded);
     expect(await turn1.inspectRef('$ref.a.v_1.val', 'value')).toMatchObject({ status: 'rejected', issue: { code: 'REF_NOT_VISIBLE' } });
@@ -686,4 +700,35 @@ it('readPublicRefs enforces 256 count and wire JSON depth/nodes/byte limits with
     }
     turnLimits.release();
     expect(a.holds()).toBe(0);
+});
+
+
+it('B1 invalidates adopted and unadopted observations across identical-content Receiver recovery without erasing receipts', async () => {
+    const coordinator = createTurnCoordinator(), app = fixture(coordinator, 'a');
+    const first = await app.prepare();
+    const turn = adopted(coordinator.adoptTurn(selection(first))).turn;
+    const request = app.request(first, 'before-fault', '$ref.a.file.text');
+    const original = await turn.invoke('a', request);
+    expect(original).toMatchObject(succeeded);
+    const unadopted = await app.prepare();
+    app.fault();
+    app.publish();
+    expect(await turn.inspectRef('$ref.a.file.text', 'schema')).toMatchObject({ status: 'rejected' });
+    expect(await turn.inspectRef('$ref.a.file.text', 'value')).toMatchObject({ status: 'rejected' });
+    expect(await turn.readPublicRefs()).toMatchObject({ status: 'rejected' });
+    const stale = await turn.invoke('a', app.request(first, 'after-fault'));
+    expect(stale).toMatchObject({ kind: 'refused', code: 'TOOL_SOURCE_STALE' });
+    expect(stale).not.toHaveProperty('locator');
+    expect(app.values).toEqual(['a']);
+    expect(await app.client.readReceipt({ observationId: request.observationId, invocationId: request.invocationId })).toEqual(original);
+    expect(coordinator.adoptTurn(selection(unadopted))).toMatchObject({ status: 'rejected' });
+    unadopted.discard();
+    const current = await app.prepare();
+    const next = adopted(coordinator.adoptTurn(selection(current))).turn;
+    expect(await next.invoke('a', app.request(current, 'fresh', '$ref.a.file.text'))).toMatchObject(succeeded);
+    expect(app.values).toEqual(['a', 'a']);
+    next.release();
+    app.client.close();
+    await app.client.whenClosed();
+    expect(app.holds()).toBe(0);
 });

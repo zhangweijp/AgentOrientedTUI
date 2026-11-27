@@ -156,7 +156,7 @@ try {
         const context = await delayed.getContext();
         await context.adopt();
         const code = 'inspect(refs.console_catalog.list.people[0].email); ' +
-            'await tools["console_tasks-accept"]({ items: [], literal: "should never be saved" });';
+            'await tools["console_tasks-workspace-accept"]({ items: [], literal: "should never be saved" });';
         const result = await context.executeTool('run_code', { code }, 'before-begin');
         assert.equal(result.error.code, 'REF_VALUE_PRIVATE');
         assert.deepEqual(result.result, { output: [], subcalls: [] });

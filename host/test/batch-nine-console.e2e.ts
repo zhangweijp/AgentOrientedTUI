@@ -114,8 +114,8 @@ try {
     await writeFile(join(folder, 'park'), '');
     try {
         const call = scopedCall('product-park-close', 'const discarded = true; inspect("before close"); ' +
-            'const accepted = tools["console_tasks-accept"]({items:[],literal:"park"}); ' +
-            'const queued = tools["console_tasks-accept"]({items:[],literal:"must not write"}); await Promise.all([accepted,queued]);');
+            'const accepted = tools["console_tasks-workspace-accept"]({items:[],literal:"park"}); ' +
+            'const queued = tools["console_tasks-workspace-accept"]({items:[],literal:"must not write"}); await Promise.all([accepted,queued]);');
         provider.replyNext({ label: 'close Topic during admitted business call', calls: [call] });
         await host.sendUserMessage('Start one test write.', id);
         host.resumeAgent(id);

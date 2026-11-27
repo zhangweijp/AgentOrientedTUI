@@ -59,10 +59,10 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
     const addressText = peopleAddress + '[0].email';
     const current = await step('capture a local email and an old handle',
         'const savedEmail = refs.console_catalog.list.people[0].email; const upper = () => savedEmail.toUpperCase(); ' +
-        'const oldTool = tools["console_tasks-accept"]; const write = literal => tools["console_tasks-accept"]({items:[],literal}); ' +
+        'const oldTool = tools["console_tasks-workspace-accept"]; const write = literal => tools["console_tasks-workspace-accept"]({items:[],literal}); ' +
         'const partial = refs.console_catalog.list.people; let wake; const background = new Promise(resolve => {wake = resolve}); ' +
         'background.then(async () => { inspect("STALE_OUTPUT"); ' +
-        'try { await tools["console_tasks-accept"]({items:[],literal:"stale callback"}); } catch {} ' +
+        'try { await tools["console_tasks-workspace-accept"]({items:[],literal:"stale callback"}); } catch {} ' +
         'try { await oldTool({items:[],literal:"stale handle"}); } catch {} }); ' +
         'background.then(() => { throw Error("STALE_ASYNC_ERROR"); }); inspect(savedEmail);', { imports: [addressText] });
     assert.deepEqual(current.value.output, [email]);
@@ -108,7 +108,7 @@ export async function exerciseScope({ turn, namespace, install, runtime, desktop
     const stale = await step('old run callbacks and tool handles stay invalid',
         'wake(); await background; await Promise.resolve(); ' +
         'try { await oldTool({items:[],literal:"old direct handle"}); } catch (error) {inspect(error.code);} ' +
-        'try { await tools["console_tasks-accept"]({items:partial,literal:"bypass partial"}); } catch (error) {inspect(error.message);} ' +
+        'try { await tools["console_tasks-workspace-accept"]({items:partial,literal:"bypass partial"}); } catch (error) {inspect(error.message);} ' +
         'inspect(x);', { imports: [] });
     assert.equal(stale.value.output[0], 'CONSOLE_TOOL_SCOPE_ENDED');
     assert.match(stale.value.output[1], /partial Ref/);

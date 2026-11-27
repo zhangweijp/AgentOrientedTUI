@@ -1,4 +1,4 @@
-import { committedSnapshot, fixtureHost } from './__tests__/worker-fixture.js';
+import { committedSnapshot, fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
@@ -31,8 +31,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 outfile: workerPath, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
             });
-            const sdkFixture = `
-        import { parentPort } from 'node:worker_threads';
+            const sdkFixture = `import { parentPort } from 'node:worker_threads';
                 import Type from 'typebox';
                 import { createApp, createView, defineViewType, ref, arrayRef, formatRef } from './sdk/src/index.ts';
 
@@ -44,19 +43,19 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 } });
 
                 export default createApp({ viewTypes: [WorkspaceType], app_name: 'm3_integration',
-                    initialize({ appId, prepareProjection, registerCleanup }) {
+                    initialize({ appId, publish: publishAuthorFrame, registerLifecycle }) {
                         let target = { id: 'A' };
-                        const page = createView(WorkspaceType, { idPrefix: 'workspace', region: 'dynamic', render() {
+                        const page = (() => { const handle = createView(WorkspaceType, { idPrefix: 'workspace', region: 'dynamic' }); return { handle, frame: () => {
                             const selected = ref('selected', target, { schema: { type: 'object' }, scope: 'protected' });
                             const pending = arrayRef('pending', [target], {
                                 schema: { type: 'array', items: { type: 'object' } }, scope: 'protected', itemType: 'Task',
                             });
-                            return { refs: [selected, pending], body: [
+                            return handle.frame({ refs: [selected, pending], body: [
                                 formatRef('Stable task label', selected), formatRef('Stable list label', pending),
                                 formatRef('Stable task label', pending, 0), 'App=' + appId,
-                            ].join('\\n'), context: {} };
-                        } });
-                        const publish = () => prepareProjection({ views: [page] });
+                            ].join('\\n'), context: {} });
+                        } }; })();
+                        const publish = () => publishAuthorFrame(() => ([page]).map(page => page.frame()));
                         const onCommand = message => {
                             if (message.type === 'TEST_COMMAND' && message.command === 'replace-target') {
                                 target = { id: message.data.id };
@@ -64,7 +63,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                             }
                         };
                         parentPort.on('message', onCommand);
-                        registerCleanup({ stop() { parentPort.off('message', onCommand); } });
+                        registerLifecycle({ stop() { parentPort.off('message', onCommand); } });
                         publish();
                     },
                 });
@@ -94,7 +93,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             const markup = initial.views[0].content.value;
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
-            host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'replace-target', data: { id: 'B' } });
+            fixtureWorker(host)!.postMessage({ type: 'TEST_COMMAND', command: 'replace-target', data: { id: 'B' } });
             expect((await host.preview()).status).toBe('previewed');
             const changed = committedSnapshot(host);
             expect(changed.revision).toBeGreaterThan(initial.revision);

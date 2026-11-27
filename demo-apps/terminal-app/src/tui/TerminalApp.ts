@@ -42,32 +42,33 @@ function stopCommand(command: RunningCommand): void {
 export default createApp({
     ...pkg.aotui,
     viewTypes: terminalViewTypes,
-    initialize({ launchConfig, prepareProjection, prepareOpeningProjection, readViewId, requestAttention, registerCleanup, signal }) {
+    initialize({ launchConfig, publish: commit, requestAttention, registerLifecycle, signal }) {
         const projectPath = typeof launchConfig?.projectPath === 'string' && launchConfig.projectPath || homedir();
-        type OpenTerminal = { session: TerminalSession; view: ViewHandle };
+        type OpenTerminal = { session: TerminalSession; view: ViewHandle<typeof TerminalType> };
         let terminals: OpenTerminal[] = [];
-        let candidate: OpenTerminal[] | undefined;
         let terminalCounter = 0;
         const processes = new Map<string, RunningCommand>();
 
-        const root = createView(RootType, { id: 'root', name: 'Root', render: () => ({ body: rootBody }) });
-        const consoleView = createView(TerminalConsoleType, {
-            id: 'term_console', name: 'TerminalConsole',
-            render: () => ({
-                body: terminalConsoleBody(projectPath, (candidate ?? terminals).map(({ session }) => session)),
+        const root = createView(RootType, { id: 'root' });
+        const consoleView = createView(TerminalConsoleType, { id: 'term_console' });
+        const frames = (entries: readonly OpenTerminal[]) => [
+            root.frame({ body: rootBody, name: 'Root' }),
+            consoleView.frame({ name: 'TerminalConsole',
+                body: terminalConsoleBody(projectPath, entries.map(({session}) => session)),
                 context: { onSendCommandNewTerminal: sendCommandNewTerminal },
             }),
-        });
-        const frame = (entries: readonly OpenTerminal[]) => ({ views: [root, consoleView, ...entries.map(({ view }) => view)] });
-        const publish = () => prepareProjection(frame(terminals));
+            ...entries.map(({view,session}) => view.frame({ name: session.id, body: terminalBody(session),
+                bindingKey: session.id, context: { terminal: session, onSendCommand: sendCommand, onLoadMoreOutput: setOutputTail, onCloseTerminal: closeTerminal },
+            })),
+        ];
+        const publish = () => commit(() => frames(terminals));
 
         function publishCommand(): string | undefined {
             if (signal.aborted) return;
-            try { publish(); }
-            catch { return 'The command state changed. The Terminal projection could not be prepared.'; }
+            if (!publish().ok) return 'The command state changed. The Terminal projection could not be prepared.';
         }
 
-        registerCleanup({
+        registerLifecycle({
             close: async () => {
                 const running = [...processes.values()];
                 for (const command of running) stopCommand(command);
@@ -162,23 +163,14 @@ export default createApp({
                 id: 'Session ' + (terminalCounter + 1), cwd: projectPath, status: 'idle',
                 commands: [], outputTail: DEFAULT_TAIL_LINES,
             };
-            const view = createView(TerminalType, {
-                idPrefix: 'terminal', name: session.id,
-                render: () => ({
-                    body: terminalBody(session),
-                    context: { terminal: session, onSendCommand: sendCommand, onLoadMoreOutput: setOutputTail, onCloseTerminal: closeTerminal },
-                }),
-            });
+            const view = createView(TerminalType, { idPrefix: 'terminal' });
             const next = [...terminals, { session, view }];
-            candidate = next;
-            try {
-                const result = prepareOpeningProjection(frame(next));
-                if (result.status === 'rejected') return { success: false, error: { code: result.issue.code,
-                    message: 'Close a Terminal View before opening a new session.' } };
-                terminals = next;
-                terminalCounter++;
-            } finally { candidate = undefined; }
-            const viewId = readViewId(view);
+            const opened = commit(() => frames(next), { mode: 'candidate' });
+            if (!opened.ok) return { success: false, error: { code: opened.issue.code,
+                message: 'Close a Terminal View before opening a new session.' } };
+            terminals = next;
+            terminalCounter++;
+            const viewId = opened.viewId(view);
             if (!viewId) return { success: false, error: { code: 'TERMINAL_VIEW_MISSING', message: 'The new Terminal View was not published.' } };
             const result = await sendCommand(session.id, command);
             return result.success ? { success: true, data: { ...result.data, view_id: viewId } } : result;

@@ -105,7 +105,7 @@ function freeze() {
     const head = run('git-head', repo, 'git', ['rev-parse', 'HEAD']).trim();
     const dirty = run('git-status', repo, 'git', ['status', '--porcelain=v1', '--untracked-files=all']);
     const files = run('git-build-inputs', repo, 'git', ['ls-files', '-co', '--exclude-standard', '-z', '--',
-        ...packages, 'package.json', 'pnpm-lock.yaml', 'scripts/release-local.mjs', lifecycleSpec, lifecycleSupport]);
+        ...packages, 'package.json', 'pnpm-lock.yaml', 'scripts/release-local.mjs', 'scripts/consumer-boundary.mjs', lifecycleSpec, lifecycleSupport]);
     for (const file of new Set(files.split('\0').filter(Boolean))) {
         if (file.split('/').some(part => ['node_modules', 'dist', 'coverage', '.git', '.tmp', '.pnpm-store'].includes(part))) continue;
         const source = path.join(repo, file);
@@ -240,6 +240,7 @@ function consumerInputs(profile, folder) {
         'build-a/agent-driver-adapter/node_modules/vitest')), '../vite')).version;
     const direct = host || coreOnly ? local : { [sdk.name]: local[sdk.name] };
     json(path.join(folder, 'package.json'), { private: true, type: 'module',
+        packageManager: packageJson(inputs).packageManager,
         dependencies: { ...direct, ...(host && {
             typebox: sdk.devDependencies.typebox,
             ai: driver.dependencies.ai, zod: driver.devDependencies.zod,
@@ -250,6 +251,15 @@ function consumerInputs(profile, folder) {
         }) },
         pnpm: { overrides, ...(host && { patchedDependencies: { '@ai-sdk/provider-utils@4.0.65': patchPath }, onlyBuiltDependencies: ['esbuild'] }) },
     });
+}
+
+function consumerEnvironment(folder) {
+    const boundary = path.join(folder, '.consumer-boundary.mjs');
+    const source = path.join(inputs, 'scripts/consumer-boundary.mjs');
+    if (!fs.existsSync(boundary)) fs.copyFileSync(source, boundary);
+    assert.equal(hashFile(boundary), hashFile(source));
+    return { AOTUI_CONSUMER_ROOT: fs.realpathSync(folder),
+        NODE_OPTIONS: '--import=' + JSON.stringify(boundary) };
 }
 
 function verifyResolution(label, folder, profile) {
@@ -296,7 +306,7 @@ function verifyResolution(label, folder, profile) {
         parents.aiUtils = path.join(fs.realpathSync(path.join(modules, 'ai')), 'dist/index.mjs');
     }
     const resolution = JSON.parse(run(`${label}-resolve`, folder, process.execPath, ['--experimental-import-meta-resolve', '--input-type=module', '--eval', resolve,
-        JSON.stringify([parents, entries, forbidden])]));
+        JSON.stringify([parents, entries, forbidden])], consumerEnvironment(folder)));
     for (const value of Object.values(resolution.entries)) assert.ok(inside(modules, value), `Resolution escaped consumer: ${value}`);
     const expectedCore = read(path.join(out, evidence.packages.core.payload.file));
     for (const name of ['sdkCore', 'runtimeCore']) {
@@ -356,7 +366,7 @@ function consumers(profile) {
             runFact.lockSha256 = hashFile(lock);
         }, frozen && !fs.existsSync(path.join(durable, 'pnpm-lock.yaml')) && 'First install did not produce a lockfile');
         const blocked = !installed && `Requires ${label}-install`;
-        const data = { AOTUI_DATA_DIR: path.join(folder, 'synthetic-state') };
+        const data = { ...consumerEnvironment(folder), AOTUI_DATA_DIR: path.join(folder, 'synthetic-state') };
         stage(`${label}-resolution`, () => { runFact.resolution = verifyResolution(label, folder, profile); }, blocked);
         stage(`${label}-package-consumer`, () => {
             const reportFile = path.join(report, 'package-consumer.json');

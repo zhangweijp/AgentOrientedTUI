@@ -1,13 +1,13 @@
-import { fixtureHost } from './__tests__/worker-fixture.js';
+import { fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { ActiveTurn, AppInvocation } from '@aotui/core';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
-import { afterAll, beforeAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Worker } from 'node:worker_threads';
+import { Worker } from 'node:worker_threads';
 import { defineRuntimeConfig } from '../../spi/config/index.js';
 
 const repo = resolve(process.cwd(), '..'), running: any[] = [];
@@ -54,7 +54,7 @@ async function start(id = 'app', options: { holdInitialization?: boolean; existi
 
         config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: !!options.holdInitialization },
     }, { script: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), timeoutMs: 5000, worker: options.existingWorker });
-    await host.start(); const worker: Worker = (host as any).worker, messages: any[] = [];
+    await host.start(); const worker: Worker = fixtureWorker(host)!, messages: any[] = [];
     worker.on('message', message => messages.push(message)); const x: any = { authorization, host, worker, messages, root, closed: false };
     running.push(x); const opening = x.opening = host.open(); void opening.catch(() => {});
     if (options.holdInitialization) { await wait(x, m => m.type === 'TEST_INITIALIZING'); return x; }
@@ -99,7 +99,7 @@ async function close(x: any, fail = false) {
     if (fail) await expect(closed).rejects.toThrow(); else await closed;
     await wait(x, m => m.type === 'TEST_RESOURCE_CLOSED');
     expect(x.host.getResourceReport().appCleanup).toMatchObject({ support: 'managed', report: {
-        protocol: 'app-lifecycle-v2', state: fail ? 'failed' : 'completed', issues: fail ? ['APP_CLEANUP_FAILED'] : [],
+        protocol: 'app-lifecycle-v3', state: fail ? 'failed' : 'completed', issues: fail ? ['APP_CLEANUP_FAILED'] : [],
     } });
     const report = await x.host.waitForResourceRelease(); x.closed = true;
     expect(report).toMatchObject({ worker: 'exited', resourcesReleased: true });
@@ -118,12 +118,20 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         const { createRuntime } = await import(pathToFileURL(join(consumer, 'node_modules/@aotui/runtime/dist/index.js')).href);
         const runtime = createRuntime({ worker: { timeoutMs: 5000, maxWorkers: 1 } });
         const desktop = await runtime.createDesktop('d');
+        let physical: Worker | undefined;
+        const post = Worker.prototype.postMessage;
+        const spy = vi.spyOn(Worker.prototype, 'postMessage').mockImplementation(function(this: Worker, message, transferList) {
+            if (message?.type === 'INIT') physical = this;
+            return post.call(this, message, transferList);
+        });
         const install = desktop.installDynamicWorkerApp(pathToFileURL(join(consumer, 'app.mjs')).href, {
             name: 'tool_lifecycle', config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: true },
         });
         void install.catch(() => {});
         const host = desktop.appManager.getManagedApp('tool_lifecycle').host;
-        const worker: Worker = host.worker;
+        spy.mockRestore();
+        expect(physical).toBeInstanceOf(Worker);
+        const worker = physical!;
         const x = { worker, messages: [] as any[], host, root, closed: false };
         worker.on('message', message => x.messages.push(message));
         running.push(x);
@@ -179,13 +187,17 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
     it('runs late stop callbacks while joining initialization and closes the actual resource', async () => {
         const x = await start('late', { holdInitialization: true });
         const closed = x.host.close();
-        await wait(x, m => m.type === 'LIFECYCLE_RESPONSE' && m.appCleanup?.protocol === 'app-lifecycle-v2' && m.appCleanup.state === 'stopped');
+        await wait(x, m => m.type === 'LIFECYCLE_RESPONSE' && m.appCleanup?.protocol === 'app-lifecycle-v3' && m.appCleanup.state === 'stopped');
         x.worker.postMessage({ type: 'TEST_RELEASE_INIT' });
-        await wait(x, m => m.type === 'TEST_STOPPED'); await expect(x.opening).rejects.toThrow();
+        await wait(x, m => m.type === 'TEST_STOPPED');
+        // The Worker owns cleanup before it returns the invalidated OPEN terminal.
+        // Do not await the caller timeout while withholding the actual cleanup barrier.
         await wait(x, m => m.type === 'TEST_CLEANUP_ENTERED');
         expect(x.host.getResourceReport().appCleanup?.report?.state).not.toBe('completed');
         expect(x.host.getResourceReport().resourcesReleased).toBe(false);
-        await control(x, 'release-cleanup'); await closed;
+        await control(x, 'release-cleanup');
+        await expect(x.opening).rejects.toThrow();
+        await closed;
         await wait(x, m => m.type === 'TEST_RESOURCE_CLOSED');
         expect(x.host.getResourceReport().appCleanup?.report).toMatchObject({ state: 'completed', issues: [] });
         x.host.terminate(); const report = await x.host.waitForResourceRelease(); x.closed = true;

@@ -130,7 +130,7 @@ async function prepare(label, upcoming = history, receiptIndex, expansion) {
                 const selection = projection.appSelections.find(entry => entry.observationId === item.observation.observationId)?.windows;
                 // The published single-App example must produce the same pages and active mounts.
                 const example = presentWindows(item.name, item.observation, item.windows, { ...layout, hints }, hint, notesByMount);
-                assert.deepEqual(example.selection, selection ?? { activeViews: [] });
+                assert.deepEqual(example.selection, selection ?? { activeViews: [], closeViews: [] });
                 assert.deepEqual(example.pages, projection.views.filter(view => view.appId === item.windows.appId)
                     .map(({ region, content }) => ({ role: 'user', region, content })));
                 return selection ? [{ ...item, selection }] : [];
@@ -156,7 +156,7 @@ async function prepare(label, upcoming = history, receiptIndex, expansion) {
                 ({ type: 'function', function: { name, description, parameters: inputSchema } }));
             const body = { model: 'window-fixture', max_tokens: 750, messages, tools };
             return { measurement: wireCost(body, inputLimit), body, layout, catalog, selections, rows,
-                tools: projection.tools, ordered, release };
+                tools: projection.tools, closeRoutes: projection.closeRoutes, ordered, release };
         };
         let full = make(fullLayout);
         if (full.measurement.estimated > inputLimit && !reports.size) full = make(fullLayout, undefined, true);
@@ -203,7 +203,7 @@ async function step(label, calls, { addUser = true, saveText = true } = {}) {
         assert.ok(turn.measurement.estimated <= inputLimit, JSON.stringify(turn.measurement));
         const encoded = JSON.stringify(turn.body);
         if (encoded === lastInput) return;
-        const selected = turn.selections.filter(item => item.selection.activeViews.length);
+        const selected = turn.selections.filter(item => item.selection.activeViews.length || item.selection.closeViews.length);
         const adopted = desktop.adoptTurn({ apps: selected.map(({ candidate, selection }) => ({ candidate, windows: selection })) });
         assert.equal(adopted.status, 'adopted', JSON.stringify(adopted));
         assert.deepEqual(adopted.cleanupIssues, []);
@@ -254,7 +254,12 @@ async function step(label, calls, { addUser = true, saveText = true } = {}) {
                     desktop.revokeWindowAccess(active, bound);
                     notes.set(noteKey(windows, target.viewInstanceId), input.note ?? '');
                 }
-                else if (name === 'system-close_view') result = await desktop.closeView(bound, active);
+                else if (name === 'system-close_view') {
+                    const route = turn.closeRoutes.find(route => route.appId === input.app_id && route.viewId === input.view_id);
+                    result = route ? await desktop.closeView({turn:active, invocationId:call.id, target:{appId:route.appId,
+                        instanceId:route.instanceId,viewId:route.viewId,viewInstanceId:route.viewInstanceId}})
+                        : {kind:'refused',code:'VIEW_CLOSE_NOT_GRANTED'};
+                }
                 else if (name === 'system-close_app') {
                     assert.equal((await appClient(desktop, windows.appId).running.beginClose().completion).ok, true);
                     if (windows.appId === app.appId) fileAppClosed = true;
@@ -285,7 +290,7 @@ async function step(label, calls, { addUser = true, saveText = true } = {}) {
                     }
                 }
                 else if (name === 'system-collapse_app') {
-                    desktop.revokeWindowAccess(active, { appId: windows.appId, instanceId: windows.instanceId });
+                    desktop.revokeWindowAccess(active, { appId: windows.appId, instanceId: windows.instanceId }, 'all');
                     notes.set(noteKey(windows), input.note ?? '');
                 }
                 else throw new Error('No request route for ' + name);
@@ -323,7 +328,7 @@ async function onceOnly() {
     assert.doesNotMatch(pageFor(hint, 'B'), /B-LATEST|Available references/);
     assert.match(pageFor(hint, 'A'), /A-BODY/);
     assert.equal(result('denied-hidden-ref').receipt.outcome.code, 'REF_NOT_VISIBLE');
-    assert.equal(result('hinted-receiver').receipt.outcome.code, 'TOOL_UNAVAILABLE');
+    assert.equal(result('hinted-receiver').code, 'TOOL_UNAVAILABLE');
     await step('collapse A to make room', [windowAction('note-a', 'collapse_view', 'A', { note: A_NOTE })]);
     const recovered = await step('normal restored request', []);
     assert.match(pageFor(recovered, 'A'), /Check A &lt;later&gt; &amp; keep the original note\./);
@@ -353,7 +358,8 @@ async function onceOnly() {
     assert.ok(namesOf(management).every(name => name.startsWith('system-')));
     assert.equal(pageFor(management, 'B'), undefined);
     assert.doesNotMatch(JSON.stringify(management), /EXCLUDED SOURCE/);
-    assert.equal(result('close-a').status, 'closed');
+    assert.equal(result('close-a').receipt.outcome.status, 'succeeded');
+    assert.equal(desktop.getAppWindows(app.appId, app.appInstanceId).views.some(v=>v.viewId==='file_A_1'), false);
     const budget = JSON.parse(facts.toolMessages.at(-1).outputs[0].content).window_budget;
     assert.equal(budget.next_page, 2);
     const paged = await step('read the same report next page', [modelCall('next-page', reportTool, { report_id: budget.report_id, page: 2 })]);
@@ -418,7 +424,7 @@ async function repairChecks() {
     await setupFiles(smallFolder);
     await desktop.registerPendingApp({ installationId: 'small_install', localPath: await fixtureAppPath(moduleURL, APP, smallFolder), config: { folder: smallFolder } });
     const smallId = (await desktop.openApp('small_install')).appId;
-    await step('open small App children', [modelCall('open-small-app-children', smallId + '-open_file', { names: ['C', 'D'] })]);
+    await step('open small App children', [modelCall('open-small-app-children', smallId + '-workspace-open_file', { names: ['C', 'D'] })]);
     await step('save a child note and fold the small App', [
         windowAction('collapse-small-child', 'collapse_view', 'D', { app_id: smallId, note: 'D child <note>' }),
         windowAction('collapse-small-app', 'collapse_app', undefined, { app_id: smallId, note: APP_NOTE }),
@@ -427,8 +433,8 @@ async function repairChecks() {
     assert.equal(pageFor(appExpansion, 'C', smallId), undefined);
     assert.equal(result('resume-small-app').status, 'succeeded');
     const next = await step('small App restores the open child and keeps the child note', [
-        modelCall('read-restored-child', smallId + '-echo', { view_id: 'file_C_1', value: `$ref.${smallId}.file_C_1.content` }),
-        modelCall('child-note-has-no-ref', smallId + '-echo', { view_id: 'file_C_1', value: `$ref.${smallId}.file_D_1.content` }),
+        modelCall('read-restored-child', smallId + '-file-echo', { view_id: 'file_C_1', value: `$ref.${smallId}.file_C_1.content` }),
+        modelCall('child-note-has-no-ref', smallId + '-file-echo', { view_id: 'file_C_1', value: `$ref.${smallId}.file_D_1.content` }),
     ], { addUser: false });
     assert.match(pageFor(next, 'C', smallId), /C-BODY[\s\S]+Available references/);
     assert.match(pageFor(next, 'D', smallId), /D child &lt;note&gt;/);

@@ -1,4 +1,4 @@
-import { committedSnapshot, committedState, fixtureHost } from './__tests__/worker-fixture.js';
+import { committedSnapshot, committedState, fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { build } from 'esbuild';
 import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
@@ -28,8 +28,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                 format: 'esm', target: 'node20',
                 packages: 'external', logLevel: 'silent',
             });
-            const fixture = `
-                import { writeFileSync } from 'node:fs';
+            const fixture = `import { writeFileSync } from 'node:fs';
         import { parentPort } from 'node:worker_threads';
                 import Type from 'typebox';
                 import { createApp, createView, defineViewType } from './sdk/src/index.ts';
@@ -44,21 +43,21 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                     },
                 } });
                 export default createApp({ app_name: 'm4_epoch_race', viewTypes: [FileDetail],
-                    initialize({ prepareProjection, registerCleanup }) {
+                    initialize({ publish: publishAuthorFrame, registerLifecycle }) {
                         let enabled = false, attempt = false;
-                        const page = createView(FileDetail, { idPrefix: 'fd_0', region: 'dynamic', render() {
+                        const page = (() => { const handle = createView(FileDetail, { idPrefix: 'fd_0', region: 'dynamic' }); return { handle, frame: () => {
                             if (attempt) {
                                 attempt = false;
                                 let submitted = false;
-                                try { prepareProjection({ views: [] }); submitted = true; }
+                                try { submitted = publishAuthorFrame(() => []).ok; }
                                 catch { /* The outer frame must still fail atomically. */ }
                                 writeFileSync(${JSON.stringify(raceTracePath)}, JSON.stringify({
                                     viewType: 'FileDetail', submitted,
                                 }));
                             }
-                            return { body: 'Stable FileDetail', context: { enabled } };
-                        } });
-                        const publish = () => prepareProjection({ views: [page] });
+                            return handle.frame({ body: 'Stable FileDetail', context: { enabled } });
+                        } }; })();
+                        const publish = () => publishAuthorFrame(() => ([page]).map(page => page.frame()));
                         const receive = message => {
                             if (message.type !== 'TEST_COMMAND') return;
                             if (message.command === 'attempt') {
@@ -70,7 +69,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                             }
                         };
                         parentPort.on('message', receive);
-                        registerCleanup({ stop() { parentPort.off('message', receive); } });
+                        registerLifecycle({ stop() { parentPort.off('message', receive); } });
                         publish();
                     },
                 });
@@ -95,16 +94,16 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
             expect(first.revision).toBe(1);
             expect(first.views).toHaveLength(1);
             expect(Object.keys(first.tools)).toHaveLength(1);
-            host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'attempt' });
+            fixtureWorker(host)!.postMessage({ type: 'TEST_COMMAND', command: 'attempt' });
             await vi.waitFor(() => expect(committedState(host!)).toMatchObject({
                 status: 'degraded', lastGood: { id: first.id },
             }));
             const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
             expect(trace).toMatchObject({ viewType: 'FileDetail', submitted: false });
-            host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
+            fixtureWorker(host)!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
             expect((await host.preview()).status).toBe('previewed');
             const repaired = committedSnapshot(host);
-            expect(repaired).toMatchObject({ schemaVersion: 8, revision: 2,
+            expect(repaired).toMatchObject({ schemaVersion: 9, revision: 2,
                 views: [{ id: 'fd_0_1', content: { value: expect.stringContaining('Stable FileDetail') } }],
             });
             expect(Object.values(repaired.tools).map(tool => tool.name).sort()).toEqual(['inspect', 'late_inspect']);

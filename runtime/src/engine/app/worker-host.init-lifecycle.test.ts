@@ -1,4 +1,4 @@
-import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
+import { committedState, emitHealthyOpen, fixtureHost } from './__tests__/worker-fixture.js';
 import { defineRuntimeConfig } from '../../spi/config/index.js';
 import { WORKER_PROTOCOL } from '../../spi/worker-protocol/types.js';
 import { EventEmitter } from 'node:events';
@@ -8,19 +8,21 @@ import { AppWorkerHost } from './worker-host.js';
 class Channel extends EventEmitter {
     messages: any[] = [];
     autoReply = false;
-    terminate = vi.fn(async () => 0);
+    terminate = vi.fn(async () => { this.emit('exit',0); return 0; });
     postMessage = vi.fn((message: any) => {
         this.messages.push(message);
         if (this.autoReply && message.requestId) this.reply(message);
     });
     reply(message: any) {
+        const init = this.messages.find(m => m.type === 'INIT');
+        const publication = message.type === 'APP_OPEN' ? emitHealthyOpen(this, message, init.appId, init.appInstanceId, draft({appId:init.appId, appInstanceId:init.appInstanceId} as AppWorkerHost)) : undefined;
         this.emit('message', { type: message.type === 'INIT' ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
-            requestId: message.requestId, success: true,
+            requestId: message.requestId, success: true, ...(publication ? { publication } : {}),
             ...(message.type === 'INIT' ? {
-                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: message.appInstanceId },
+                appLifecycle: { protocol: 'app-lifecycle-v3', instanceId: message.appInstanceId },
                 protocol: message.protocol, toolsEnabled: message.toolsEnabled, appInstanceId: message.appInstanceId,
                 projectionLimits: message.projectionLimits,
-            } : {}),
+            } : ['APP_STOP','APP_CLOSE'].includes(message.type) ? {appCleanup:{protocol:'app-lifecycle-v3',instanceId:init.appInstanceId,state:message.type==='APP_STOP'?'stopped':'completed',issues:[]}} : {}),
         });
     }
     get last() { return this.messages.at(-1); }
@@ -34,8 +36,8 @@ function make(options: any = {}) {
 }
 const modes = [{ name: 'read-only mode', toolsEnabled: false }, { name: 'tools enabled', toolsEnabled: true }];
 function draft(host: AppWorkerHost, producerSeq = 1) {
-    return { schemaVersion: 8, appId: host.appId, instanceId: host.appInstanceId, producerSeq, sourceEpoch: producerSeq,
-        capturedAt: producerSeq, views: [{ toolBindings: [], id: 'vv', viewInstanceId: 'vi', type: 'File', name: 'File', region: 'dynamic',
+    return { schemaVersion: 9, healthySince: 1, appId: host.appId, instanceId: host.appInstanceId, producerSeq, sourceEpoch: producerSeq,
+        capturedAt: producerSeq, views: [{ toolBindings: [], id: 'vv', viewInstanceId: 'm:1', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value: 'generation ' + producerSeq } }], refs: {}, tools: {} };
 }
 function clean(host: AppWorkerHost) {
@@ -45,7 +47,7 @@ function clean(host: AppWorkerHost) {
 }
 function initAck(host: AppWorkerHost, init: any, patch: Record<string, unknown> = {}) {
     return { type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
-        appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
+        appLifecycle: { protocol: 'app-lifecycle-v3', instanceId: host.appInstanceId },
         protocol: init.protocol, toolsEnabled: init.toolsEnabled, appInstanceId: host.appInstanceId,
         projectionLimits: init.projectionLimits, ...patch };
 }
@@ -57,7 +59,7 @@ describe('Worker Host owns exactly one application initialization', () => {
         'rejects repeated start for $name in $state while preserving the first instance', async ({ toolsEnabled, state }) => {
             const { host, worker } = make({ toolsEnabled }); const first = host.start(); worker.reply(worker.last); await first;
             if (state !== 'ready') { const opened = host.open(); worker.reply(worker.last); await opened; }
-            worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host) });
+            if(state==='ready')worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host),viewTypes:[{name:'File',multiplicity:'multiple'}] });
             const before = committedState(host); const capability = host.canExecuteTools();
             const listeners = ['message', 'error', 'exit'].map(name => worker.listenerCount(name));
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
@@ -85,7 +87,7 @@ describe('Worker Host owns exactly one application initialization', () => {
             });
             const first = host.start().catch(error => error); const init = worker.last;
             const savedListener = worker.listeners('message')[0]!;
-            worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host) });
+            worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host),viewTypes:[{name:'File',multiplicity:'multiple'}] });
             expect(committedState(host).status).toBe('ready');
             if (failure === 'response-error') worker.emit('message', { type: 'ERROR_RESPONSE', requestId: init.requestId,
                 success: false, error: { code: 'E_INIT_FAILED', message: 'Initialization failed' } });
@@ -95,12 +97,16 @@ describe('Worker Host owns exactly one application initialization', () => {
             expect(await first).toBeInstanceOf(Error);
             expect(committedState(host).status).toBe('stopped'); const retired = committedState(host);
             savedListener({ type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
-                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
+                appLifecycle: { protocol: 'app-lifecycle-v3', instanceId: host.appInstanceId },
                 protocol: WORKER_PROTOCOL, toolsEnabled: true, appInstanceId: host.appInstanceId,
                 projectionLimits: init.projectionLimits });
             savedListener({ type: 'SNAPSHOT_PREPARED', draft: draft(host, 2) });
             expect(host.canExecuteTools()).toBe(false); expect(committedState(host)).toEqual(retired);
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
+            worker.autoReply=true;
+            if(worker.last?.type==='APP_STOP')worker.reply(worker.last);
+            await vi.runAllTimersAsync();
+            await host.close().catch(()=>{});
             expect(worker.messages.filter(m => m.type === 'INIT')).toHaveLength(1); clean(host);
         });
     it('accepts only the correlated INIT reply', async () => {

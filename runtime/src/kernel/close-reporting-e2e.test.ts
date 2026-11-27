@@ -39,18 +39,21 @@ const DetailType = defineViewType()({ multiplicity: 'multiple', name: 'Detail', 
     },
 } });
 const factory = createApp({ viewTypes: [DetailType], app_name: ${JSON.stringify(appName)},
-    initialize({ launchConfig, desktopId, registerCleanup, prepareProjection }) {
+    initialize({ launchConfig, desktopId, registerLifecycle, publish: publishAuthorFrame }) {
         stateFile = join(String(launchConfig.AOTUI_DATA_DIR), String(desktopId) + '-close.json');
         let value = readSaved(stateFile) ?? 0;
-        const page = createView(DetailType, { idPrefix: 'detail', region: 'dynamic',
-            render: () => ({ body: String(value), context: {} }) });
-        const publish = () => prepareProjection({ views: [page] });
+        const page = (() => { const handle = createView(DetailType, { idPrefix: 'detail', region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: String(value), context: {} }) }; })();
+        const publish = () => publishAuthorFrame(() => ([page]).map(page => page.frame()));
         setter = next => { value = next; publish(); };
-        registerCleanup({ async close() { if (draft !== undefined) saveFile(stateFile, draft); } });
+        registerLifecycle({ async close() {
+            ${scenario==='async-unmount'? `await writeFile(${JSON.stringify(entered)},'entered');while(!existsSync(${JSON.stringify(release)}))await new Promise(resolve=>setTimeout(resolve,5));` : ''}
+            if (draft !== undefined) saveFile(stateFile, draft);
+            ${scenario==='failed-unmount'?"throw Error('private unmount detail');":''}
+        } });
         publish();
     },
 });
-${scenario==='async-unmount'||scenario==='failed-unmount'?`const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,async close(){${scenario==='async-unmount'?`await writeFile(${JSON.stringify(entered)},'entered');while(!existsSync(${JSON.stringify(release)}))await new Promise(resolve=>setTimeout(resolve,5));`:''}renderer.close();${scenario==='failed-unmount'?"throw Error('private unmount detail');":''}}};};`:''}
+
 export default factory;`;
     await capture(app,body);
     return {dir,app,entered,release,data:join(dir,'data'),read:(desktop='d')=>{ try { return readFileSync(join(dir,'data',desktop+'-close.json'),'utf8'); } catch { return undefined; } }};
@@ -201,7 +204,8 @@ it('C2-25/27 actual Kernel preserves unmount failure after real resource release
         await install(runtime,f);await invoke(runtime,'d','app','set',{value:63});const box=sandbox(runtime),worker=box.host.worker,promise=runtime.beginClose().completion;
         expect(runtime.beginClose().completion).toBe(promise);
         const report=await runtime.beginClose().completion;expect(report).toMatchObject({state:'settled',hasFailures:true,resourcesReleased:true,workers:{report:{state:'closed',total:0}}});expect(worker.threadId).toBe(-1);
-        expect(report.failures.flatMap(item=>item.codes)).toContain('APP_UNMOUNT_FAILED');
+        expect(report.failures.flatMap(item=>item.codes)).toContain('APP_CLOSE_FAILED');
+        expect(report.appCleanup).toMatchObject({ managedApps: 1, failedApps: 1, completedApps: 0 });
         expect(JSON.parse(f.read()!).value).toBe(63);
         expect(JSON.stringify(report)).not.toContain('private unmount detail');await facts('failure-unmount',{report,threadId:worker.threadId});
     }finally{await runtime.beginClose().completion;await rm(f.dir,{recursive:true,force:true});}

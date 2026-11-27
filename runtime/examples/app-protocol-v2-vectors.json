@@ -1,5 +1,8 @@
 {
-  "hello": { "protocol": "aotui-app", "major": 1 },
+  "hello": {
+    "protocol": "aotui-app",
+    "major": 2
+  },
   "unknownOptional": "example.future-feature",
   "unknownRequired": "example.mandatory-feature",
   "incompatibleMajor": 99,
@@ -11,12 +14,24 @@
     "multiplicity": "multiple",
     "inputSchema": {
       "type": "object",
-      "properties": { "text": { "type": "string" } },
-      "required": ["text"],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
       "additionalProperties": false
     }
   },
-  "ref": { "id": "content", "scope": "public", "schema": { "type": "string" } },
+  "ref": {
+    "id": "content",
+    "scope": "public",
+    "schema": {
+      "type": "string"
+    }
+  },
   "decisions": {
     "closeOrRemount": "VIEW_INSTANCE_REVOKED",
     "activationChanged": "TOOL_SOURCE_STALE",
@@ -24,5 +39,25 @@
     "badFinalInput": "E_INVALID_ARGS",
     "wait": "INVOCATION_WAIT_TIMEOUT",
     "noTerminal": "ACTION_OUTCOME_UNKNOWN"
+  },
+  "viewTypes": [
+    {
+      "name": "directory",
+      "multiplicity": "single"
+    },
+    {
+      "name": "file",
+      "multiplicity": "multiple"
+    }
+  ],
+  "sampling": {
+    "requestId": "observe-1",
+    "publication": {
+      "appId": "files",
+      "instanceId": "run-1",
+      "producerSeq": 2,
+      "sourceEpoch": 2
+    },
+    "currentType": "projectionCurrent"
   }
 }

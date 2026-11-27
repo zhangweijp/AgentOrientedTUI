@@ -27,24 +27,21 @@ const Guide = defineViewType()({ multiplicity: 'multiple', name: 'Guide', region
 
 export default createApp({
     app_name: 'refviews', viewTypes: [Guide, Plan],
-    initialize({ prepareProjection }) {
+    initialize({ publish: commit }) {
         let ownerB = 'B', open = true;
-        const guide = createView(Guide, { idPrefix: 'root', render: () => ({
-            body: 'Select a Ref using its containing View id and local name.',
-            context: {
+        const guide = (() => { const handle = createView(Guide, { idPrefix: 'root' }); return { handle, frame: () => handle.frame({ body: 'Select a Ref using its containing View id and local name.', context: {
                 setOwner(owner) { ownerB = owner; publish(); return success; },
                 close() { open = false; publish(); return success; },
-            },
-        }) });
-        const plan = (idPrefix, readOwner) => createView(Plan, { idPrefix, render() {
+            } }) }; })();
+        const plan = (idPrefix, readOwner) => (() => { const handle = createView(Plan, { idPrefix }); return { handle, frame: () => {
             const owner = readOwner();
             const title = 'Design ' + owner;
             const phases = arrayRef('completed_phases', [{ owner, title }], { schema: Phases, scope: 'protected', itemType: 'Phase' });
-            return { body: `## ${formatRef('Completed phases', phases)}\n${formatRef(title, phases, 0)}`, refs: [phases], context: {} };
-        } });
+            return handle.frame({ body: `## ${formatRef('Completed phases', phases)}\n${formatRef(title, phases, 0)}`, refs: [phases], context: {} });
+        } }; })();
         const a = plan('plan_a', () => 'A');
         const b = plan('plan_b', () => ownerB);
-        function publish() { prepareProjection({ views: open ? [guide, a, b] : [guide, a] }); }
+        function publish() { commit(() => (open ? [guide, a, b] : [guide, a]).map(page => page.frame())); }
         publish();
     },
 });

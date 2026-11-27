@@ -261,7 +261,8 @@ async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
     let previewTimer: ReturnType<typeof setTimeout> | undefined;
     async function printCurrentViews(): Promise<void> {
         for (const app of desktop.listApps()) {
-            if (app.status !== 'running' || !app.appId || !app.appInstanceId) continue;
+            if (app.run) console.log(`--- ${app.name}: ${app.run.phase}, ${app.run.execution.resource}/${app.run.execution.channel}, projection ${app.run.projection.health}, resources ${app.run.resourcesReleased ? 'released' : 'held'} ---`);
+            if (app.status !== 'running' || !app.appId || !app.appInstanceId || app.run && app.run.phase !== 'opened') continue;
             const appId = app.appId;
             const access = desktop.getRunningApp(appId, app.appInstanceId);
             const result = access.status === 'ready' ? await access.app.preview() : access;
@@ -272,9 +273,12 @@ async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
             console.log(`--- App ${appId} ---`);
             for (const view of result.views) {
                 if (!view.content) continue;
-                console.log(buildViewMessageMarkup({ appId, appName: app.name || appId,
+                try { console.log(buildViewMessageMarkup({ appId, appName: app.name || appId,
                     viewId: view.id, viewType: view.type, region: view.region,
-                    markup: view.content.value }));
+                    markup: view.content.value })); }
+                catch (error) {
+                    console.error('[TUI] View presentation unavailable:', error instanceof Error ? error.message : 'Invalid XML field');
+                }
             }
         }
     }

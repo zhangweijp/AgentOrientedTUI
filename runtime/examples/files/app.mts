@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, constants, existsSync, fstatSync, ftruncateS
 import { join } from 'node:path';
 import { createApp, createView, defineViewType, formatRef, ref, type ToolResult, type ViewHandle } from '@aotui/sdk';
 
-type OpenFile = { value: string; writable: boolean; view: ViewHandle };
+type OpenFile = { value: string; writable: boolean; view: ViewHandle<typeof File> };
 type Edit = { text: string; expected: string };
 const text = { type: 'string' } as const;
 const done = { success: true as const };
@@ -30,8 +30,9 @@ const Directory = defineViewType<{
     },
   },
 });
-const File = defineViewType<{ writable: boolean; edit(input: Edit): ToolResult }>()({
-  name: 'File', region: 'dynamic', multiplicity: 'multiple', tools: {
+const File = defineViewType<{ writable: boolean; edit(input: Edit): ToolResult; close(): ToolResult }>()({
+  name: 'File', region: 'dynamic', multiplicity: 'multiple',
+  onClose: { execute: ({ context }) => context.close() }, tools: {
     edit: {
       description: 'Write text to the receiving page. Select the text Ref shown on that page for expected.',
       inputSchema: { type: 'object', properties: { text, expected: text }, required: ['text', 'expected'] },
@@ -43,11 +44,10 @@ const File = defineViewType<{ writable: boolean; edit(input: Edit): ToolResult }
 
 export default createApp({
   ...pkg.aotui, viewTypes: [Directory, File],
-  initialize({ launchConfig, prepareProjection, prepareOpeningProjection, registerCleanup }) {
+  initialize({ launchConfig, publish: commit, registerLifecycle }) {
     if (typeof launchConfig?.folder !== 'string' || !launchConfig.folder) throw new Error('Set config.folder to an existing directory.');
     const folder = realpathSync(launchConfig.folder);
     let files = new Map<string, OpenFile>();
-    let candidate: Map<string, OpenFile> | undefined;
     const testTrace = launchConfig.traceProjection === true;
     const fault = join(folder, faultName);
     let projectionFailed = false;
@@ -73,9 +73,10 @@ export default createApp({
       } finally { closeSync(fd); }
     }
 
-    const directory = createView(Directory, { id: 'directory', render: () => ({
+    const directory = createView(Directory, { id: 'directory' });
+    function frames(open: Map<string, OpenFile>) { return [directory.frame({
       body: 'Files: ' + (directoryFiles().sort().map(name => JSON.stringify(name)).join(', ') || 'none') +
-        '\n\nOpen: ' + ([...(candidate ?? files).keys()].join(', ') || 'none'),
+        '\n\nOpen: ' + ([...open.keys()].join(', ') || 'none'),
       context: {
         open(name) {
           const value = withFile(name, constants.O_RDONLY, fd => readFileSync(fd, 'utf8'));
@@ -85,15 +86,12 @@ export default createApp({
             existing.value = value;
             publish();
           } else {
-            const next = new Map(files).set(name, mount(name, value));
-            candidate = next;
-            try {
-              const result = prepareOpeningProjection(frame(next));
-              if (result.status === 'rejected') return { success: false, error: {
-                code: result.issue.code, message: 'Close an open File page before opening this file.',
-              } };
-              files = next;
-            } finally { candidate = undefined; }
+            const next = new Map(files).set(name, { value, writable: true, view: createView(File) });
+            const result = commit(() => frames(next), { mode: 'candidate' });
+            if (!result.ok) return { success: false, error: {
+              code: result.issue.code, message: 'Close an open File page before opening this file.',
+            } };
+            files = next;
           }
           return done;
         },
@@ -105,21 +103,18 @@ export default createApp({
           return done;
         },
       },
-    }) });
-    function frame(open: Map<string, OpenFile>) {
-      return { views: [directory, ...Array.from(open.values(), file => file.view)] };
-    }
-    function publish() { return prepareProjection(frame(files)); }
-    function mount(name: string, value: string): OpenFile {
-      const entry: OpenFile = { value, writable: true, view: createView(File, {
-        name, onClose: () => { files.delete(name); publish(); return done; },
-        render: () => {
+    }), ...Array.from(open, ([name, entry]) => {
           if (testTrace && existsSync(fault)) throw new Error('The file View could not render while the fixture marker exists.');
           const current = ref('text', entry.value, { scope: 'public', schema: text });
-          return {
-            body: `# ${name}\n\n${entry.value}\n\n${formatRef('Current text', current)}`,
+          return entry.view.frame({
+            name, bindingKey: name, body: `# ${name}\n\n${entry.value}\n\n${formatRef('Current text', current)}`,
             refs: [current],
-            context: { writable: entry.writable, edit(input) {
+            context: { writable: entry.writable, close() {
+              const next = new Map(files); next.delete(name);
+              const result = commit(() => frames(next), { mode: 'candidate' });
+              if (!result.ok) return { success: false, error: result.issue };
+              files = next; return done;
+            }, edit(input) {
               const saved = withFile(name, constants.O_RDWR, fd => {
                 if (readFileSync(fd, 'utf8') !== input.expected) return false;
                 const bytes = Buffer.from(input.text);
@@ -137,26 +132,23 @@ export default createApp({
                 error: { code: 'FILE_CHANGED', message: 'The file changed on disk. Refresh this page before editing.' } } as const;
               if (testTrace) appendFileSync(join(folder, journalName), JSON.stringify({ name, text: input.text }) + '\n');
               entry.value = input.text;
-              try { publish(); }
-              catch (error) {
+              const result = publish();
+              if (!result.ok) {
                 projectionFailed = true;
-                const issue = error as { code?: string };
-                return { success: true as const, data: { saved: true, projection: issue.code ?? 'SNAPSHOT_PREPARE_FAILED' } };
+                return { success: true as const, data: { saved: true, projection: result.issue.code } };
               }
               return done;
             } },
-          };
-        },
-      }) };
-      return entry;
-    }
+          });
+    })]; }
+    function publish() { return commit(() => frames(files)); }
     if (testTrace) {
-      const watcher = watch(folder, (_event, name) => {
+      let watcher: ReturnType<typeof watch> | undefined;
+      registerLifecycle({ close: () => watcher?.close() });
+      watcher = watch(folder, (_event, name) => {
         if (name !== faultName || existsSync(fault) || !projectionFailed) return;
-        publish();
-        projectionFailed = false;
+        projectionFailed = !publish().ok;
       });
-      registerCleanup({ close: () => watcher.close() });
     }
     publish();
   },

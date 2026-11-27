@@ -42,7 +42,7 @@ it('uses only the selected file mount, keeps the observed value on disk conflict
     const folder = await workspace();
     const runtime = createRuntime();
     try {
-        const policy = { project: projectCompleteViews, authorize: () => false, canReadReceipt: () => true };
+        const policy = { project: (context: Parameters<typeof projectCompleteViews>[0]) => ({...projectCompleteViews(context),closeViews:context.source.views.filter(v=>v.closeActivationId).map(v=>({viewId:v.id,viewInstanceId:v.viewInstanceId}))}), authorize: () => false, canReadReceipt: () => true };
         const desktop = await runtime.createDesktop({ policyForApp: () => policy });
         await desktop.registerPendingApp({ installationId, localPath, config: { folder } });
         const opened = await desktop.openApp(installationId, { policy: { ...policy, authorize: () => true } });
@@ -84,36 +84,33 @@ it('uses only the selected file mount, keeps the observed value on disk conflict
         });
         alreadyPrepared.discard();
         expect(await both.turn.inspectRef(address(a), 'value')).toMatchObject({ status: 'rejected' });
-        expect(await both.call('edit', 'folded-a', editInput(a, 'Still no write'))).toMatchObject({ kind: 'receipt', receipt: {
-            executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' },
-        } });
+        expect(await both.call('edit', 'folded-a', editInput(a, 'Still no write'))).toMatchObject({kind:'refused',code:'TOOL_UNAVAILABLE'});
         const pendingFolded = await prepare(opened);
         const shown = pendingFolded.observation.views.filter(view => view.id !== a.id)
             .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
         const folded = adopt(desktop, pendingFolded, { activeViews: shown });
         expect(() => desktop.revokeWindowAccess(both.turn, target(b))).toThrow(expect.objectContaining({ code: 'TURN_NOT_ACTIVE' }));
         expect(await folded.turn.inspectRef(address(a), 'value')).toMatchObject({ status: 'rejected' });
-        expect(await folded.call('edit', 'expanded-with-old-turn', editInput(a, 'Still no write'))).toMatchObject({ kind: 'receipt', receipt: {
-            executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' },
-        } });
+        expect(await folded.call('edit', 'expanded-with-old-turn', editInput(a, 'Still no write'))).toMatchObject({kind:'refused',code:'TOOL_UNAVAILABLE'});
         expect(await folded.call('edit', 'still-edit-b', editInput(b, 'Bravo folded'))).toMatchObject(succeed);
 
         const pending = await prepare(opened);
         const all = pending.observation.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
         const budget = adopt(desktop, pending, { activeViews: all.filter(view => view.viewId !== a.id) });
         expect(await budget.turn.inspectRef(address(a), 'value')).toMatchObject({ status: 'rejected' });
-        expect(await budget.call('edit', 'budget-body-hidden', { view_id: a.id, expected: 'External', text: 'Alpha matched' })).toMatchObject({ receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' } } });
+        expect(await budget.call('edit', 'budget-body-hidden', { view_id: a.id, expected: 'External', text: 'Alpha matched' })).toMatchObject({kind:'refused',code:'TOOL_UNAVAILABLE'});
         expect(await opened.readReceipt({ observationId: both.observation.observationId, invocationId: 'edit-b' })).toEqual(changed);
 
         expect(await budget.call('set_writable', 'disable', { name: 'b.txt', writable: false })).toMatchObject(succeed);
         expect(await budget.call('set_writable', 'enable', { name: 'b.txt', writable: true })).toMatchObject(succeed);
         expect(await budget.call('edit', 'finishing-with-stale-activation', { view_id: b.id, expected: 'Bravo folded', text: 'Stale' }))
-            .toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_SOURCE_STALE' } } });
-        const restored = adopt(desktop, await prepare(opened));
-        expect((await desktop.closeView(target(a), restored.turn)).status).toBe('closed');
+            .toMatchObject({kind:'refused',code:'TOOL_SOURCE_STALE'});
+        const restoredCandidate=await prepare(opened);
+        const restored = adopt(desktop, restoredCandidate, {activeViews:restoredCandidate.observation.views.map(v=>({viewId:v.id,viewInstanceId:v.viewInstanceId})),closeViews:[target(a)].map(({viewId,viewInstanceId})=>({viewId,viewInstanceId}))});
+        expect(await desktop.closeView({target:target(a),turn:restored.turn,invocationId:'close-a'})).toMatchObject({kind:'receipt',receipt:{outcome:{status:'succeeded'}}});
         expect(await restored.call('open_file', 'reopen-a', { name: 'a.txt' })).toMatchObject(succeed);
         expect(await restored.call('edit', 'referring-to-closed-mount', { view_id: a.id, expected: 'External', text: 'Stale' }))
-            .toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched', outcome: { code: 'VIEW_INSTANCE_REVOKED' } } });
+            .toMatchObject({kind:'refused',code:'VIEW_INSTANCE_REVOKED'});
         expect(await readFile(join(folder, 'a.txt'), 'utf8')).toBe('External');
         expect(await readFile(join(folder, 'b.txt'), 'utf8')).toBe('Bravo folded');
 
@@ -180,9 +177,9 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         await desktop.registerPendingApp({ installationId, localPath, config: { folder, traceProjection: true } });
         const started = await step('open-app', [modelCall('open', 'system-open_app', { installation_id: installationId })]);
         expect(started.tools.map((tool: any) => tool.function.name)).toEqual(expect.arrayContaining(['system-open_app', 'system-close_app']));
-        const opens = await step('open-files', [modelCall('open-a', appId + '-open_file', { name: 'a.txt' }),
-            modelCall('open-b', appId + '-open_file', { name: 'b.txt' })]);
-        expect(opens.tools.map((tool: any) => tool.function.name)).not.toContain(appId + '-edit');
+        const opens = await step('open-files', [modelCall('open-a', appId + '-Directory-open_file', { name: 'a.txt' }),
+            modelCall('open-b', appId + '-Directory-open_file', { name: 'b.txt' })]);
+        expect(opens.tools.map((tool: any) => tool.function.name)).not.toContain(appId + '-File-edit');
         const run = desktop.listApps().find(app => app.appId === appId)!;
         const running = desktop.getRunningApp(run.appId!, run.appInstanceId!);
         if (running.status !== 'ready') throw Error(running.issue.code);
@@ -192,8 +189,8 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         const b = windows.views.find(view => view.name === 'b.txt')!;
         const bRef = '$ref.' + appId + '.' + b.viewId + '.text';
         const aRef = '$ref.' + appId + '.' + a.viewId + '.text';
-        const editing = await step('edit-b', [modelCall('edit-b', appId + '-edit', { view_id: b.viewId, expected: bRef, text: 'Bravo updated' })]);
-        expect(editing.tools.filter((tool: any) => tool.function.name === appId + '-edit')).toHaveLength(1);
+        const editing = await step('edit-b', [modelCall('edit-b', appId + '-File-edit', { view_id: b.viewId, expected: bRef, text: 'Bravo updated' })]);
+        expect(editing.tools.filter((tool: any) => tool.function.name === appId + '-File-edit')).toHaveLength(1);
         expect(JSON.stringify(editing.messages)).toContain('# a.txt');
         expect(JSON.stringify(editing.messages)).toContain('# b.txt');
         const receipt = receipts['edit-b']!;
@@ -212,21 +209,22 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         expect(refChecks.immediate).toMatchObject({ a: { type: 'error-json' }, b: { type: 'json', value: { value: 'Bravo updated' } } });
         const folded = await step('folded', [modelCall('run-folded', 'run_code', {
             code: `inspect(Object.hasOwn(refs.${appId}, ${JSON.stringify(a.viewId)}));`,
-        }), modelCall('edit-only-b', appId + '-edit', { view_id: b.viewId, expected: bRef, text: 'Bravo after fold' })]);
+        }), modelCall('edit-only-b', appId + '-File-edit', { view_id: b.viewId, expected: bRef, text: 'Bravo after fold' })]);
         const modelPages = folded.messages.filter((message: any) => typeof message.content === 'string' && message.content.startsWith('<view'));
         expect(JSON.stringify(modelPages)).toContain('Wait &lt;A&gt;');
         const foldedBody = modelPages.find((message: any) => message.content.includes(`view_id="${a.viewId}"`)).content;
         expect(foldedBody).not.toContain('Available references');
         expect(foldedBody).not.toContain('Alpha');
         expect(modelPages.find((message: any) => message.content.includes(`view_id="${b.viewId}"`)).content).toContain('- public ' + bRef + ' (string)');
-        expect(folded.tools.filter((tool: any) => tool.function.name === appId + '-edit')).toHaveLength(1);
+        expect(folded.tools.filter((tool: any) => tool.function.name === appId + '-File-edit')).toHaveLength(1);
         expect(receipts['edit-only-b']).toMatchObject(succeed.receipt);
         const consoleResult = history.flatMap(message => message.role === 'tool' ? message.content : [])
             .find(part => typeof part === 'object' && part.toolCallId === 'run-folded');
         expect(consoleResult?.output).toMatchObject({ type: 'json', value: { output: ['false'] } });
         await step('expand-a', [modelCall('expand', 'system-expand_view', { app_id: appId, view_id: a.viewId }),
-            modelCall('still-folded', appId + '-edit', { view_id: a.viewId, expected: 'Alpha', text: 'Forbidden same turn' })]);
-        expect(receipts['still-folded']).toMatchObject({ executionPhase: 'not-dispatched', outcome: { code: 'TOOL_UNAVAILABLE' } });
+            modelCall('still-folded', appId + '-File-edit', { view_id: a.viewId, expected: 'Alpha', text: 'Forbidden same turn' })]);
+        expect(receipts['still-folded']).toBeUndefined();
+        expect(resultFor('still-folded')).toMatchObject({type:'error-json',value:expect.objectContaining({code:'TOOL_UNAVAILABLE'})});
         const restored = await step('restored', [
             modelCall('fold-a-again', 'system-collapse_view', { app_id: appId, view_id: a.viewId, note: 'Keep <A>' }),
             modelCall('fold-b', 'system-collapse_view', { app_id: appId, view_id: b.viewId }),
@@ -242,7 +240,7 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         expect(bothMarkup).toContain('Keep &lt;A&gt;');
         expect(bothMarkup).not.toContain('Alpha');
         expect(bothMarkup).not.toContain('Bravo after fold');
-        expect(bothFolded.tools.map((tool: any) => tool.function.name)).not.toContain(appId + '-edit');
+        expect(bothFolded.tools.map((tool: any) => tool.function.name)).not.toContain(appId + '-File-edit');
         expect(history.flatMap(message => message.role === 'tool' ? message.content : []).find(part =>
             typeof part === 'object' && part.toolCallId === 'unfolded-ref')?.output)
             .toMatchObject({ type: 'json', value: { output: ['false'] } });
@@ -255,7 +253,7 @@ it('publishes a selective turn from the real TypeScript Source and Driver to a l
         });
         expect(JSON.stringify(aRestored.messages.filter((message: any) => typeof message.content === 'string' && message.content.startsWith('<view'))))
             .toContain('Alpha');
-        expect(aRestored.tools.filter((tool: any) => tool.function.name === appId + '-edit')).toHaveLength(1);
+        expect(aRestored.tools.filter((tool: any) => tool.function.name === appId + '-File-edit')).toHaveLength(1);
         const foldedFiles = await disk();
         expect(foldedFiles).toEqual({ 'a.txt': 'Alpha', 'b.txt': 'Bravo after fold' });
         const writes = await journal(folder, 'edits');
@@ -335,29 +333,28 @@ it('binds each counter instance policy before startup and reads the timed-out ca
     } });
     const foreign = await runtime.createDesktop();
     try {
-        await writeFile(module, `
-            import { writeFileSync, existsSync, appendFileSync } from 'node:fs';
+        await writeFile(module, `import { writeFileSync, existsSync, appendFileSync } from 'node:fs';
             import { setTimeout as wait } from 'node:timers/promises';
             import { createApp, createView, defineViewType } from '@aotui/sdk';
             const Counter = defineViewType()({ name: 'Counter', multiplicity: 'single', region: 'dynamic', tools: {
                 add: { description: 'Add one', execute({ context }) { return context.add(); } },
             } });
-            export default createApp({ app_name: 'turn_counter', viewTypes: [Counter], initialize({ prepareProjection }) {
+            export default createApp({ app_name: 'turn_counter', viewTypes: [Counter], initialize({ publish: publishAuthorFrame }) {
                 appendFileSync(${JSON.stringify(entered + '.init')}, 'start\\n');
                 let value = 0;
-                const view = createView(Counter, { render: () => ({ body: 'Count ' + value, context: { async add() {
+                const view = (() => { const handle = createView(Counter); return { handle, frame: () => handle.frame({ body: 'Count ' + value, context: { async add() {
                     appendFileSync(${JSON.stringify(entered)}, 'entered\\n');
                     while (!existsSync(${JSON.stringify(resume)})) await wait(10);
                     value++;
-                    prepareProjection({ views: [view] });
+                    publishAuthorFrame(() => ([view]).map(page => page.frame()));
                     writeFileSync(${JSON.stringify(entered + '.count')}, String(value));
                     return { success: true, data: { value } };
-                } } }) });
-                prepareProjection({ views: [view] });
+                } } }) }; })();
+                publishAuthorFrame(() => ([view]).map(page => page.frame()));
             } });
         `);
         await writeFile(join(folder, 'aoapp.json'), JSON.stringify({ app_name: 'turn_counter', version: '0.1.0',
-            entry: { main: './counter.mjs' }, toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2' }));
+            entry: { main: './counter.mjs' }, toolAuthoringProtocol: 'view-type-tools-v9', appLifecycleSupport: 'app-lifecycle-v3' }));
         await desktop.registerPendingApp({ installationId: 'counter', localPath: folder });
         await expect(desktop.openApp('counter')).rejects.toMatchObject({ code: 'APP_INTERACTION_POLICY_CREATION_FAILED', cause: setupFailure });
         await expect(readFile(entered + '.init', 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });

@@ -15,7 +15,7 @@ export interface ExecutionMapping {
     readonly executionPhase: 'not-dispatched' | ExecutionPhase | 'unknown';
     readonly outcome: InvocationOutcome;
 }
-export function mapExecutionFact(raw: unknown, limits: InvocationJsonLimits): ExecutionMapping {
+export function mapExecutionFact(raw: unknown, limits: InvocationJsonLimits, operation: 'tool' | 'closeView' = 'tool'): ExecutionMapping {
     try {
         const fact = copyWireJson(raw, limits);
         if (!jsonObject(fact)) throw 0;
@@ -29,14 +29,19 @@ export function mapExecutionFact(raw: unknown, limits: InvocationJsonLimits): Ex
         if (phase === 'not-entered') {
             if (result.success) throw 0;
             const { code, message, context } = result.error;
-            if (code === 'REF_VIEW_UNAVAILABLE' || code === 'REF_NOT_VISIBLE' || code === 'REF_ARGUMENT_BUDGET_EXCEEDED')
+            if (operation === 'closeView') {
+                const guarded = ['VIEW_CLOSE_UNAVAILABLE','VIEW_INSTANCE_REVOKED','VIEW_CLOSE_SOURCE_STALE','APP_STOPPED','SNAPSHOT_UNREADY'].includes(code);
+                return { executionPhase: phase, outcome: Object.freeze({status:'rejected',
+                    code: guarded ? code : 'VIEW_CLOSE_UNAVAILABLE', message, details}) };
+            }
+            if (code === 'REF_VIEW_UNAVAILABLE'  || code === 'REF_NOT_VISIBLE' || code === 'REF_ARGUMENT_BUDGET_EXCEEDED')
                 return { executionPhase: phase, outcome: Object.freeze({ status: 'rejected', code, message,
                     ...(typeof context?.path === 'string' ? { path: context.path } : {}), details }) };
             return { executionPhase: phase, outcome: Object.freeze({ status: 'rejected', code: 'TOOL_REJECTED',
                 message: 'The Tool rejected the request before handler entry', details }) };
         }
         if (result.success) return { executionPhase: phase, outcome: Object.freeze({ status: 'succeeded', value: result }) };
-        return { executionPhase: phase, outcome: Object.freeze({ status: 'failed', code: 'TOOL_FAILED',
+        return { executionPhase: phase, outcome: Object.freeze({ status: 'failed', code: operation === 'closeView' ? 'VIEW_CLOSE_FAILED' : 'TOOL_FAILED',
             message: 'The application reported a task failure', details }) };
     } catch { return { executionPhase: 'unknown', outcome: unknownOutcome() }; }
 }

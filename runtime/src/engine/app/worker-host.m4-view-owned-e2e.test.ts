@@ -1,4 +1,4 @@
-import { committedSnapshot, committedState, fixtureHost } from './__tests__/worker-fixture.js';
+import { committedSnapshot, committedState, fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { build } from 'esbuild';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
@@ -27,8 +27,7 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 bundle: true, platform: 'node', format: 'esm',
                 target: 'node20', packages: 'external', logLevel: 'silent',
             });
-            const fixture = `
-                import Type from 'typebox';
+            const fixture = `import Type from 'typebox';
                 import { createApp, createView, defineViewType } from './sdk/src/index.ts';
 
                 const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', tools: {
@@ -40,10 +39,10 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 } });
 
                 export default createApp({ viewTypes: [FileDetail], app_name: 'm4_fixture',
-                    initialize({ prepareProjection }) {
+                    initialize({ publish: publishAuthorFrame }) {
                         const views = [['fd_0', 'App.tsx'], ['fd_1', 'package.json']].map(([idPrefix, body]) =>
-                            createView(FileDetail, { idPrefix, region: 'dynamic', render: () => ({ body, context: {} }) }));
-                        prepareProjection({ views });
+                            (() => { const handle = createView(FileDetail, { idPrefix, region: 'dynamic' }); return { handle, frame: () => handle.frame({ body, context: {} }) }; })());
+                        publishAuthorFrame(() => (views).map(page => page.frame()));
                     },
                 });
             `;
@@ -71,7 +70,7 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
             expect(new Set(first.views.map((view: any) => view.viewInstanceId)).size).toBe(2);
             const firstViewsById = new Map(first.views.map((view: any) => [view.id, view]));
             for (const view of first.views) {
-                expect(view.viewInstanceId).toContain(host.appInstanceId);
+                expect(view.viewInstanceId).toMatch(/^m:[1-9][0-9]*$/);
                 expect(view.content.value).not.toContain(view.viewInstanceId);
             }
             const inspect = Object.values(first.tools).find((tool: any) => tool.name === 'inspect') as any;
@@ -80,10 +79,10 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
             const firstIdentity = first.views[0]!.viewInstanceId;
 
             // A managed close retires this Host and Worker.
-            const physical = (host as any).worker;
+            const physical = fixtureWorker(host)!;
             await host.close();
             const posted = vi.spyOn(physical, 'postMessage');
-            await expect(host.open()).rejects.toThrow(/shutdown is pending/);
+            await expect(host.open()).rejects.toMatchObject({code:'APP_STOPPED'});
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(posted).not.toHaveBeenCalled();
             expect(committedState(host)).toEqual({ status: 'stopped' });
@@ -102,18 +101,18 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 const current = committedSnapshot(host!);
                 expect(current.views).toHaveLength(2);
                 for (const view of current.views) {
-                    expect(view.viewInstanceId).toContain(host!.appInstanceId);
+                    expect(view.viewInstanceId).toMatch(/^m:[1-9][0-9]*$/);
                     expect(view.viewInstanceId).not.toContain(oldExecution);
                 }
             }, { timeout: 3_000 });
             const current = committedSnapshot(host);
             for (const view of current.views) {
-                expect(view.viewInstanceId).not.toBe(firstViewsById.get(view.id).viewInstanceId);
+                expect(view.viewInstanceId).toBe(firstViewsById.get(view.id).viewInstanceId);
                 expect(view.content.value).not.toContain(view.viewInstanceId);
             }
             const currentInspect = Object.values(current.tools).find((tool: any) => tool.name === 'inspect') as any;
             expect(current.views[0]!.toolBindings).toEqual([{ toolId: currentInspect.id, activationId: expect.any(String) }]);
-            expect(current.views[0]!.viewInstanceId).not.toBe(firstIdentity);
+            expect(current.views[0]!.viewInstanceId).toBe(firstIdentity);
             expect(currentInspect).not.toHaveProperty('targets');
         } finally {
             host?.terminate();

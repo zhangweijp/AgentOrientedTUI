@@ -258,7 +258,7 @@ try {
         });
         assert.deepEqual(paired.assistant.content, [
             { type: 'reasoning', text: reasoning }, { type: 'text', text },
-            { type: 'tool-call', toolCallId: editedCall, toolName: 'window_files-edit', input: { view_id: 'file_B_1', mode: 'short' } },
+            { type: 'tool-call', toolCallId: editedCall, toolName: 'window_files-file-edit', input: { view_id: 'file_B_1', mode: 'short' } },
         ]);
         assert.equal(Array.isArray(paired.result.content) && paired.result.content[0]?.toolCallId, editedCall);
         assert.equal(Array.isArray(paired.result.content) && paired.result.content[0]?.output.value.saved, true);
@@ -296,7 +296,7 @@ try {
     assert.ok(outbound.some(item => item.kind === 'final' && item.text === 'im editing B.'));
     assert.doesNotMatch(JSON.stringify(outbound), /fixture-usage-only|inputTokenDetails/);
     assert.doesNotMatch(JSON.stringify(provider.requests.map(request => request.body)), /fixture-usage-only|inputTokenDetails/);
-    assert.deepEqual(wire.filter(message => message.type === 'INIT').map(message => message.protocol), ['app-worker/v10', 'app-worker/v10']);
+    assert.deepEqual(wire.filter(message => message.type === 'INIT').map(message => message.protocol), ['app-worker/v12', 'app-worker/v12']);
     assert.equal(wire.filter(message => message.direction === 'toWorker' && message.type === 'VIEW_TOOL_INVOKE').length, 4);
     assert.ok(!wire.some(message => /LLM_USAGE|LLM_OUTPUT/.test(message.type)));
 

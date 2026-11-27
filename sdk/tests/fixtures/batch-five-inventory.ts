@@ -56,7 +56,7 @@ function inventory(state: 'initial' | 'invalid' | 'repaired') {
 
 export default createApp({
     app_name: STOCK_APP, viewTypes: [Raw, Stock, Item, Control],
-    initialize({ launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const configuredFolder = launchConfig?.folder;
         if (typeof configuredFolder !== 'string') throw new Error('Missing test directory');
         const folder: string = configuredFolder;
@@ -64,25 +64,25 @@ export default createApp({
         let state: 'initial' | 'invalid' | 'repaired' = 'initial';
         const journal = (name: string, entry: object) => appendFileSync(join(folder, name + '.jsonl'), JSON.stringify(entry) + '\n');
         const raw = (idPrefix: string, body: string, region: 'static' | 'dynamic' = 'dynamic') =>
-            createView(Raw, { idPrefix, region, render: () => ({ body }) });
+            (() => { const handle = createView(Raw, { idPrefix, region }); return { handle, frame: () => handle.frame({ body }) }; })();
         const views = [
             raw('raw', RAW), raw('split_raw', RAW_PARTS.join(''), 'static'), raw('whitespace', SPACES),
-            raw('author_table', AUTHOR_TABLE), createView(Stock, { id: 'stock', render: () => ({ body: inventory(state) }) }),
+            raw('author_table', AUTHOR_TABLE), (() => { const handle = createView(Stock, { id: 'stock' }); return { handle, frame: () => handle.frame({ body: inventory(state) }) }; })(),
             raw('files', filesBody), raw('diagram', '```mermaid\n' + DIAGRAM + '\n```'),
             raw('inline_flow', 'Hello **world**!\nDone.\n\nFirst *second*.'),
-            createView(Control, { render: () => ({ body: 'Inventory controls', context: { change } }) }),
+            (() => { const handle = createView(Control); return { handle, frame: () => handle.frame({ body: 'Inventory controls', context: { change } }) }; })(),
             item('left'), item('right'),
         ];
         function item(idPrefix: 'left' | 'right') {
-            return createView(Item, { idPrefix, render() {
+            return (() => { const handle = createView(Item, { idPrefix }); return { handle, frame: () => {
                 const data = ref('value', idPrefix === 'left' ? value : 'right Ref', { scope: 'protected', schema: string });
-                return { body: idPrefix + ' item has a stable body', refs: [data], context: {
+                return handle.frame({ body: idPrefix + ' item has a stable body', refs: [data], context: {
                     writable: idPrefix !== 'left' || !readOnly,
                     apply(value: string) { journal('handler', { id: idPrefix, value }); return { success: true, data: { id: idPrefix, value } }; },
-                } };
-            } });
+                } });
+            } }; })();
         }
-        const publish = () => prepareProjection({ views });
+        const publish = () => commit(() => (views).map(page => page.frame()));
         async function change(operation: Operation): Promise<ToolResult> {
             if (operation === 'read_only') {
                 readOnly = true; publish();
@@ -91,13 +91,11 @@ export default createApp({
             writeFileSync(join(folder, 'saved.txt'), 'stored once');
             journal('writes', { operation });
             state = 'invalid';
-            try { publish(); return { success: true, data: { saved: true } }; }
-            catch (error) {
-                const issue = error as { code: string; path: string; message: string };
-                const projection = { code: issue.code, path: issue.path, message: issue.message };
-                journal('diagnostics', projection);
-                return { success: true, data: { saved: true, projection } };
-            }
+            const published = publish();
+            if (published.ok) return { success: true, data: { saved: true } };
+            const projection = { ...published.issue };
+            journal('diagnostics', projection);
+            return { success: true, data: { saved: true, projection } };
         }
         const command = join(folder, 'update.txt');
         let previous = '';
@@ -108,10 +106,11 @@ export default createApp({
             previous = next;
             if (next === 'new_ref') value = 'left after Provider request';
             if (next === 'repair') state = 'repaired';
-            try { publish(); journal('updates', { next }); }
-            catch (error) { journal('update-errors', { next, error: String(error) }); }
+            const published = publish();
+            if (published.ok) journal('updates', { next });
+            else journal('update-errors', { next, error: published.issue.message });
         }, 20);
-        registerCleanup({ stop() { clearInterval(watcher); } });
+        registerLifecycle({ stop() { clearInterval(watcher); } });
         publish();
     },
 });

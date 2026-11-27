@@ -39,9 +39,9 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
     const visible = Object.keys(values).map(id => ({ refId: id, viewId: view.viewId, viewInstanceId: view.viewInstanceId }));
     function publish(next = values) {
         const n = ++seq;
-        const result = core.committer.accept({ schemaVersion: 8, appId: 'app', instanceId: 'run', producerSeq: n, sourceEpoch: n, capturedAt: n,
+        const result = core.committer.accept({ healthySince: 1,  schemaVersion: 9, appId: 'app', instanceId: 'run', producerSeq: n, sourceEpoch: n, capturedAt: n,
             views: [{ toolBindings: view.toolBindings, id: view.viewId, type: view.viewType, viewInstanceId: view.viewInstanceId, name: 'Notes', region: 'dynamic', content: { format: 'markdown-v1', value: 'Current notes ' + n } }],
-            refs: Object.fromEntries(Object.entries(next).map(([id, payload]) => [refKey(view.viewId, view.viewInstanceId, id), { scope: 'protected',
+            refs: Object.fromEntries(Object.entries(next).map(([id, payload]) => [refKey(view.viewId, view.viewInstanceId, id), { continuity: [1,1,0] as const,  scope: 'protected',
                 id, ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId, valueSchema: Array.isArray(payload) ? { type: 'array', items: {} } : { type: 'object' },
                 refType: kinds[id] ?? fields[id]?.['x-aotui-ref-kind'] ?? 'Note', target: { kind: 'snapshot-value', payload },
             }])), tools: { [tool.id]: tool } });

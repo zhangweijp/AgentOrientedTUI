@@ -26,9 +26,9 @@ const Todo = defineViewType<Actions>()({
 
 export default createApp({
     app_name: 'tasks', viewTypes: [Todo],
-    initialize({ launchConfig, prepareProjection }) {
+    initialize({ launchConfig, publish: commit }) {
         let done = false, priority = 1, attempts = 0, commits = 0;
-        const view = createView(Todo, { render() {
+        const view = (() => { const handle = createView(Todo); return { handle, frame: () => {
             const value = ref('priority', priority, { schema: Type.Number(), scope: 'protected' });
             const actions: Actions = {
                 async finish() {
@@ -52,13 +52,13 @@ export default createApp({
                 inspectPriority: observed => ({ success: true, data: { observed, current: priority } }),
                 priority,
             };
-            return { body: (done ? 'Done' : 'Pending') + '\n\n' + formatRef('Task priority', value), refs: [value], context: actions };
-        } });
-        let prepared = prepareProjection({ views: [view] });
+            return handle.frame({ body: (done ? 'Done' : 'Pending') + '\n\n' + formatRef('Task priority', value), refs: [value], context: actions });
+        } }; })();
+        let prepared = commit(() => ([view]).map(page => page.frame()));
         commits++;
         function publish(changed: boolean) {
             if (changed) {
-                prepared = prepareProjection({ views: [view] });
+                prepared = commit(() => ([view]).map(page => page.frame()));
                 commits++;
             }
             return prepared;

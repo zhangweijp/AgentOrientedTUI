@@ -3,13 +3,15 @@ import { createRuntime, type AppExecutionBackend, type AppExecutionEvent, type A
     type AppExecutionRequest, type IDesktop, type RunningApp } from '../index.js';
 
 const frame: AppExecutionProjection = {
-    revision: 1,
+    sourceEpoch: 1, producerSeq: 1, healthySince: 1,
     views: [{ id: 'file', type: 'File', name: 'File', region: 'dynamic', body: 'A read-only view of this test file.',
-        viewInstanceId: 'file-mount', tools: [{ name: 'edit', activationId: 'edit-activation' }] }],
-    refs: [{ id: 'text', viewId: 'file', viewInstanceId: 'file-mount', scope: 'public', valueSchema: { type: 'string' }, value: 'seed' }],
+        viewInstanceId: 'm:1', tools: [{ name: 'edit', activationId: 'a:1' }] }],
+    refs: [{ id: 'text', viewId: 'file', viewInstanceId: 'm:1', scope: 'public', continuity: [1, 1, 1], valueSchema: { type: 'string' }, value: 'seed' }],
     tools: [{ name: 'edit', viewType: 'File', multiplicity: 'single', description: 'Edit the file.',
         inputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] } }],
 };
+
+const firstFrame = { ...frame, viewTypes: [{ name: 'File', multiplicity: 'single' as const }] };
 
 function controlled(releaseOnTerminate = true) {
     const runs: {
@@ -20,7 +22,7 @@ function controlled(releaseOnTerminate = true) {
     }[] = [];
     const backend: AppExecutionBackend = {
         start(launch, emit) {
-            expect(launch.checkProjection(frame)).toBeUndefined();
+            let publication: import('@aotui/core/host').SnapshotDraftEnvelope;
             const invoked = Promise.withResolvers<Extract<AppExecutionRequest, { kind: 'invoke' }>>();
             const messages: AppExecutionRequest[] = [];
             const terminate = vi.fn<() => void | Promise<void>>(() => {
@@ -32,10 +34,13 @@ function controlled(releaseOnTerminate = true) {
                 const { id } = request;
                 switch (request.kind) {
                     case 'initialize': return emit({ kind: 'reply', id, status: 'ready' });
-                    case 'open':
-                        emit({ kind: 'projection', frame });
-                        return emit({ kind: 'reply', id, status: 'done' });
-                    case 'observe': return emit({ kind: 'projection', id, frame });
+                    case 'open': {
+                        const accepted = launch.acceptProjection(firstFrame, 'authoritative', id);
+                        if (accepted.status !== 'accepted') throw Error(accepted.issue.code);
+                        publication = accepted.publication;
+                        return emit({ kind: 'reply', id, status: 'done', publication });
+                    }
+                    case 'observe': return emit({ kind: 'projectionCurrent', id, publication });
                     case 'invoke': return invoked.resolve(request);
                     case 'stop':
                         return emit({ kind: 'reply', id, status: 'done', cleanup: { state: 'stopped', issues: [] } });
@@ -89,7 +94,7 @@ it('captures a backend at registration, coalesces duplicate starts and never sub
         expect((await first.beginClose().completion).resourcesReleased).toBe(true);
         const next = await desktop.openApp(installation);
         expect(next.instanceId).not.toBe(first.instanceId);
-        runs[0]!.emit({ kind: 'projection', frame: { ...frame, revision: 90, views: [] } });
+        runs[0]!.emit({ kind: 'projection', frame: { ...frame, sourceEpoch: 90, producerSeq: 90, views: [], refs: [], tools: [] } });
         expect((await observe(desktop, next)).observation.views.map(view => view.id)).toEqual(['file']);
         expect(runs).toHaveLength(2);
     } finally { await runtime.beginClose().completion; }
@@ -110,9 +115,22 @@ it.each([false, true])('settles dispatch after channel end while keeping the slo
         const run = runs[0]!, request = await run.invoked.promise;
         expect(request).toMatchObject({ tool: { viewType: 'File', name: 'edit' }, input: { value: 'once' } });
         expect(request.tool).not.toHaveProperty('id');
+        // Two original Entries are queued behind the actually dispatched head.
+        const second = turn.invoke(app.appId, {...input, invocationId:'queued-2'}, 1000);
+        const third = turn.invoke(app.appId, {...input, invocationId:'queued-3'}, 1000);
+        const fourth = turn.invoke(app.appId, {...input, invocationId:'queued-4'}, 1000);
+        expect(await turn.invoke(app.appId, {...input, invocationId:'not-admitted'}, 1000))
+            .toMatchObject({kind:'refused',code:'INVOCATION_CAPACITY',path:'interactionLimits.maxPendingInvocations'});
         if (tail) run.emit({ kind: 'reply', id: request.id, status: 'tool',
             terminal: { phase: 'entered-returned', result: { success: true, data: { written: 1 } } } });
         run.emit({ kind: 'channelEnded' });
+        for (const [index, promise] of [second,third,fourth].entries()) {
+            const stopped=await promise;
+            expect(stopped).toMatchObject({kind:'unavailable',code:'EXECUTION_CHANNEL_ENDED',executionPhase:'not-dispatched',
+                locator:{observationId:observation.observationId,invocationId:'queued-'+(index+2)}});
+            expect(await app.readReceipt({observationId:observation.observationId,invocationId:'queued-'+(index+2)}))
+                .toMatchObject({kind:'receipt',receipt:{executionPhase:'not-dispatched',outcome:{status:'rejected',code:'EXECUTION_CHANNEL_ENDED'}}});
+        }
         const terminal = await pending;
         expect(terminal).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: tail ? 'succeeded' : 'unknown' } } });
         expect(await app.readReceipt(input)).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_INVALID' });
@@ -258,4 +276,46 @@ it('retries failed release from Runtime without repeating App cleanup or countin
     }));
     expect(run.messages.filter(message => message.kind === 'stop' || message.kind === 'close').map(message => message.kind))
         .toEqual(['stop', 'close']);
+});
+
+it('preserves a rejected external candidate but revokes admission on mapper rejection of an authoritative Frame', async () => {
+    let launch: Parameters<AppExecutionBackend['start']>[0];
+    let publication: import('@aotui/core/host').SnapshotDraftEnvelope;
+    const runtime = createRuntime({ worker: {timeoutMs: 1000}, executionBackends: { sandbox: {
+        start(context, emit) {
+            launch = context;
+            return { terminate() { emit({kind:'exited'}); }, send(request) {
+                if (request.kind === 'initialize') return emit({kind:'reply', id:request.id, status:'ready'});
+                if (request.kind === 'open') {
+                    const accepted = context.acceptProjection(firstFrame, 'authoritative', request.id);
+                    if (accepted.status !== 'accepted') throw Error(accepted.issue.code);
+                    publication = accepted.publication;
+                }
+                if (request.kind === 'open') return emit({kind:'reply', id:request.id, status:'done', publication});
+                if (request.kind === 'observe') {
+                    if (!request.known) return emit({kind:'reply', id:request.id, status:'failed', issue:{code:'SNAPSHOT_INVALID',message:'No accepted projection'}});
+                    return emit({kind:'projectionCurrent', id:request.id, publication});
+                }
+                if (request.kind === 'stop' || request.kind === 'close') return emit({kind:'reply', id:request.id, status:'done',
+                    cleanup:{state:request.kind === 'stop' ? 'stopped' : 'completed', issues:[]}});
+            }};
+        },
+    } } });
+    try {
+        const desktop = await runtime.createDesktop();
+        const app = await desktop.openApp(await register(desktop));
+        const before = await observe(desktop, app);
+        const malformed = { ...frame, sourceEpoch:2, producerSeq:2, views:[{...frame.views[0]!, canClose:true}] };
+        expect(launch!.acceptProjection(malformed, 'candidate')).toMatchObject({status:'rejected', issue:{code:'SNAPSHOT_INVALID',path:'$.views[0].canClose'}});
+        expect(await app.preview()).toMatchObject({status:'previewed'});
+        expect(launch!.acceptProjection(malformed, 'authoritative')).toMatchObject({status:'rejected', issue:{code:'SNAPSHOT_INVALID',path:'$.views[0].canClose'}});
+        expect(await app.observe()).toMatchObject({status:'rejected', issue:{code:'SNAPSHOT_INVALID',path:'$.views[0].canClose'}});
+        const recovered = launch!.acceptProjection({...frame, sourceEpoch:3,producerSeq:3}, 'candidate');
+        expect(recovered.status).toBe('accepted');
+        if (recovered.status !== 'accepted') throw Error(recovered.issue.code);
+        publication = recovered.publication;
+        const after = await observe(desktop, app);
+        expect(after.observation.source.snapshotId).not.toBe(before.observation.source.snapshotId);
+        expect(after.observation.source.revision).toBeGreaterThan(before.observation.source.revision);
+    } finally { await runtime.beginClose().completion; }
 });

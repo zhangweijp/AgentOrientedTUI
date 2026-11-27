@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRuntime } from '@aotui/runtime';
+import { projectDesktop } from '@aotui/runtime/adapters';
+import { Worker } from 'node:worker_threads';
 import { setupFiles } from './batch-ten-delivery.mjs';
 
 const args = process.argv.slice(2);
@@ -10,6 +12,19 @@ const liveFiles = args.includes('--live-files');
 const [appPath, evidence, pythonExecutable] = args.filter(arg => arg !== '--live-files');
 const root = await mkdtemp(join(tmpdir(), 'aotui-author-check-'));
 const runtime = createRuntime(), facts = { scenarios: [], passed: false };
+const wire = [], notices = [];
+const post = Worker.prototype.postMessage;
+Worker.prototype.postMessage = function(message, ...rest) {
+    if (message?.type === 'INIT' && message.appName === 'turn_files') {
+        this.on('message', reply => {
+            if (['SNAPSHOT_PREPARED','PROJECTION_CURRENT','APP_EVENT'].includes(reply?.type))
+                wire.push({type:reply.type, requestId:reply.requestId, jsonBytes:Buffer.byteLength(JSON.stringify(reply)),
+                    revision:reply.draft?.producerSeq, sourceEpoch:reply.draft?.sourceEpoch ?? reply.sourceEpoch,
+                    views:reply.draft?.views.length, reason:reply.reason});
+        });
+    }
+    return post.call(this,message,...rest);
+};
 try {
     for (const maxViews of liveFiles ? [4] : [3, 2]) {
         const folder = join(root, String(maxViews));
@@ -20,13 +35,17 @@ try {
             : { localPath: resolve(appPath) };
         const config = liveFiles ? { folder, traceProjection: true } : { folder };
         await desktop.registerPendingApp({ installationId: 'files', ...location, config, projectionLimits: { maxViews } });
+        const listener = signal => notices.push(signal);
+        desktop.output.subscribe(listener);
         const app = await desktop.openApp('files');
         const receipts = [];
         let turn, observation;
         async function observe() {
             const prepared = await app.observe();
             assert.equal(prepared.status, 'prepared', JSON.stringify(prepared));
-            const adopted = desktop.adoptTurn({ apps: [{ candidate: prepared.candidate }] });
+            const activeViews = prepared.candidate.observation.views.map(({ id: viewId, viewInstanceId }) => ({ viewId, viewInstanceId }));
+            const closeViews = prepared.candidate.observation.views.filter(view => view.canClose).map(({ id: viewId, viewInstanceId }) => ({ viewId, viewInstanceId }));
+            const adopted = desktop.adoptTurn({ apps: [{ candidate: prepared.candidate, windows: { activeViews, closeViews } }] });
             assert.equal(adopted.status, 'adopted', JSON.stringify(adopted));
             turn = adopted.turn;
             observation = prepared.candidate.observation;
@@ -51,6 +70,16 @@ try {
         await observe();
         assert.equal(observation.tools.some(tool => tool.name === 'edit'), false);
         const runtimeExample = liveFiles && app.appId === 'turn_files';
+        if (runtimeExample) {
+            const first = observation.source;
+            const checkpoint = wire.length;
+            await observe();
+            assert.deepEqual(observation.source,first);
+            const unchanged = wire.slice(checkpoint);
+            assert.ok(unchanged.some(entry=>entry.type==='PROJECTION_CURRENT'),JSON.stringify(unchanged));
+            assert.ok(!unchanged.some(entry=>entry.type==='SNAPSHOT_PREPARED'),JSON.stringify(unchanged));
+            facts.unchanged = {source:first,wire:unchanged};
+        }
         const schemas = {};
         if (liveFiles) {
             for (const name of runtimeExample ? ['open_file', 'set_writable'] : ['open_file']) {
@@ -66,7 +95,7 @@ try {
         await observe();
         assert.equal(view('A.txt').viewInstanceId, a.viewInstanceId);
         assert.equal(observation.tools.filter(tool => tool.name === 'edit').length, 1);
-        let live;
+        let live, twoFile;
         if (liveFiles) {
             assert.equal(second.status, 'succeeded');
             const directory = () => observation.views.find(entry => entry.id === 'directory').content.value;
@@ -108,7 +137,11 @@ try {
                 assert.equal((await call('set_writable', { name: addedName, writable: false })).status, 'succeeded');
                 await observe();
                 assert.equal(view(addedName).viewInstanceId, added.viewInstanceId);
-                assert.equal((await call('edit', edit('Disallowed write', initialText), added.id)).status, 'rejected');
+                const denied = await turn.invoke(app.appId, { observationId: observation.observationId, toolId: tool('edit').id,
+                    invocationId: 'disabled-edit', viewId: added.id, input: edit('Disallowed write', initialText) });
+                assert.equal(denied.kind, 'refused', JSON.stringify(denied));
+                assert.equal(denied.code, 'TOOL_UNAVAILABLE', JSON.stringify(denied));
+                assert.equal(denied.path, '$.view_id');
                 assert.equal(await read(addedName), initialText);
                 assert.equal((await call('set_writable', { name: addedName, writable: true })).status, 'succeeded');
                 await observe();
@@ -147,9 +180,10 @@ try {
             assert.equal(second.details?.result.error?.code, 'OBSERVATION_CAPACITY');
             assert.equal(views().length, 1);
             assert.equal((await call('edit', { text: 'A is still editable' }, a.id)).status, 'succeeded');
-            const closed = await desktop.closeView({ appId: app.appId, instanceId: app.instanceId,
-                viewId: a.id, viewInstanceId: a.viewInstanceId }, turn);
-            assert.equal(closed.status, 'closed', JSON.stringify(closed));
+            const closed = await desktop.closeView({ turn, invocationId: 'close-' + a.viewInstanceId,
+                target: { appId: app.appId, instanceId: app.instanceId, viewId: a.id, viewInstanceId: a.viewInstanceId } });
+            assert.equal(closed.kind, 'receipt', JSON.stringify(closed));
+            assert.equal(closed.receipt.outcome.status, 'succeeded', JSON.stringify(closed));
             await observe();
             assert.equal((await call('open_file', { name: 'B.txt' })).status, 'succeeded');
             await observe();
@@ -164,17 +198,76 @@ try {
             assert.equal(await read('A.txt'), 'A is still editable');
             assert.equal(await read('B.txt'), 'Original B');
         }
+        if (!liveFiles && maxViews === 3) {
+            await observe();
+            const originalB = view('B.txt');
+            const editSchema = tool('edit').inputSchema;
+            const catalog = () => desktop.listApps().map(app => ({app, windows: app.appId ? desktop.getAppWindows(app.appId, app.appInstanceId) : undefined}));
+            const present = () => projectDesktop({apps:[{observation}],catalog:catalog(),capabilities:['open','close','closeView','inspectRef']});
+            const before = present();
+            assert.equal(before.status,'ready');
+            const route = before.tools.find(t=>t.route?.toolId===tool('edit').id);
+            assert.ok(route);
+            assert.equal(before.tools.filter(t=>t.name===route.name).length,1);
+            const input = Object.hasOwn(editSchema.properties,'expected') ? {text:'Edited A only',expected:'Original A'} : {text:'Edited A only'};
+            const request={observationId:observation.observationId,toolId:tool('edit').id,viewId:a.id,invocationId:'edit-a-once',input};
+            const edited=await turn.invoke(app.appId,request);
+            assert.equal(edited.kind,'receipt',JSON.stringify(edited));
+            assert.equal(edited.receipt.outcome.status,'succeeded');
+            assert.deepEqual(await turn.invoke(app.appId,request),edited);
+            assert.deepEqual(await desktop.readReceipt(edited.locator),edited);
+            assert.equal(await read('A.txt'),'Edited A only');
+            assert.equal(await read('B.txt'),'Original A');
+            // Capture the next actual model presentation and preserve the unrelated View exactly.
+            await observe();
+            assert.equal(view('A.txt').viewInstanceId,a.viewInstanceId);
+            assert.equal(view('B.txt').viewInstanceId,originalB.viewInstanceId);
+            assert.equal(view('B.txt').content.value,originalB.content.value);
+            assert.deepEqual(tool('edit').inputSchema,editSchema);
+            const after=present();
+            assert.equal(after.status,'ready');
+            assert.ok(after.views.find(v=>v.viewId===a.id)?.content.includes('Edited A only'));
+            assert.equal(after.views.find(v=>v.viewId===originalB.id)?.content,before.views.find(v=>v.viewId===originalB.id)?.content);
+            const oldRequest={...request,observationId:observation.observationId,invocationId:'closed-target',input};
+            const closeRequest={turn,invocationId:'close-original-a',target:{appId:app.appId,instanceId:app.instanceId,viewId:a.id,viewInstanceId:a.viewInstanceId}};
+            const closed=await desktop.closeView(closeRequest);
+            assert.equal(closed.kind,'receipt');
+            assert.equal(closed.receipt.outcome.status,'succeeded',JSON.stringify(closed));
+            assert.deepEqual(await desktop.closeView(closeRequest),closed);
+            assert.deepEqual(await desktop.readReceipt(closed.locator),closed);
+            const stale=await turn.invoke(app.appId,oldRequest);
+            assert.ok(stale.kind==='refused'||stale.receipt.outcome.status==='rejected',JSON.stringify(stale));
+            const bInput=Object.hasOwn(editSchema.properties,'expected')?{text:'B still callable',expected:'Original A'}:{text:'B still callable'};
+            assert.equal((await call('edit',bInput,originalB.id)).status,'succeeded');
+            assert.equal(await read('A.txt'),'Edited A only');
+            assert.equal(await read('B.txt'),'B still callable');
+            await observe();
+            assert.equal(view('A.txt'),undefined);
+            assert.equal(view('B.txt').viewInstanceId,originalB.viewInstanceId);
+            assert.equal((await call('open_file',{name:'A.txt'})).status,'succeeded');
+            await observe();
+            assert.notEqual(view('A.txt').viewInstanceId,a.viewInstanceId);
+            const reopened=view('A.txt');
+            assert.ok(reopened.content.value.includes('Edited A only'));
+            twoFile={before:before.views,after:after.views,edit:edited,closed,stale,originalA:a,originalB,reopenedA:reopened};
+        }
         await observe();
         const disk = { A: await read('A.txt'), B: await read('B.txt') };
         assert.ok(view('B.txt').content.value.includes(disk.B));
         turn.release();
         const report = await desktop.beginClose().completion;
         assert.equal(report.ok, true, JSON.stringify(report));
-        facts.scenarios.push({ maxViews, receipts, views: views(), disk, report, ...(live ? { live } : {}) });
+        assert.equal(report.resourcesReleased, true, JSON.stringify(report));
+        desktop.output.unsubscribe(listener);
+        facts.scenarios.push({ maxViews, receipts, views: views(), disk, report, ...(live ? { live } : {}), ...(twoFile ? { twoFile } : {}) });
     }
     facts.passed = true;
 } finally {
     facts.closed = await runtime.beginClose().completion;
+    Worker.prototype.postMessage = post;
+    facts.wire = wire;
+    facts.notices = notices;
     await writeFile(resolve(evidence), JSON.stringify(facts, null, 2));
     await rm(root, { recursive: true, force: true });
+    assert.equal(facts.closed.resourcesReleased,true,JSON.stringify(facts.closed));
 }

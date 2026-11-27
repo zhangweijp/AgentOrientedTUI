@@ -1,7 +1,7 @@
 /* Adapted from DeepSeek Harness ts-types.ts at 2e39e70496aa02986ca6a820c5d497e816b69d7e.
  * Copyright (c) 2026 DeepSeek. See LICENSE.deepseek-harness. */
 import type { JsonValue } from '@aotui/core';
-import { NATIVE_REF_ADDRESS_SCHEMA, NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA, type PresentedRef } from '@aotui/runtime/adapters';
+import { NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA, type PresentedRef } from '@aotui/runtime/adapters';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 export interface ProgramToolInput {
@@ -45,9 +45,11 @@ function scalar(value: unknown, path: string): string {
 }
 
 function schemaType(schema: unknown, path: string, untyped: string): string {
-    if (schema === NATIVE_REF_ADDRESS_SCHEMA || schema === NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA) return 'AppRefAddress';
     if (schema === undefined) return untyped;
     if (!object(schema)) throw new UnsupportedSchema(path);
+    if (schema.type === 'string' && schema.pattern === NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA.pattern &&
+        Object.keys(schema).every(name => ['type', 'pattern', 'description'].includes(name)) &&
+        (schema.description === undefined || typeof schema.description === 'string')) return 'AppRefAddress';
     for (const name of Object.keys(schema)) if (!schemaKeys.has(name)) throw new UnsupportedSchema(field(path, name));
     const constraints: string[] = [];
     if (Object.hasOwn(schema, 'const')) constraints.push(scalar(schema.const, path + '.const'));
@@ -90,12 +92,7 @@ function schemaType(schema: unknown, path: string, untyped: string): string {
 }
 
 function inputType(input: ProgramToolInput): string {
-    const properties = { ...input.schema.properties as Record<string, unknown> };
-    for (const { parameter, arrayElement } of input.refOnly) {
-        const address = NATIVE_REF_ADDRESS_SCHEMA;
-        properties[parameter] = arrayElement ? { ...(properties[parameter] as object), items: address } : address;
-    }
-    return schemaType({ ...input.schema, properties }, '$', 'JsonValue');
+    return schemaType(input.schema, '$', 'JsonValue');
 }
 
 type Branch = { children: Map<string, Branch>; schema?: unknown; leaf?: true };

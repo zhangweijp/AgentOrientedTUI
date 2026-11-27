@@ -11,9 +11,9 @@ Import `createApp`, `createView`, and `defineViewType` from the TypeScript SDK r
 
 ## Declare the type and provide page context
 
-Use `defineViewType<Context>()({ name, multiplicity, tools })` to declare each tool's description, optional business Schema, and `execute({ input, context })` in one place. Use `defineViewType({ name, multiplicity })` for a type without tools. Choose `single` for one page per App or `multiple` for concurrently open pages of the same type. List the descriptors in the App factory's `viewTypes`.
+Use `defineViewType<Context>()({ name, multiplicity, tools })` to declare each tool's description, optional business Schema, and `execute({ input, context })` in one place. Use `defineViewType({ name, multiplicity })` for a type without tools. Choose `single` for one page per App or `multiple` for concurrently open pages of the same type. List the descriptors in the App factory's `viewTypes`. Alternatively supply a synchronous `(launchConfig) => declarations` function evaluated once per running instance. The second argument of `initialize(app, viewTypes)` is the frozen canonical declaration collection for that instance; use its descriptors when creating pages. In a managed Node Worker, omitted config stays undefined and explicit empty config stays an object, with captured settings deeply frozen. Require explicit page placement when a default region is optional or may be undefined.
 
-Each page with tools supplies its own `context`. It can contain page state, setters, or App services. Keep a stable `createView(type, { region, render })` handle and return body, refs, and context from `render`. Call `prepareProjection({ views })` with all open handles. Use the optional synchronous `enabled(context)` to decide availability for each page. Multi-instance tool calls require the receiving page's XML `view_id`. Single-instance tool calls omit that field. The handler receives business fields and the selected page context.
+Each page with tools supplies its own `context`. It can contain page state, setters, or App services. Keep a stable pure `createView(type, { region })` handle. Call `app.publish(() => [handle.frame({ body, refs, context }), ...])` with all open pages. Use `bindingKey` when a mounted page switches business target; declare close behavior on the ViewType with `onClose: { execute({ context }) { ... } }`. Use the optional synchronous `enabled(context)` to decide availability for each page. Multi-instance tool calls require the receiving page's XML `view_id`. Single-instance tool calls omit that field. The handler receives business fields and the selected page context.
 
 Use Root to explain the App's workflow. The model request carries available operations and their schemas. [Runnable Work Items App](../../../sdk/tests/fixtures/work-items-plain.ts)
 
@@ -75,9 +75,9 @@ The App still checks that resolved objects exist, belong to the intended current
 
 ## Views and instructions
 
-A View is an independent Agent work page. Choose `static` for stable guidance and `dynamic` for changing work. Use ASCII letters, digits and underscores in `view_type`, with at least one letter. A single ViewType can override its ID with `id`. For a multiple ViewType, the framework assigns `<prefix>_<n>` using the type name or the supplied `idPrefix`. Keep View handles stable as data changes. Return a Markdown `body` from the page’s render function.
+A View is an independent Agent work page. Choose `static` for stable guidance and `dynamic` for changing work. Use ASCII letters, digits and underscores in `view_type`, with at least one letter. A single ViewType can override its ID with `id`. For a multiple ViewType, the framework assigns `<prefix>_<n>` using the type name or the supplied `idPrefix`. Keep View handles stable as data changes. Supply raw Markdown `body` to the page's frame.
 
-When an open receipt needs a routing ID, call `readViewId(handle)` after successful `prepareOpeningProjection`. The SDK reads the ID of that exact handle from the latest healthy frame.
+When an open receipt needs a routing ID, use the successful `PublishResult.viewId(handle)`. For the current healthy local frame use `app.readViewId(handle)`.
 
 Submit the raw Markdown body. The Runtime message boundary encodes XML text once, including CR/CRLF, and Host preview decodes it once. Use Markdown code fences for exact file, patch and log text. [SDK View API](../../../sdk/README.md)
 
@@ -92,9 +92,9 @@ Keep the Schema, handler, rendered references and recovery guidance in agreement
 
 ## Submission, observation and checks
 
-Use `prepareProjection` for the current App state, including after a business write or a View close. Supply every open View handle. An invalid ordinary frame retains prior identities for diagnosis and pauses new dispatch until a valid frame is accepted. Preserve a successful write receipt if projection preparation fails. Repair the projection from current App state.
+Use `app.publish(builder)` for the current App state, including after a business write or a View close. Supply every open View's Frame in the synchronous builder. Check the structured result. An invalid ordinary frame retains prior identities for diagnosis and pauses new dispatch until a valid frame is accepted. Preserve a successful write receipt if projection preparation fails. Repair the projection from current App state.
 
-Use `prepareOpeningProjection({ views })` for a tentative open. Update the App's own navigation only after the candidate is accepted. On a capacity rejection, retain the previous projection and tell the Agent which page it can close to make space.
+Use `app.publish(builder, { mode: 'candidate' })` for a tentative open. A candidate is unavailable while locally degraded. Update the App's own navigation only after the candidate is accepted. On a capacity rejection, retain the previous projection and tell the Agent which page it can close to make space.
 
 Read the fixed `projectionLimits` from the App author context when choosing initial content or an App page size. The frozen values describe the full installed App projection. Use preparation results for actual capacity decisions. The Host budgets the assembled model input and output separately.
 
@@ -102,4 +102,4 @@ Trusted Hosts prepare candidates and adopt the complete request with `desktop.ad
 
 Verify first/last matching View activation, disabled/re-enabled Tools, correct and invalid Ref selections, optional absence, ordering and duplicates, business membership checks, updated View state and final resource release. Test through the matching actual SDK/Runtime packages; visibility or matching version strings alone do not prove compatibility.
 
-The App owns business persistence. Use `launchConfig` for Host-provided paths and `registerCleanup({ close })` to join saves or release resources during shutdown. Confirm a save before the receipt promises that it completed. [IDE session persistence](../../../demo-apps/aotui-ide/README.md)
+The App owns business persistence. Use `launchConfig` for Host-provided paths and `registerLifecycle({ close })` to join saves or release resources during shutdown. Confirm a save before the receipt promises that it completed. [IDE session persistence](../../../demo-apps/aotui-ide/README.md)

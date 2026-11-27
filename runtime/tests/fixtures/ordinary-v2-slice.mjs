@@ -46,12 +46,11 @@ function declareTools() {
 const [File,OtherFile] = declareTools();
 export default SDK.createApp({
   app_name: 'ordinary_v3_fixture', viewTypes: [File, OtherFile],
-  initialize({ prepareProjection, registerCleanup }) {
+  initialize({ publish: commit, registerLifecycle }) {
     let state = { revision: 1, enabled: true, show: true, rule: false, bad: false, tag: 0 };
-    const page = (id, type) => SDK.createView(type, { idPrefix: id, region: 'dynamic',
-      render: () => ({ body: 'Business View ID: ' + id, context: { id, state } }) });
+    const page = (id, type) => (() => { const handle = SDK.createView(type, { idPrefix: id, region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: 'Business View ID: ' + id, context: { id, state } }) }; })();
     let first = page('aa', File), second = page('bb', OtherFile);
-    function publish() { prepareProjection({ views: first ? [first, second] : [second] }); }
+    function publish() { commit(() => (first ? [first, second] : [second]).map(page => page.frame())); }
     const receive = message => {
       if (message.type !== 'TEST_COMMAND') return;
       const { command: type, data } = message;
@@ -72,7 +71,7 @@ export default SDK.createApp({
       }
     };
     parentPort.on('message', receive);
-    registerCleanup({ stop() { parentPort.off('message', receive); } });
+    registerLifecycle({ stop() { parentPort.off('message', receive); } });
     publish();
     parentPort.postMessage({ type: 'TEST_COMMITTED', state, tag: state.tag });
   },

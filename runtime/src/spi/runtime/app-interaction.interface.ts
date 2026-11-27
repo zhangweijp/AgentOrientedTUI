@@ -1,11 +1,12 @@
 import type { Issue } from '@aotui/core/host';
-import type { InstanceInteraction, ProjectionLimitOverrides } from '@aotui/core';
+import type { InstanceInteraction, ProjectionLimitOverrides, InteractionLimitOverrides } from '@aotui/core';
 
 export interface AppInteractionOptions {
     /** Trusted Host option. Defaults to true. False allows View observation without Tool execution. */
     readonly toolsEnabled?: boolean;
     /** Fixed per-installation limits on the complete App projection. Overrides may only lower defaults. */
     readonly projectionLimits?: ProjectionLimitOverrides;
+    readonly interactionLimits?: InteractionLimitOverrides;
 }
 export type AppInteractionResult = Readonly<{ status: 'ready'; interaction: InstanceInteraction }> |
     Readonly<{ status: 'rejected'; issue: Issue }>;

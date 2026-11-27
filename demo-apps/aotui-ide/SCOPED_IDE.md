@@ -2,7 +2,7 @@
 
 The package exports a default managed `TUIAppFactory`, created with `createApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and App-owned state. Normal Host startup registers the local package on a Desktop and uses the Semantic Source. See the README shipped with `@aotui/runtime`.
 
-The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createApp` supplies `toolAuthoringProtocol: 'view-type-tools-v8'`, which Runtime checks when it loads the factory. The IDE declares Tool inputs once with TypeBox 1.4.3 and supplies per-page context. The README shipped with `@aotui/sdk` includes a runnable author example.
+The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createApp` supplies `toolAuthoringProtocol: 'view-type-tools-v9'`, which Runtime checks when it loads the factory. The IDE declares Tool inputs once with TypeBox 1.4.3 and supplies per-page context. The README shipped with `@aotui/sdk` includes a runnable author example.
 
 ## Standard installation and explicit custom hosts
 
@@ -28,7 +28,7 @@ const app = await desktop.installDynamicWorkerApp(appModulePath, {
 });
 ```
 
-Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Runtime validates ordinary and Ref parameters under the same ViewType contract. It uses `app-worker/v10` with its bundled Worker. When the Host finishes, await `runtime.beginClose().completion` and inspect its report.
+Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Runtime validates ordinary and Ref parameters under the same ViewType contract. It uses `app-worker/v11` with its bundled Worker. When the Host finishes, await `runtime.beginClose().completion` and inspect its report.
 
 The normal Host supplies App identity, Desktop identity and project path through the SDK author context. By default, the IDE derives its session key from the Desktop ID and the assigned App ID, and stores session state and history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/session.json` and `history.json`. A different App installation order can change the assigned ID and the default path. Explicit `ideSessionKey` values use 1–128 ASCII letters, digits, underscores, dots or hyphens. Explicit `ideSessionPath` and `ideHistoryPath` values must be absolute. Give concurrent independent Apps distinct session keys or paths. Session state and recent history use atomic file replacement with cooperative locks and report conflicts and warnings. The session directory retains a SQLite coordination file. A SQLite write reservation is owned by the active connection and ends when its Worker exits.
 
@@ -89,7 +89,7 @@ The Runtime routes an authorized call to the selected live App, View and Tool bi
 
 A handler returns `{ success: true, data }` for a known success. A handler that returns `{ success: false, error, data? }` produces a failed receipt with the IDE's recovery message and any available data. The IDE keeps its internal resource outcomes and per-item batch results for recovery. Inspect the current Views and the reported disk facts before attempting another write.
 
-`createApp` advertises managed app lifecycle support by default. This IDE registers `registerCleanup({ stop, close })` because it owns file, search and LSP work. Cleanup reports carry `state` and `issues`, without callback counts or a `verifiedReleased` claim. IDE cleanup still awaits its actual resources and reports failures. Runtime resource release and App callback completion are separate facts.
+`createApp` advertises managed app lifecycle support by default. This IDE registers `registerLifecycle({ stop, close })` because it owns file, search and LSP work. Cleanup reports carry `state` and `issues`, without callback counts or a `verifiedReleased` claim. IDE cleanup still awaits its actual resources and reports failures. Runtime resource release and App callback completion are separate facts.
 
 ## Capacity and process support
 

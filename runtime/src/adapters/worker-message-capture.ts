@@ -1,4 +1,4 @@
-import { checkWireJson, isToolResultData } from '@aotui/core';
+import { checkWireJson, copyWireJson, isToolResultData } from '@aotui/core';
 import type { JsonValue } from '@aotui/core';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
 
@@ -44,13 +44,21 @@ export function captureToolInvocationTerminal(
             value.success !== true || !invocationObject(value.terminal)) {
             return null;
         }
-        const { phase, result } = value.terminal;
-        if (phase === 'finished-unknown') return exact(value.terminal, ['phase']) ? { phase } : null;
-        if (!exact(value.terminal, ['phase', 'result']) || (phase !== 'not-entered' && phase !== 'entered-returned') ||
+        return captureExecutionTerminal(value.terminal);
+    } catch { return null; }
+}
+
+export function captureExecutionTerminal(input: unknown): ViewToolInvocationTerminal | Readonly<{ phase: 'finished-unknown' }> | null {
+    try {
+        const value = copyWireJson(input, WORKER_MESSAGE_LIMITS);
+        if (!invocationObject(value)) return null;
+        const { phase, result } = value;
+        if (phase === 'finished-unknown') return exact(value, ['phase']) ? { phase } : null;
+        if (!exact(value, ['phase', 'result']) || (phase !== 'not-entered' && phase !== 'entered-returned') ||
             !isToolResultData(result) || (phase === 'not-entered' && result.success !== false)) {
             return null;
         }
-        return value.terminal as unknown as ViewToolInvocationTerminal;
+        return value as unknown as ViewToolInvocationTerminal;
     } catch {
         return null;
     }

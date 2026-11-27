@@ -5,7 +5,7 @@ type DirectoryContext = {
     reload(): ToolResult;
     disable(): ToolResult;
 };
-type FileContext = { writable: boolean; write(text: string): ToolResult };
+type FileContext = { writable: boolean; write(text: string): ToolResult; close(): ToolResult };
 export const fileUnavailable = {
     success: false, error: { code: 'FILE_UNAVAILABLE', message: 'Choose an available regular file in the configured folder.' },
 } as const;
@@ -30,6 +30,7 @@ export const Directory = defineViewType<DirectoryContext>()({
 
 export const File = defineViewType<FileContext>()({
     name: 'file', region: 'dynamic', multiplicity: 'multiple',
+    onClose: { execute: ({context}) => context.close() },
     tools: {
         edit: { description: 'Write exact text to the selected file.', inputSchema: textInput,
             enabled: ({ writable }) => writable, execute: ({ context, input }) => context.write(input.text) },

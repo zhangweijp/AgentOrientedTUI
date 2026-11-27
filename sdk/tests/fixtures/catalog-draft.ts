@@ -25,7 +25,7 @@ const Draft = defineViewType<{ save(text: string): Promise<typeof success>; look
 export default createApp({
     app_name: 'catalog_draft',
     viewTypes: [Draft],
-    initialize({ appId, desktopId, launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ appId, desktopId, launchConfig, publish: commit, registerLifecycle }) {
         const dataDir = typeof launchConfig?.AOTUI_DATA_DIR === 'string' && launchConfig.AOTUI_DATA_DIR.length > 0
             ? launchConfig.AOTUI_DATA_DIR : undefined;
         if (!dataDir) throw Error('Draft data directory is unavailable');
@@ -34,8 +34,7 @@ export default createApp({
         const draftFile = join(dataDir, 'catalog-draft', `${desktopId}-${storageKey}.txt`);
         record('initialize', { storageKey, dataDir });
         let text = 'empty';
-        const draft = createView(Draft, {
-            id: 'draft', render: () => ({ body: 'Draft: ' + text, context: {
+        const draft = (() => { const handle = createView(Draft, { id: 'draft' }); return { handle, frame: () => handle.frame({ body: 'Draft: ' + text, context: {
                 async save(next) {
                     await mkdir(join(dataDir, 'catalog-draft'), { recursive: true });
                     await writeFile(draftFile, next, 'utf8');
@@ -55,10 +54,9 @@ export default createApp({
                     publish();
                     return success;
                 },
-            } }),
-        });
-        function publish() { return prepareProjection({ views: [draft] }); }
-        registerCleanup({ close() { record('close', { storageKey }); } });
+            } }) }; })();
+        function publish() { return commit(() => ([draft]).map(page => page.frame())); }
+        registerLifecycle({ close() { record('close', { storageKey }); } });
         publish();
     },
 });

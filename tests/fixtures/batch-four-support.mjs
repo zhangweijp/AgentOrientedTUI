@@ -7,7 +7,7 @@ export const INPUT = 23_000;
 export const OUTPUT = 750;
 export const A_NOTE = 'Check A <later> & keep the original note.';
 export const APP_NOTE = 'Return to this workspace <later> & keep the context.';
-export const tool = (name) => APP + '-' + name;
+export const tool = (name) => APP + '-' + (name === 'open_file' ? 'workspace' : 'file') + '-' + name;
 export const openFiles = (id, ...names) => modelCall(id, tool('open_file'), { names });
 export const onFile = (id, operation, file, args = {}) => modelCall(id, tool(operation), { view_id: `file_${file}_1`, ...args });
 export const windowAction = (id, action, file, args = {}) => modelCall(id, 'system-' + action,

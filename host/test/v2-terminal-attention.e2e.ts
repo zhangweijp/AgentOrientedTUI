@@ -74,7 +74,7 @@ try {
     desktop.output.subscribe(signal => signals.push(signal));
     const terminal = desktop.listApps().find(app => app.installationId === installation)!;
     assert.equal(terminal.status, 'running');
-    provider.replyNext({ label: 'start', calls: [modelCall('start-task', 'terminal-new_terminal_and_send_command',
+    provider.replyNext({ label: 'start', calls: [modelCall('start-task', 'terminal-TerminalConsole-new_terminal_and_send_command',
         { command: `${JSON.stringify(process.execPath)} ${JSON.stringify(command)}` })],
         beforeReply: () => provider.replyNext({ label: 'waiting-for-attention', text: waiting }) });
     await host.sendUserMessage(userTask, id);

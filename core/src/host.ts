@@ -1,6 +1,7 @@
 export { createSnapshotCore } from './snapshot/store.js';
-export { createAppInteraction } from './invocation/app-interaction.js';
+export { createAppInteraction, createHostedAppInteraction } from './invocation/app-interaction.js';
 export { hostedObservationCapacityIssue, hostedObservationNamespace, projectCompleteViews } from './invocation/observation-projection.js';
+export { captureObservationOptions } from './invocation/observation-registry.js';
 export { createTurnCoordinator } from './invocation/request-sources.js';
 export { parseRefAddress } from './tool/ref-parameters.js';
 export { encodeRefLiteral, formatRefPath, REF_ADDRESS_PREFIX, refConsumerAllowed, refPath, scopeAllows, type RefPath } from './tool/ref-path.js';
@@ -14,3 +15,5 @@ export type { Issue } from './invocation/app-interaction-types.js';
 export type {
     SnapshotDraftEnvelope, SnapshotHealth, SnapshotPrepareIssue,
 } from './snapshot/types.js';
+
+export { normalizeInteractionLimits } from './invocation/interaction-limits.js';

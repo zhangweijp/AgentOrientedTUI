@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { AppExecutionBackend, AppExecutionIssue } from '../spi/runtime/execution-backend.js';
+import { startupControl, type TransportEvents } from './execution-transport.js';
 import { externalAppProtocol } from './external-app-protocol.js';
 
 const maxLineBytes = 8 * 1024 * 1024;
@@ -21,7 +22,7 @@ export const localCommandBackend: AppExecutionBackend = {
             if (ended || inputError || !child.stdin.writable)
                 throw inputError ?? new Error('The App command input channel is closed.');
             child.stdin.write(JSON.stringify(packet) + '\n', 'utf8');
-        }, emit);
+        }, emit as TransportEvents);
 
         function end(issue?: AppExecutionIssue) {
             if (ended) return;
@@ -74,7 +75,7 @@ export const localCommandBackend: AppExecutionBackend = {
             emit({ kind: 'exited', ...(issue ? { issue } : {}) });
         });
 
-        return { send: protocol.send, terminate() {
+        return { send: protocol.send, [startupControl]: protocol, terminate() {
             if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
             if (!child.kill('SIGKILL')) throw new Error('The App command could not be terminated.');
             terminating = true;

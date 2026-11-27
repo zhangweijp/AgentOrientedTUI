@@ -14,7 +14,7 @@ try {
     const appId = (await desktop.openApp(installationId)).appId;
 
     const source = new SemanticAOTUIDrivenSource(desktop);
-    const inspect = `${appId}-inspect`;
+    const inspect = `${appId}-Item-inspect`;
     const workspace = context => context.messages.find(({ content }) =>
         String(content).startsWith('<view view_id="workspace_1"') && String(content).includes(`app_name="${appName}"`));
     async function observe(ready) {

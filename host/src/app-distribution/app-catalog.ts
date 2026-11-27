@@ -45,7 +45,7 @@ type AppSelection = {
     name?: string;
 };
 
-type AppInstallOptions = Pick<Parameters<IDesktop['registerPendingApp']>[0], 'toolsEnabled' | 'projectionLimits'> & AppSelection & {
+type AppInstallOptions = Pick<Parameters<IDesktop['registerPendingApp']>[0], 'toolsEnabled' | 'projectionLimits' | 'interactionLimits'> & AppSelection & {
     dynamicConfig?: AppLaunchConfig;
     startAll?: boolean;
 };
@@ -224,7 +224,7 @@ export class AppCatalog {
             try {
                 localPath = localAppPath(entry.source);
                 installationId = await desktop.registerPendingApp({ installationId: name, localPath, config,
-                    toolsEnabled: options?.toolsEnabled, projectionLimits: options?.projectionLimits });
+                    toolsEnabled: options?.toolsEnabled, projectionLimits: options?.projectionLimits, interactionLimits: options?.interactionLimits });
                 if (options?.startAll || (entry.autoStart ?? true)) {
                     const { appId } = await desktop.openApp(installationId);
                     results.push({ name, installationId, status: 'installed', appId });

@@ -264,8 +264,8 @@ try {
     const moduleURL = pathToFileURL(resolve(consumer, 'dist/batch-four-files.js')).href;
     await writeFile(join(directory, 'entry.mjs'), 'export { default } from ' + JSON.stringify(moduleURL) + ';\n');
     await writeFile(join(directory, 'aoapp.json'), JSON.stringify({
-        app_name: APP, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
-        appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
+        app_name: APP, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v9',
+        appLifecycleSupport: 'app-lifecycle-v3', entry: { main: './entry.mjs' },
     }));
     await desktops.initialize({ appEntries: [{ name: 'files_install', source: 'local:' + directory, enabled: true, autoStart: true }] });
     for (const mode of ['failure', 'late-success', 'double-failure'] as const) {

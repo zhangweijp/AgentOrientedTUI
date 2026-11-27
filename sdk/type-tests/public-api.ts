@@ -2,7 +2,7 @@ import Type from 'typebox';
 import {
     arrayRef, createApp, createView, defineViewType, formatRef, ref,
     type AppAuthorContext, type AppID, type AppLifecycleCallbacks, type ArrayRefOptions,
-    type CreateAppConfig, type DesktopID, type OpeningProjectionResult, type PreparedProjection, type ProjectionLimits,
+    type CreateAppConfig, type DesktopID, type PublishResult, type ProjectionLimits,
     type RefOptions, type ToolError, type ToolResult, type TUIAppFactory, type ViewHandle,
 } from '@aotui/sdk';
 import type { ToolError as RuntimeToolError, ToolResult as RuntimeToolResult } from '@aotui/core';
@@ -24,14 +24,17 @@ const config: CreateAppConfig = {
         const app: AppID = context.appId;
         const desktop: DesktopID = context.desktopId;
         const limits: ProjectionLimits = context.projectionLimits;
-        const note: ViewHandle = createView(Note, { render: () => ({ body: 'Note' }), onClose: () => ({ success: true }) });
-        const result: PreparedProjection = context.prepareProjection({ views: [note] });
-        const opening: OpeningProjectionResult = context.prepareOpeningProjection({ views: [note] });
-        if (opening.status === 'rejected') void opening.issue.code;
+        const note = createView(Note);
+        const result: PublishResult = context.publish(() => [note.frame({body: "Note"})]);
+        const opening: PublishResult = context.publish(() => [note.frame({body: "Note"})], {mode: "candidate"});
+        if (!opening.ok) void opening.issue.code;
+        const registered: void = context.registerLifecycle(cleanup);
+        void registered;
+        // @ts-expect-error No author-controlled lifecycle starter or legacy cleanup entry.
         context.registerCleanup(cleanup);
         context.readViewId(note);
         // @ts-expect-error Preparation takes a complete frame.
-        context.prepareProjection(() => [note]);
+        context.publish(() => [note]);
         // @ts-expect-error The author handle is required for a routing ID.
         context.readViewId('Note', 'page title');
         // @ts-expect-error The author's limits are read-only.
@@ -44,8 +47,8 @@ const config: CreateAppConfig = {
     },
 };
 export const factory: TUIAppFactory = createApp(config);
-const lifecycleProtocol: 'app-lifecycle-v2' = factory.appLifecycleSupport;
-const authoringProtocol: 'view-type-tools-v8' = factory.toolAuthoringProtocol;
+const lifecycleProtocol: 'app-lifecycle-v3' = factory.appLifecycleSupport;
+const authoringProtocol: 'view-type-tools-v9' = factory.toolAuthoringProtocol;
 void [lifecycleProtocol, authoringProtocol];
 
 const RecordSchema = Type.Object({ id: Type.String(), labels: Type.Array(Type.String()) });

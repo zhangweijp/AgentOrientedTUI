@@ -14,17 +14,17 @@
 export function debounce<T extends (...args: any[]) => void>(
     fn: T,
     delayMs: number
-): T {
+): T & { cancel(): void } {
     let timeoutId: NodeJS.Timeout | null = null;
-
-    return ((...args: Parameters<T>) => {
-        if (timeoutId) {
-            clearTimeout(timeoutId);
-        }
-
+    const cancel = () => {
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        timeoutId = null;
+    };
+    return Object.assign((...args: Parameters<T>) => {
+        cancel();
         timeoutId = setTimeout(() => {
-            fn(...args);
             timeoutId = null;
+            fn(...args);
         }, delayMs);
-    }) as T;
+    }, { cancel }) as T & { cancel(): void };
 }

@@ -9,7 +9,7 @@ const source = { requestId: 'op', appId: 'app', instanceId: 'run' };
 const packet = () => ({ ...source, type: 'VIEW_TOOL_INVOKE', receiver: { ...receiver },
     tool: { id: 'tool', name: 'write', viewType: 'file' },
     effectiveArgs: { lines: [{ value: '中文\n' }] },
-    localRefs: [{ param: 'lines', index: 0, refId: 'line', viewId: 'file', viewInstanceId: 'mount' }],
+    localRefs: [{ param: 'lines', index: 0, refId: 'line', viewId: 'file', viewInstanceId: 'mount', since: 1 }],
 });
 
 it('checks and freezes the received transport copy without replacing it', () => {

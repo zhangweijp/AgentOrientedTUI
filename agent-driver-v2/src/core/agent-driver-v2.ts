@@ -37,6 +37,7 @@ const TOOL_TURN_CLOSED = Symbol('tool turn closed');
 interface CapturedSourceContext {
     source: ContextDrivenSource;
     context: DrivenSourceContext;
+    release?: DrivenSourceContext['release'];
 }
 
 interface ToolExecutionRoute {
@@ -80,7 +81,10 @@ function recoveryHistory(messages: readonly MessageWithTimestamp[]): MessageWith
     const clientIds = new Set(call ? getClientToolCallIds(call) : []);
     const paired = new Set(call ? history.slice(0, callIndex).filter(message =>
         getToolResultIds(message).some(id => clientIds.has(id))) : []);
-    return messages.filter(message => message.role === 'system' || message === user || message === call || paired.has(message));
+    const delivered = new Set([...paired].flatMap(getToolResultIds));
+    const complete = !!call && [...clientIds].every(id => delivered.has(id));
+    return messages.filter(message => (message.role === 'system' && message.region !== 'dynamic') ||
+        message === user || complete && (message === call || paired.has(message)));
 }
 
 /**
@@ -92,7 +96,7 @@ export class AgentDriverV2 {
     private readonly driverId: number;
     private sources: ContextDrivenSource[];
     private unsubscribers: (() => void)[] = [];
-    private updateDebounced: () => void;
+    private updateDebounced: (() => void) & { cancel(): void };
     private logger: Logger;
     private config: AgentDriverV2Config;
     private llmClient: LLMClient;
@@ -100,15 +104,17 @@ export class AgentDriverV2 {
 
     // 状态机
     private state: AgentState = 'idle';
-    private pending = false;
+    private pending: false | 'update' | 'explicit' = false;
     private runInFlight: Promise<void> | null = null;
+    private runController?: AbortController;
     private toolTurn?: ToolTurn;
     private runningTool?: { source: string; controller: AbortController };
     private lastInputSignature: string | null = null;
-    private lastModelRequestFailed = false;
+    private lastRunFailed = false;
 
     private running = false;
     private paused = false;
+    private disposed = false;
 
     constructor(config: AgentDriverV2Config) {
         this.config = config;
@@ -158,13 +164,13 @@ export class AgentDriverV2 {
      * 是否有待处理的更新 (用于测试)
      */
     hasPendingUpdate(): boolean {
-        return this.pending;
+        return this.pending !== false;
     }
 
     setSourceEnabled(sourceName: string, enabled: boolean): void {
         this.sourceEnabledMap.set(sourceName, enabled);
         if (!enabled && this.runningTool?.source === sourceName) this.runningTool.controller.abort();
-        this.updateDebounced();
+        if (this.running) this.updateDebounced();
     }
 
     private getActiveSources(): ContextDrivenSource[] {
@@ -177,13 +183,16 @@ export class AgentDriverV2 {
      * 订阅所有 ContextDrivenSource 的更新事件
      */
     private setupUpdateListeners(): void {
+        // A Source may announce its initial context synchronously during subscription.
+        let subscribing = true;
         this.sources.forEach((source) => {
             const unsubscribe = source.onUpdate(() => {
                 this.logger.debug(`Update signal from source: ${source.name}`);
-                this.updateDebounced();
+                if (!this.disposed && (subscribing || this.running)) this.updateDebounced();
             });
             this.unsubscribers.push(unsubscribe);
         });
+        subscribing = false;
 
         this.logger.info(`Listening to ${this.sources.length} driven sources`);
     }
@@ -195,9 +204,9 @@ export class AgentDriverV2 {
      * - 每个 source 已经保证消息去重
      * - AgentDriver 只需拼接并排序
      */
-    private async collectMessages(captured: readonly CapturedSourceContext[], batch?: ToolBatch, feedback?: object): Promise<ModelMessage[]> {
-        const management = captured.find(({ context }) => context.managementOnly)?.context;
-        const history = captured.flatMap(({ context }) => context === management ? [] : context.messages);
+    private async collectMessages(captured: readonly CapturedSourceContext[], management: CapturedSourceContext | undefined,
+        batch?: ToolBatch, feedback?: object, notices: readonly string[] = []): Promise<ModelMessage[]> {
+        const history = captured.flatMap(item => item === management ? [] : item.context.messages);
         if (batch) {
             const { assistant, results, feedbackSource, routes } = batch;
             const identical = JSON.stringify(assistant.content);
@@ -209,7 +218,9 @@ export class AgentDriverV2 {
             history.push({ ...assistant, timestamp: time },
                 { ...this.createToolMessage(results, feedback, result => routes.get(result.toolName)?.source === feedbackSource), timestamp: time + 1 });
         }
-        const allMessages = management ? [...management.messages, ...recoveryHistory(history)] : history;
+        const allMessages = management ? [...management.context.messages, ...recoveryHistory(history)] : history;
+        if (notices.length) allMessages.push({ role: 'user', region: 'dynamic', timestamp: 0,
+            content: 'Optional tools unavailable for this request.\n' + notices.join('\n') });
 
         const normalizedTimedMessages = allMessages.filter(message => message.role !== 'assistant' ||
             (typeof message.content === 'string' ? message.content.trim().length > 0 : message.content.length > 0));
@@ -293,69 +304,84 @@ export class AgentDriverV2 {
     }
 
     /** Capture once per source; never silently replace a failed atomic capture. */
-    private async captureContexts(retained: CapturedSourceContext[]): Promise<void> {
+    private async captureContexts(retained: CapturedSourceContext[], signal?: AbortSignal): Promise<void> {
         for (const source of this.getActiveSources()) {
+            signal?.throwIfAborted();
             try {
-                const context = await this.captureSource(source);
-                retained.push({ source, context });
+                const context = await this.captureSource(source, signal);
+                retained.push({ source, context, release: context.release?.bind(context) });
             } catch (error) {
                 this.logger.error(`Failed to capture context from ${source.name}:`, error);
                 // An atomic source is part of the current working state. A failed
                 // capture must fail the turn, not silently omit that state.
                 throw error;
             }
+            // A late capture must first be retained for its one release.
+            signal?.throwIfAborted();
         }
     }
 
-    private async captureSource(source: ContextDrivenSource): Promise<DrivenSourceContext> {
+    private async captureSource(source: ContextDrivenSource, signal?: AbortSignal): Promise<DrivenSourceContext> {
         const policy = await this.llmClient.toolSchemaPolicy();
-        const context = await source.getContext(policy);
-        if (!policy.check) return context;
-        try {
-            const tools: [string, Tool][] = [];
-            const omitted: string[] = [];
-            for (const [name, tool] of Object.entries(context.tools)) {
-                const issue = tool.type === 'provider' ? undefined : policy.check(await asSchema(tool.inputSchema).jsonSchema);
-                if (!issue) { tools.push([name, tool]); continue; }
-                const error = new ProviderToolSchemaError(policy.label, name, issue.path, issue.reason);
-                if (context.preserveTools) throw error;
-                omitted.push(error.message);
-            }
-            if (!omitted.length) return context;
-            return {
-                ...context, tools: Object.fromEntries(tools),
-                messages: [...context.messages, { role: 'user', region: 'dynamic', timestamp: 0,
-                    content: 'Optional tools unavailable for this request.\n' + omitted.join('\n') }],
-            };
-        } catch (error) {
-            await context.release?.();
-            throw error;
-        }
+        signal?.throwIfAborted();
+        return source.getContext(policy);
     }
 
-    private collectTools(captured: readonly CapturedSourceContext[]) {
+    private async prepareRequest(captured: readonly CapturedSourceContext[], batch?: ToolBatch, feedback?: object) {
         const management = captured.find(({ context }) => context.managementOnly);
-        const tools: Record<string, Tool> = {};
+        const selected = management ? [management] : captured;
+        const { tools, routes, owners, preserveTools } = this.collectTools(selected);
+        const policy = await this.llmClient.toolSchemaPolicy();
+        const notices: string[] = [];
+        // Check only the final tool winners, never a context borrowed solely for history.
+        if (policy.check) for (const [name, tool] of Object.entries(tools)) {
+            if (tool.type === 'provider') continue;
+            const issue = policy.check(await asSchema(tool.inputSchema).jsonSchema);
+            if (!issue) continue;
+            const error = new ProviderToolSchemaError(policy.label, name, issue.path, issue.reason);
+            const owner = owners.get(name);
+            // Only a Source that has no adopted observation can safely omit an optional tool here.
+            if (owner?.context.preserveTools || owner?.context.adopt) throw error;
+            notices.push(error.message);
+            delete tools[name];
+            routes.delete(name);
+            owners.delete(name);
+        }
+        return { selected, tools, routes, owners, preserveTools,
+            messages: await this.collectMessages(captured, management, batch, feedback, notices) };
+    }
+
+    private collectTools(selected: readonly CapturedSourceContext[]) {
+        const tools: Record<string, Tool> = Object.create(null);
         const routes = new Map<string, ToolExecutionRoute>();
-        const bound = new Set<string>();
-        for (const { source, context } of management ? [management] : captured) {
+        const owners = new Map<string, CapturedSourceContext>();
+        for (const owner of selected) {
+            const { source, context } = owner;
             const executeTool = context.executeTool?.bind(context);
             for (const [name, tool] of Object.entries(context.tools)) {
-                if (bound.has(name)) continue;
-                if (context.preserveTools) {
-                    if (routes.has(name)) this.logger.warn('Tool conflicts with an observation-bound tool', { name, source: routes.get(name)?.source.name });
-                    bound.add(name);
+                const previous = owners.get(name);
+                if (previous?.context.preserveTools) {
+                    if (context.preserveTools || context.adopt)
+                        throw new ProviderToolSchemaError('Driver', name, '$.tools', 'A selected observation has a conflicting tool route.');
+                    continue;
                 }
+                if (previous?.context.adopt)
+                    throw new ProviderToolSchemaError('Driver', name, '$.tools', 'A selected observation has a conflicting tool route.');
+                if (previous && context.preserveTools)
+                    this.logger.warn('Tool conflicts with an observation-bound tool', { name, source: previous.source.name });
                 tools[name] = tool;
-                routes.set(name, { source, executeTool, settlesOnAbort: context.toolsSettlingOnAbort?.has(name) === true });
+                owners.set(name, owner);
+                // Provider-executed capabilities and history registrations are never Source executors.
+                if (tool.type === 'provider') routes.delete(name);
+                else routes.set(name, { source, executeTool, settlesOnAbort: context.toolsSettlingOnAbort?.has(name) === true });
             }
         }
-        return { tools, routes, preserveTools: captured.some(({ context }) => context.preserveTools) };
+        return { tools, routes, owners, preserveTools: selected.some(({ context }) => context.preserveTools) };
     }
 
     private async measureContexts(measure: InputMeasure, captured: readonly CapturedSourceContext[], batch?: ToolBatch, feedback?: object) {
-        const { tools, preserveTools } = this.collectTools(captured);
-        return measure(await this.collectMessages(captured, batch, feedback), tools, preserveTools);
+        const { messages, tools, preserveTools } = await this.prepareRequest(captured, batch, feedback);
+        return measure(messages, tools, preserveTools);
     }
 
     private async fitContexts(measure: InputMeasure, captured: CapturedSourceContext[], batch?: ToolBatch,
@@ -366,17 +392,22 @@ export class AgentDriverV2 {
             this.measureContexts(measure, captured.map(item => item === owner ? { source: owner.source, context: candidate } : item),
                 batch, sealedFeedback ?? feedback), !!batch && !sealedFeedback);
         if (fit.context) {
-            const release = owner.context.release?.bind(owner.context);
-            owner.context = release ? { ...fit.context, release } : fit.context;
+            owner.release ??= owner.context.release?.bind(owner.context);
+            owner.context = fit.context;
         }
         return fit;
     }
 
-    private async releaseContexts(retained: CapturedSourceContext[]): Promise<void> {
-        for (const { source, context } of retained.reverse()) {
-            try { await context.release?.(); }
-            catch (error) { this.logger.error(`Failed to release context from ${source.name}:`, error); }
+    private async releaseContexts(retained: CapturedSourceContext[]): Promise<boolean> {
+        let failed = false;
+        for (const { source, context, release } of retained.reverse()) {
+            try { await (release ?? context.release?.bind(context))?.(); }
+            catch (error) {
+                failed = true;
+                this.logger.error(`Failed to release context from ${source.name}:`, error);
+            }
         }
+        return failed;
     }
 
     private outcomeStatus(result: ToolResult): ToolOutcomeStatus {
@@ -396,6 +427,7 @@ export class AgentDriverV2 {
         }>,
         routes: ReadonlyMap<string, ToolExecutionRoute>,
         turn: ToolTurn,
+        signal: AbortSignal,
         expansion?: (source: ContextDrivenSource, previous: readonly ToolResult[]) => ToolExecutionBudget
     ): Promise<ToolResult[]> {
         const results: ToolResult[] = [];
@@ -410,7 +442,7 @@ export class AgentDriverV2 {
                     error: { code: 'E_TOOL_NOT_DISPATCHED', message: 'The session closed before this Tool call was dispatched.' } });
                 continue;
             }
-            if (!this.running || (source && this.sourceEnabledMap.get(source.name) === false)) {
+            if (signal.aborted || !this.running || (source && this.sourceEnabledMap.get(source.name) === false)) {
                 results.push({
                     toolCallId: toolCall.toolCallId,
                     toolName: toolCall.toolName,
@@ -512,8 +544,11 @@ export class AgentDriverV2 {
         this.state = newState;
 
         // 触发状态变化回调
-        if (this.config.onStateChange) {
-            this.config.onStateChange(oldState, newState);
+        try {
+            void Promise.resolve(this.config.onStateChange?.(oldState, newState))
+                .catch(error => this.logger.error('State observer failed:', error));
+        } catch (error) {
+            this.logger.error('State observer failed:', error);
         }
     }
 
@@ -536,12 +571,12 @@ export class AgentDriverV2 {
      * 
      * 语义：多次更新信号合并为一次 run
      */
-    private requestRun(): void {
+    private requestRun(explicit = false): void {
         if (!this.running) {
             return;
         }
 
-        this.pending = true;
+        if (explicit || !this.pending) this.pending = explicit ? 'explicit' : 'update';
 
         // When paused, keep the pending flag but don't drain —
         // resume() will kick off drainPendingRuns()
@@ -555,21 +590,25 @@ export class AgentDriverV2 {
     /**
      * 单飞行 drain：保证 run 非重入，且合并连续更新
      */
-    private async drainPendingRuns(): Promise<void> {
-        if (this.runInFlight) {
-            return;
-        }
+    private drainPendingRuns(): void {
+        if (this.runInFlight) return;
 
-        this.runInFlight = (async () => {
-            do {
-                this.pending = false;
-                await this.run();
-            } while (this.pending && this.running && !this.paused);
-        })().finally(() => {
-            this.runInFlight = null;
-        });
-
-        await this.runInFlight;
+        // Register the owner before any Source or state callback can reenter trigger().
+        this.runInFlight = Promise.resolve().then(async () => {
+            try {
+                while (this.pending && this.running && !this.paused) {
+                    const explicit = this.pending === 'explicit';
+                    this.pending = false;
+                    try { await this.run(explicit); }
+                    catch (error) {
+                        this.lastRunFailed = true;
+                        this.logger.error('Driver run cleanup failed:', error);
+                    }
+                }
+            } finally {
+                this.runInFlight = null;
+            }
+        }).catch(error => this.logger.error('Driver drain failed:', error));
     }
 
     /**
@@ -583,24 +622,30 @@ export class AgentDriverV2 {
      *    - 等待 Source 发送新信号 (Tool 执行完成后)
      * 4. 回到 idle 状态
      */
-    private async run(): Promise<void> {
-        await this.setState('thinking');
+    private async run(explicit = false): Promise<void> {
+        if (!this.running || this.runController) return;
+        const controller = new AbortController();
+        this.runController = controller;
+        const { signal } = controller;
         const retained: CapturedSourceContext[] = [];
         let turn: ToolTurn | undefined;
 
         try {
+            await this.setState('thinking');
+            signal.throwIfAborted();
             // 1. 收集 Messages 和 Tools
-            await this.captureContexts(retained);
-            if (!this.running) return;
+            await this.captureContexts(retained, signal);
+            signal.throwIfAborted();
             const hasWindowPlanner = retained.some(({ context }) => context.fitModelBudget);
             const measure = hasWindowPlanner && this.config.llm.inputBudget ? await this.llmClient.createInputMeasurement() : undefined;
+            signal.throwIfAborted();
             if (measure) {
                 const fit = await this.fitContexts(measure, retained);
+                signal.throwIfAborted();
                 if (fit && fit.measurement.estimated > fit.measurement.inputLimit) throw inputBudgetExceeded(fit.measurement);
             }
-            const messages = await this.collectMessages(retained);
-            const { tools, routes, preserveTools } = this.collectTools(retained);
-            if (!this.running) return;
+            const { selected, messages, tools, routes, owners, preserveTools } = await this.prepareRequest(retained);
+            signal.throwIfAborted();
 
             this.logger.info('Run iteration:', {
                 messagesCount: messages.length,
@@ -608,29 +653,33 @@ export class AgentDriverV2 {
             });
 
             // 2. 调用 LLM (若配置了流式回调，实时推送增量文本/推理)
-            let admitted = false;
+            const { onTextDelta, onReasoningDelta } = this.config;
             const response = await this.llmClient.call(messages, tools, {
-                preserveTools,
-                beforeRequest: async signature => {
-                    if (!this.running || signature === this.lastInputSignature) throw REQUEST_SKIPPED;
-                    for (const { context } of retained) {
-                        if (!this.running) throw REQUEST_SKIPPED;
-                        if (retained.some(item => item.context.managementOnly) && !context.managementOnly) continue;
+                preserveTools, signal,
+                beforeRequest: async (signature, offered) => {
+                    signal.throwIfAborted();
+                    // Optional capability filtering is allowed only without a retained observation grant.
+                    if (offered) for (const [name, owner] of owners) {
+                        if (offered.has(name)) continue;
+                        if (owner.context.adopt)
+                            throw new ProviderToolSchemaError('Driver', name, '$.tools', 'The selected observation cannot be adopted with an omitted tool.');
+                        routes.delete(name);
+                    }
+                    // Retain successful-input deduplication; a new explicit intent may retry a failed run.
+                    if (signature === this.lastInputSignature && !(explicit && this.lastRunFailed)) throw REQUEST_SKIPPED;
+                    for (const { context } of selected) {
+                        signal.throwIfAborted();
                         await context.adopt?.();
                     }
-                    if (!this.running) throw REQUEST_SKIPPED;
+                    signal.throwIfAborted();
                     this.lastInputSignature = signature;
-                    this.lastModelRequestFailed = false;
-                    admitted = true;
+                    this.lastRunFailed = false;
                 },
-                onTextDelta: this.config.onTextDelta,
-                onReasoningDelta: this.config.onReasoningDelta,
-            }).catch(error => {
-                if (admitted) this.lastModelRequestFailed = true;
-                throw error;
+                onTextDelta: onTextDelta && (delta => { if (!signal.aborted) onTextDelta(delta); }),
+                onReasoningDelta: onReasoningDelta && (delta => { if (!signal.aborted) onReasoningDelta(delta); }),
             });
-            // stop/dispose of the owning session cannot admit a late model call.
-            if (!this.running) return;
+            // The original signal stays aborted even if stop() was followed by start().
+            signal.throwIfAborted();
 
             const assistant = response.assistantMessage ?? (response.toolCalls.length ? {
                 role: 'assistant' as const, content: response.toolCalls.map(call => ({
@@ -671,7 +720,7 @@ export class AgentDriverV2 {
 
                 this.logger.info(`Executing ${response.toolCalls.length} tool calls...`);
 
-                const results = await this.executeToolCalls(response.toolCalls, routes, turn, measure && ((source, previous) => ({
+                const results = await this.executeToolCalls(response.toolCalls, routes, turn, signal, measure && ((source, previous) => ({
                     checkExpansion: async (candidate, proposed) => {
                         const captured: CapturedSourceContext[] = [];
                         try {
@@ -691,6 +740,7 @@ export class AgentDriverV2 {
                 })));
                 const counts = { succeeded: 0, rejected: 0, failed: 0, accepted: 0, unknown: 0 };
                 for (const result of results) counts[this.outcomeStatus(result)] += 1;
+                if (counts.unknown > 0) this.lastRunFailed = true;
 
                 this.logger.info('Tool execution completed:', {
                     resultsCount: results.length,
@@ -706,19 +756,20 @@ export class AgentDriverV2 {
                 let budgetFailure: unknown;
                 if (this.config.onToolResult) {
                     let feedback: object | undefined;
-                    const feedbackSource = retained.find(({ source, context }) => context.fitModelBudget &&
+                    const feedbackSource = selected.find(({ source, context }) => context.fitModelBudget &&
                         results.some(result => routes.get(result.toolName)?.source === source))?.source;
-                    if (measure && feedbackSource && this.running) {
+                    if (measure && feedbackSource && !signal.aborted && !turn.closing) {
                         try {
                             const prepareFeedback = async () => {
                                 const next: CapturedSourceContext[] = [];
                                 try {
-                                    await this.captureContexts(next);
+                                    await this.captureContexts(next, signal);
+                                    signal.throwIfAborted();
                                     return await this.fitContexts(measure, next, { assistant, results, routes, feedbackSource });
                                 } finally { await this.releaseContexts(next); }
                             };
                             const plan = await Promise.race([prepareFeedback(), turn.interrupted]);
-                            if (plan !== TOOL_TURN_CLOSED && !turn.closing) {
+                            if (plan !== TOOL_TURN_CLOSED && !turn.closing && !signal.aborted) {
                                 plan?.retainFeedback?.();
                                 feedback = plan?.feedback;
                                 if (plan && plan.measurement.estimated > plan.measurement.inputLimit)
@@ -751,19 +802,27 @@ export class AgentDriverV2 {
                 this.logger.info('No tool calls. LLM finished thinking.');
             }
 
-            // 回到 idle 状态
-            await this.setState('idle');
-
         } catch (error) {
             turn?.failed(error);
             if (error === REQUEST_SKIPPED) return;
+            this.lastRunFailed = true;
+            // Cancellation of unpublished model work is not a failed business delivery.
+            if (signal.aborted && !turn) return;
             const normalizedError = error instanceof Error ? error : new Error(String(error));
             this.logger.error('Error in run loop:', normalizedError.stack ?? normalizedError.message);
-            this.config.onRunError?.(normalizedError);
-            await this.setState('idle');
+            try {
+                void Promise.resolve(this.config.onRunError?.(normalizedError))
+                    .catch(observerError => this.logger.error('Run error observer failed:', observerError));
+            } catch (observerError) {
+                this.logger.error('Run error observer failed:', observerError);
+            }
         } finally {
-            await this.releaseContexts(retained);
-            await this.setState('idle');
+            try {
+                if (await this.releaseContexts(retained)) this.lastRunFailed = true;
+            } finally {
+                this.runController = undefined;
+                await this.setState('idle');
+            }
         }
     }
 
@@ -809,6 +868,7 @@ export class AgentDriverV2 {
      * 启动 AgentDriver
      */
     start(): void {
+        if (this.disposed) return;
         if (this.running) {
             this.logger.warn('AgentDriver already running');
             return;
@@ -823,6 +883,12 @@ export class AgentDriverV2 {
      */
     stop(): void {
         this.running = false;
+        this.pending = false;
+        this.updateDebounced.cancel();
+        if (this.runController) {
+            this.lastRunFailed = true;
+            this.runController.abort();
+        }
         this.runningTool?.controller.abort();
         this.logger.info('AgentDriver stopped');
     }
@@ -845,11 +911,7 @@ export class AgentDriverV2 {
             this.logger.warn('AgentDriver is busy, marking update instead');
         }
 
-        if (!this.runInFlight && this.lastModelRequestFailed) {
-            this.lastInputSignature = null;
-            this.lastModelRequestFailed = false;
-        }
-        this.requestRun();
+        this.requestRun(true);
     }
 
     /**
@@ -889,7 +951,8 @@ export class AgentDriverV2 {
      * 清理资源
      */
     dispose(): void {
-        this.runningTool?.controller.abort();
+        this.disposed = true;
+        this.stop();
         const errors: unknown[] = [];
         for (const unsubscribe of this.unsubscribers.splice(0)) {
             try { unsubscribe(); }

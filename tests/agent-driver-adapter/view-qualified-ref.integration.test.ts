@@ -20,7 +20,7 @@ it('selects same-name lists and elements by View through SDK, Worker and Source,
             const context = await source!.getContext(); contexts.push(context); await context.adopt(); return context;
         };
         const call = (context: typeof contexts[number], type: string, name: string, input: Record<string, unknown>) =>
-            context.executeTool(`refviews-${name}`, { view_id: type === 'Guide' ? 'root_1' : 'plan_a_1', ...input }, 'viewrefs-' + sequence++);
+            context.executeTool(`refviews-${type}-${name}`, { view_id: type === 'Guide' ? 'root_1' : 'plan_a_1', ...input }, 'viewrefs-' + sequence++);
         let current = await observe(); const original = current;
         const messages = current.messages.map(message => String(message.content)).join('\n');
         expect(messages).toContain('[Design A](completed_phases[0])');
@@ -52,7 +52,7 @@ it('selects same-name lists and elements by View through SDK, Worker and Source,
             .toMatchObject({ outcomeStatus: 'succeeded', result: { owner: 'B updated' } });
         expect(await call(current, 'Guide', 'close_b', {})).toMatchObject({ outcomeStatus: 'succeeded' });
         current = await observe();
-        expect(current.tools['refviews-read_item']).toBeDefined();
+        expect(current.tools['refviews-Phases-read_item']).toBeDefined();
         expect(await call(current, 'Phases', 'read_item', { phase: '$ref.refviews.plan_b_1.completed_phases[0]' }))
             .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'REF_NOT_VISIBLE' } });
         expect(await call(current, 'Phases', 'read_item', { phase: '$ref.refviews.plan_a_1.completed_phases[0]' }))

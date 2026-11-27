@@ -30,6 +30,9 @@ export function ApplicationBlock({ app }: ApplicationBlockProps) {
     const activeView = app.views.find(view => view.id === activeViewId) ?? app.views[0] ?? null;
     const appIcon = getAppIcon(app.name);
     const status = app.status;
+    const run = app.run;
+    const label = run ? `${run.phase.toUpperCase()} · ${run.execution.resource.toUpperCase()} / ${run.execution.channel.toUpperCase()} · ${run.projection.health.toUpperCase()}` : status.toUpperCase();
+    const ready = run ? run.phase === 'opened' && run.availability.status === 'ready' : status === 'running';
 
     return (
         <div className="tui-app-card">
@@ -43,8 +46,8 @@ export function ApplicationBlock({ app }: ApplicationBlockProps) {
                     </div>
                 </div>
                 <div className="tui-app-card-status">
-                    {status === 'running' && <span className="breathing-dot" />}
-                    <span className={`status-badge status-badge--${status}`}>{status.toUpperCase()}</span>
+                    {ready && <span className="breathing-dot" />}
+                    <span className={`status-badge status-badge--${status}`} title={run ? `Resources ${run.resourcesReleased ? 'released' : 'held'}` : undefined}>{label}</span>
                 </div>
             </div>
 

@@ -1,4 +1,4 @@
-import { fixtureHost } from './__tests__/worker-fixture.js';
+import { emitHealthyOpen, fixtureHost } from './__tests__/worker-fixture.js';
 import { it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { AppWorkerHost } from './worker-host.js';
@@ -15,11 +15,12 @@ class ControlledWorker extends EventEmitter {
                 requestId: message.requestId, success: true };
             if (init) Object.assign(response, { appInstanceId: instanceId, protocol: message.protocol, toolsEnabled: message.toolsEnabled,
                 projectionLimits: message.projectionLimits,
-                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId } });
+                appLifecycle: { protocol: 'app-lifecycle-v3', instanceId } });
             if (['APP_STOP', 'APP_CLOSE'].includes(message.type)) Object.assign(response, {
-                appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
+                appCleanup: { protocol: 'app-lifecycle-v3', instanceId,
                     state: message.type === 'APP_CLOSE' ? 'completed' : 'stopped', issues: [] },
             });
+            if (message.type === 'APP_OPEN') response.publication = emitHealthyOpen(this, message, initMessage.appId, instanceId);
             this.emit('message', response);
         });
     }

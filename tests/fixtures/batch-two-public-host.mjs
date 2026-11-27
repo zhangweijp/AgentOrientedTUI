@@ -36,13 +36,10 @@ try {
         }));
         const routes = new Map();
         const tools = selection.flatMap(({ app, observation }) => observation.tools.map(tool => {
-            const name = buildPublicToolName(app.appId, tool.name);
+            const name = buildPublicToolName(app.appId, tool.viewType, tool.name);
             assert.ok(!routes.has(name));
             routes.set(name, { appId: app.appId, observationId: observation.observationId, toolId: tool.id });
-            return { type: 'function', function: { name, parameters: projectNativeToolSchema(tool, observation.source,
-                observation.views.filter(view => view.type === tool.viewType && (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id)))
-                    .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                selection.flatMap(({ observation }) => observation.refs.map(ref => ({ source: observation.source, ref })))),
+            return { type: 'function', function: { name, parameters: projectNativeToolSchema(tool),
                 description: `${tool.description}\nApp ID ${app.appId}, view_type ${tool.viewType} (${tool.multiplicity}).` } };
         }));
         const body = JSON.stringify({ model: 'batch-two-local', messages: [DEFAULT_AOTUI_SYSTEM_INSTRUCTION, ...pages]

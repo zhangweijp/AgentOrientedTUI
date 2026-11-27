@@ -1,5 +1,5 @@
 import { isSnapshotDataError, SnapshotDataError } from '../snapshot/json.js';
-import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
+import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey, nextRefContinuity } from '../snapshot/snapshot-support.js';
 import {
     SNAPSHOT_SCHEMA_VERSION,
     type JsonValue, type PreparedAppSnapshotDraft, type PreparedSnapshotFailure,
@@ -20,27 +20,35 @@ export interface AppFrameRef {
 }
 
 /** Completed author data. The app runtime supplies mounted identities and Tool activations. */
-export interface AppFrameView extends Omit<ViewSnapshot, 'id' | 'name' | 'viewInstanceId' | 'toolBindings' | 'canClose'> {
+export interface AppFrameView extends Omit<ViewSnapshot, 'id' | 'name' | 'viewInstanceId' | 'toolBindings' | 'closeActivationId'> {
     readonly id?: string;
     readonly idPrefix?: string;
     readonly name?: string;
     readonly owner: object;
     readonly bindings: readonly AppFrameBinding[];
     readonly refs: readonly AppFrameRef[];
+    readonly bindingKey?: string | number;
     readonly onClose?: () => ToolResult | Promise<ToolResult>;
 }
 export interface AppProjectionFrame {
     readonly views: readonly AppFrameView[];
 }
-export type PreparedProjection = Readonly<{ status: 'prepared' }>;
-export type OpeningProjectionResult = PreparedProjection | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
-export type ProjectionOptions = Readonly<{ opening: true }>;
-export type ProjectionCommitResult = OpeningProjectionResult
-    | Readonly<{ status: 'failed'; issue: SnapshotIssue; cause?: { readonly error: unknown } }>;
+export type PublishMode = 'authoritative' | 'candidate';
+export type ProjectionOptions = Readonly<{ mode?: PublishMode | undefined }>;
+export type PublishResult = Readonly<{ ok: true; epoch: number; viewId(handle: object): string | undefined }> |
+    Readonly<{ ok: false; state: 'preserved' | 'degraded'; issue: SnapshotIssue; cause?: unknown }>;
 
+function success(epoch: number, ids: WeakMap<object, string>): Extract<PublishResult, {ok: true}> {
+    return Object.freeze({ ok: true, epoch, viewId: (handle: object) => ids.get(handle) });
+}
+
+export function stoppedPublication(): Extract<PublishResult, {ok: false}> {
+    return Object.freeze({ ok: false, state: 'preserved', issue: Object.freeze({ code: 'APP_STOPPED', message: 'App projection is stopped' }) });
+}
 export interface ProjectionSource {
     identity(): { readonly appId: string; readonly instanceId: string };
     checkCapacity?(draft: PreparedAppSnapshotDraft): SnapshotIssue | undefined;
+    isStopped?(): boolean;
 }
 
 /** Complete candidate with prospective identities from the View registry. */
@@ -49,6 +57,7 @@ export interface CompleteProjectionFrame {
     readonly refs: readonly (AppFrameRef & { readonly viewId: string; readonly viewInstanceId: string })[];
     readonly tools: readonly ToolDescriptor[];
     readonly accept?: () => void;
+    readonly ids?: WeakMap<object, string>;
 }
 
 type ProjectionToken = Readonly<{ epoch: number; ready: boolean }>;
@@ -69,25 +78,31 @@ function failureIssue(error: unknown): SnapshotIssue {
             }
         }
     } catch { /* Diagnostic capture cannot replace the App's error. */ }
-    return { code: 'SNAPSHOT_INVALID', message: 'Semantic projection commit failed' };
+    return { code: 'SNAPSHOT_INVALID', path: '$.build', message: 'Semantic projection commit failed' };
 }
 
 const closedError = () => Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' });
 
 /** Stage live bindings with their View and Ref identities. Only a valid complete frame can install them. */
 export function commitAppFrame(projection: SemanticProjectionCoordinator, registry: ReturnType<typeof createViewOwnedTools>,
-    build: () => AppProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
+    build: () => AppProjectionFrame, options?: ProjectionOptions): PublishResult {
     return projection.commit(() => {
+        if (typeof build !== 'function' || Object.getPrototypeOf(build) === asyncFunction)
+            throw new SnapshotDataError('SNAPSHOT_INVALID', '$.build', 'Projection builder must be synchronous');
         const frame = build();
+        if (frame instanceof Promise) { void Promise.prototype.then.call(frame, undefined, () => {}); }
         if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
             throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
         const views: AppProjectionFrame['views'] = frame.views;
         const plan = registry.prepareFrame(views, projection.failed);
+        const ids = new WeakMap<object, string>();
+        for (const [i, view] of views.entries()) ids.set(view.owner, plan.instances[i]!.viewId);
         return {
+            ids,
             views: views.map(({ type, name, region, content }, index) => {
-                const { viewId: id, viewInstanceId, toolBindings, canClose } = plan.instances[index]!;
+                const { viewId: id, viewInstanceId, toolBindings, closeActivationId } = plan.instances[index]!;
                 return { id, type, name: name === undefined ? id : name, region, content, viewInstanceId, toolBindings,
-                    ...(canClose ? { canClose } : {}) };
+                    ...(closeActivationId ? { closeActivationId } : {}) };
             }),
             refs: views.flatMap(({ refs }, index) => {
                 const { viewId, viewInstanceId } = plan.instances[index]!;
@@ -106,19 +121,20 @@ export class SemanticProjectionCoordinator {
     private committing = false;
     private commitIssue?: SnapshotIssue;
     private prepared?: PreparedAppSnapshotDraft;
-    private fault?: Extract<ProjectionCommitResult, { status: 'failed' }>;
+    private fault?: SnapshotIssue;
     private closed = false;
+    private poisoned = false;
     private queuedNotice = false;
     private readonly listeners = new Set<(token: ProjectionToken) => void>();
 
     constructor(private readonly source: ProjectionSource) {}
 
     readViewId(owner: object, registry: ReturnType<typeof createViewOwnedTools>): string | undefined {
-        if (!this.closed && !this.fault && this.prepared) return registry.readViewId(owner);
+        if (!this.stopped && !this.fault && this.prepared) return registry.readViewId(owner);
     }
 
     assertWritable(): void {
-        if (this.closed) throw closedError();
+        if (this.stopped) throw closedError();
         if (this.committing) {
             const error = new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Projection bindings cannot change during preparation');
             this.commitIssue ??= failureIssue(error);
@@ -126,25 +142,41 @@ export class SemanticProjectionCoordinator {
         }
     }
 
-    commit(build: () => CompleteProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
-        this.assertWritable();
-        if (options?.opening && this.fault) return this.fault;
+    private get stopped(): boolean { return this.closed || this.poisoned || this.source.isStopped?.() === true; }
+
+    commit(build: () => CompleteProjectionFrame, options?: ProjectionOptions): PublishResult {
+        if (this.stopped) return stoppedPublication();
+        if (this.committing) {
+            this.commitIssue ??= { code: 'SNAPSHOT_INVALID', path: '$.build', message: 'Projection bindings cannot change during preparation' };
+            return this.failureResult(this.commitIssue, 'candidate');
+        }
         this.committing = true;
+        let mode: PublishMode = 'authoritative';
         try {
-            let frame: CompleteProjectionFrame;
-            try {
-                const asyncError = () => new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Projection commit callback must be synchronous');
-                if (Object.getPrototypeOf(build) === asyncFunction) throw asyncError();
-                frame = build();
-                if (frame != null && typeof (frame as Partial<PromiseLike<unknown>>).then === 'function') {
-                    void Promise.resolve(frame).catch(() => {});
-                    throw asyncError();
-                }
-            } catch (error) {
-                return this.fail(this.commitIssue ?? failureIssue(error), { error });
+            if (options !== undefined) {
+                if (!options || typeof options !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(options)))
+                    throw new SnapshotDataError('SNAPSHOT_INVALID', '$.options.mode', 'Expected plain publish options');
+                const fields = Object.getOwnPropertyDescriptors(options);
+                if (Reflect.ownKeys(fields).some(key => key !== 'mode') ||
+                    fields.mode && (!fields.mode.enumerable || !('value' in fields.mode) ||
+                        ![undefined, 'authoritative', 'candidate'].includes(fields.mode.value)))
+                    throw new SnapshotDataError('SNAPSHOT_INVALID', '$.options.mode', 'Expected authoritative or candidate');
+                mode = fields.mode?.value ?? 'authoritative';
             }
-            try { return this.prepare(frame, options); }
-            catch (error) { return this.fail(this.commitIssue ?? failureIssue(error), { error }); }
+            if (this.stopped) return stoppedPublication();
+            if (mode === 'candidate' && this.fault)
+                return this.failureResult({ code: 'SNAPSHOT_UNREADY', message: 'Repair the projection with an authoritative publish' }, mode);
+            if (typeof build !== 'function' || Object.getPrototypeOf(build) === asyncFunction)
+                throw new SnapshotDataError('SNAPSHOT_INVALID', '$.build', 'Projection builder must be synchronous');
+            const frame = build();
+            if (frame instanceof Promise) {
+                void Promise.prototype.then.call(frame, undefined, () => {});
+                throw new SnapshotDataError('SNAPSHOT_INVALID', '$.build', 'Projection builder must be synchronous');
+            }
+            if (this.commitIssue) return this.failureResult(this.commitIssue, mode);
+            return this.prepare(frame, mode);
+        } catch (error) {
+            return this.failureResult(this.commitIssue ?? failureIssue(error), mode, { error });
         } finally {
             this.committing = false;
             this.commitIssue = undefined;
@@ -152,13 +184,14 @@ export class SemanticProjectionCoordinator {
         }
     }
 
-    private prepare({ views, refs, tools, accept }: CompleteProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
+    private prepare({ views, refs, tools, accept, ids }: CompleteProjectionFrame, mode: PublishMode): PublishResult {
         const values: Record<string, RefDescriptor> = Object.create(null);
         for (const { id, value, viewId, viewInstanceId, refType, scope, array, valueSchema } of refs) {
             const key = refKey(viewId, viewInstanceId, id);
             if (Object.hasOwn(values, key)) throw new SnapshotDataError('SNAPSHOT_INVALID', '$.refs', 'Duplicate Ref in App frame');
             if (valueSchema === undefined) throw new SnapshotDataError('SNAPSHOT_INVALID', 'Ref ' + viewId + '.' + id + '.valueSchema', 'Declare a schema for every published Ref.');
-            values[key] = { id, ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
+            values[key] = { continuity: nextRefContinuity(this.fault ? undefined : this.prepared?.refs[key]?.continuity, scope, this.epoch + 1),
+                id, ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
                 refType: refType ?? 'unknown', scope, ...(array ? { array } : {}),
                 valueSchema, target: { kind: 'snapshot-value', payload: value } };
         }
@@ -169,47 +202,52 @@ export class SemanticProjectionCoordinator {
         }
         let checked: ReturnType<typeof validatePreparedSnapshot> | undefined = validatePreparedSnapshot({
             schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
-            sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
+            sourceEpoch: this.epoch + 1, healthySince: this.fault || !this.prepared ? this.epoch + 1 : this.prepared.healthySince, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
             views, refs: values, tools: definitions,
         }, limits, () => this.prepared?.tools);
-        if (this.commitIssue) return this.fail(this.commitIssue);
-        if (!checked.ok) return this.fail(checked.issue);
+        if (this.commitIssue) return this.failureResult(this.commitIssue, mode);
+        if (!checked.ok) return this.failureResult(checked.issue, mode);
 
         const { draft } = checked.value;
         // Drop the temporary UTF-8 bytes before the capacity check measures the observation.
         checked = undefined;
-        const previous = this.prepared;
-        if (this.closed) throw closedError();
+        if (this.stopped) return stoppedPublication();
         const capacity = this.source.checkCapacity?.(draft);
-        if (this.closed) throw closedError();
-        if (this.commitIssue) return this.fail(this.commitIssue);
-        if (capacity) {
-            if (capacity.code === 'OBSERVATION_CAPACITY' && previous && options?.opening) {
-                const mounted = new Set(previous.views.map(view => view.viewInstanceId));
-                if (draft.views.some(view => !mounted.has(view.viewInstanceId))) return { status: 'rejected', issue: capacity };
-            }
-            return this.fail(capacity);
+        if (this.stopped) return stoppedPublication();
+        if (this.commitIssue) return this.failureResult(this.commitIssue, mode);
+        if (capacity) return this.failureResult(capacity, mode);
+        const result = success(draft.sourceEpoch, ids ?? new WeakMap());
+        // From here only the Core-owned plan installs state; if that fails,
+        // the inventory cannot be certified and this execution must fail closed.
+        try { accept?.(); }
+        catch (error) {
+            const issue = failureIssue(error);
+            const failure = this.failureResult(issue, 'authoritative', {error});
+            this.poisoned = true;
+            return failure;
         }
-        accept?.();
         this.prepared = draft;
         this.epoch = draft.sourceEpoch;
         this.fault = undefined;
-        return Object.freeze({ status: 'prepared' });
+        return result;
     }
 
-    private fail(issue: SnapshotIssue, cause?: { readonly error: unknown }): ProjectionCommitResult {
-        const fault = Object.freeze({ status: 'failed' as const, issue, ...(cause ? { cause } : {}) });
-        if (!this.closed) this.fault = fault;
-        return fault;
+    private failureResult(issue: SnapshotIssue, mode: PublishMode, cause?: { readonly error: unknown }): Extract<PublishResult, {ok: false}> {
+        if (this.stopped) return stoppedPublication();
+        const diagnostic = Object.freeze({ ...issue });
+        const failure = { ok: false as const, state: mode === 'candidate' ? 'preserved' as const : 'degraded' as const, issue: diagnostic };
+        if (mode === 'authoritative') this.fault = diagnostic;
+        if (cause) Object.defineProperty(failure, 'cause', { value: cause.error });
+        return Object.freeze(failure);
     }
 
-    refScope(viewId: string, viewInstanceId: string, refId: string): RefScope | undefined {
-        return this.prepared?.refs[refKey(viewId, viewInstanceId, refId)]?.scope;
+    refDescriptor(viewId: string, viewInstanceId: string, refId: string): RefDescriptor | undefined {
+        return this.healthy ? this.prepared?.refs[refKey(viewId, viewInstanceId, refId)] : undefined;
     }
 
     confirmsPublication(known: SnapshotDraftEnvelope): boolean {
         const prepared = this.prepared;
-        return !!prepared && !this.closed && !this.committing && !this.fault &&
+        return !!prepared && this.healthy &&
             prepared.appId === known.appId && prepared.instanceId === known.instanceId &&
             prepared.sourceEpoch === known.sourceEpoch && this.producerSeq === known.producerSeq;
     }
@@ -221,7 +259,7 @@ export class SemanticProjectionCoordinator {
         const producerSeq = ++this.producerSeq;
         if (!this.fault && this.prepared) return { draft: { ...this.prepared, producerSeq } };
         return { failure: { ...this.source.identity(), producerSeq, sourceEpoch: this.epoch,
-            issue: this.fault?.issue ?? { code: 'SNAPSHOT_INVALID', message: 'Projection has no successful commit' } } };
+            issue: this.fault ?? { code: 'SNAPSHOT_INVALID', message: 'Projection has no successful commit' } } };
     }
 
     publishTo(committer: SnapshotCommitter) {
@@ -229,8 +267,9 @@ export class SemanticProjectionCoordinator {
         return 'draft' in publication ? committer.accept(publication.draft) : committer.reportPrepareFailure(publication.failure);
     }
 
-    get failure(): SnapshotIssue | undefined { return this.fault?.issue; }
-    get failed(): boolean { return this.fault !== undefined; }
+    get failure(): SnapshotIssue | undefined { return this.fault; }
+    get failed(): boolean { return this.fault !== undefined || this.poisoned; }
+    get healthy(): boolean { return !this.stopped && !this.committing && !this.fault && !!this.prepared; }
 
     close(): void {
         this.closed = true;

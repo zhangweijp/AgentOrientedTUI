@@ -1,4 +1,4 @@
-export const WORKER_PROTOCOL = 'app-worker/v10' as const;
+export const WORKER_PROTOCOL = 'app-worker/v12' as const;
 
 /**
  * Worker Protocol - Type Definitions

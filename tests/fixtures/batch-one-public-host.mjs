@@ -50,7 +50,7 @@ try {
     assert.deepEqual(desktop.listApps().map(app => [app.installationId, app.appId]), [[first, undefined], [second, undefined]]);
     const collisionURL = new URL('./collision.mjs', import.meta.url);
     await writeFile(collisionURL, `import { createApp } from '@aotui/sdk';
-export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize({ prepareProjection }) { prepareProjection({ views: [] }); } });`);
+export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize({ publish: publishAuthorFrame }) { publishAuthorFrame(() => ([]).map(page => page.frame())); } });`);
     const collision = (await desktop.installDynamicWorkerApp(collisionURL.href, { name: 'batch_files_1' })).appId;
     const parked = Promise.withResolvers();
     const entered = Promise.withResolvers();
@@ -79,7 +79,7 @@ export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize(
         return result.observation;
     }
     const modelCall = (id, name, input) => ({
-        id, type: 'function', function: { name: buildPublicToolName(appId, name), arguments: JSON.stringify(input) },
+        id, type: 'function', function: { name: buildPublicToolName(appId, ['open_file', 'reload_source', 'mark_a_readonly', 'replace_b_on_signal'].includes(name) ? 'workspace' : 'file', name), arguments: JSON.stringify(input) },
     });
     async function send(label, current, calls = [], maxInputBytes = Infinity) {
         const pages = ['static', 'dynamic'].flatMap(region => current.views.filter(view => view.region === region)
@@ -89,13 +89,10 @@ export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize(
             })));
         const routes = new Map();
         const tools = current.tools.map(tool => {
-            const name = buildPublicToolName(appId, tool.name);
+            const name = buildPublicToolName(appId, tool.viewType, tool.name);
             assert.ok(!routes.has(name));
             routes.set(name, { observationId: current.observationId, toolId: tool.id });
-            return { type: 'function', function: { name, parameters: projectNativeToolSchema(tool, current.source,
-                current.views.filter(view => view.type === tool.viewType && (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id)))
-                    .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                current.refs.map(ref => ({ source: current.source, ref }))),
+            return { type: 'function', function: { name, parameters: projectNativeToolSchema(tool),
                 description: `${tool.description}\nApp ID ${appId}, view_type ${tool.viewType} (${tool.multiplicity}).` } };
         });
         const body = JSON.stringify({
@@ -132,8 +129,8 @@ export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize(
         const { view_id: viewId, ...input } = JSON.parse(reply.function.arguments);
         const request = { ...route, invocationId: reply.id, ...(viewId === undefined ? {} : { viewId }), input };
         const result = await client.invoke(request);
-        assert.equal(result.receipt?.invocationId, reply.id);
-        assert.equal(result.receipt?.observationId, route.observationId);
+        if (result.kind === 'receipt') { assert.equal(result.receipt.invocationId, reply.id); assert.equal(result.receipt.observationId, route.observationId); }
+        else if (result.kind === 'refused') assert.equal(result.locator,undefined);
         facts.calls.push({ turn: turn.label, toolName: reply.function.name, request, result });
         return result;
     }
@@ -144,9 +141,9 @@ export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize(
     }
     async function refused(turn, code) {
         const result = await call(turn);
-        assert.equal(result.receipt?.outcome.code, code, JSON.stringify(result));
-        assert.equal(result.receipt.executionPhase, 'not-dispatched');
-        return result.receipt;
+        if (result.kind === 'refused') { assert.equal(result.code,code,JSON.stringify(result)); assert.equal(result.locator,undefined); }
+        else { assert.equal(result.receipt?.outcome.code, code, JSON.stringify(result)); assert.equal(result.receipt.executionPhase, 'not-dispatched'); }
+        return result.receipt ?? result;
     }
     const home = await observe();
     assert.equal(home.tools.some(tool => tool.name === 'edit'), false);
@@ -237,7 +234,7 @@ export default createApp({ app_name: 'batch_files_1', viewTypes: [], initialize(
         modelCall('held-edit', 'edit', { view_id: 'doc_2', text: 'must not write' }),
     ]);
     const disabled = await refused(auth, 'TOOL_UNAVAILABLE');
-    assert.equal(disabled.outcome.path, '$.view_id');
+    assert.equal((disabled.outcome ?? disabled).path, '$.view_id');
     const originalB = after.views.find(view => view.id === 'doc_2').viewInstanceId;
     await success(auth);
     const held = call(auth);

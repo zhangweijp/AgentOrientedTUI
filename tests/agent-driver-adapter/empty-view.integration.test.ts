@@ -7,8 +7,7 @@ import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { createRuntime, type RunningApp } from '@aotui/runtime';
 
 function appSource(): string {
-    return `
-        import Type from 'typebox';
+    return `import Type from 'typebox';
         import { createApp, createView, defineViewType } from '@aotui/sdk';
         const EmptyType = defineViewType()({ multiplicity: 'multiple', name: 'EmptyType', tools: {
             ping: {
@@ -27,18 +26,16 @@ function appSource(): string {
         const HealthyType = defineViewType({ multiplicity: 'multiple', name: 'HealthyType' });
 
         export default createApp({ viewTypes: [EmptyType, HealthyType], app_name: 'empty_app',
-            initialize({ prepareProjection }) {
+            initialize({ publish: publishAuthorFrame }) {
                 function page(idPrefix, initial) {
                     let body = initial;
-                    return createView(EmptyType, { idPrefix, region: 'dynamic', render: () => ({
-                        body, context: { setBody(next) { body = next; publish(); } },
-                    }) });
+                    return (() => { const handle = createView(EmptyType, { idPrefix, region: 'dynamic' }); return { handle, frame: () => handle.frame({ body, context: { setBody(next) { body = next; publish(); } } }) }; })();
                 }
                 const views = [
-                    createView(HealthyType, { idPrefix: 'healthy_view', region: 'dynamic', render: () => ({ body: 'HEALTHY_SIBLING_BODY' }) }),
+                    (() => { const handle = createView(HealthyType, { idPrefix: 'healthy_view', region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: 'HEALTHY_SIBLING_BODY' }) }; })(),
                     page('no_children', ''), page('whitespace', '  \\n  '), page('conditional', ''),
                 ];
-                function publish() { prepareProjection({ views }); }
+                function publish() { publishAuthorFrame(() => (views).map(page => page.frame())); }
                 publish();
             }
         });
@@ -100,7 +97,7 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
 
             let current = await observe();
             expect(Object.keys(current.tools)).toEqual(expect.arrayContaining([
-                'empty_app-ping', 'empty_app-set_body',
+                'empty_app-EmptyType-ping', 'empty_app-EmptyType-set_body',
             ]));
             expect(current.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(4);
             expect(viewMessage(current, 'healthy_view_1')).toContain('HEALTHY_SIBLING_BODY');
@@ -111,18 +108,18 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
                 expect(initialViews.find((view: any) => view.id === id)?.content.value).toBe(value);
             }
 
-            await result('empty_app-ping', { view_id: 'no_children_1' }, 'empty-ping');
+            await result('empty_app-EmptyType-ping', { view_id: 'no_children_1' }, 'empty-ping');
             const initialRevision = (await preview(app)).source.revision;
             for (const [index, body] of ['EMPTY_VIEW_BODY_ONE', '', 'EMPTY_VIEW_BODY_TWO'].entries()) {
                 current = await observe();
-                expect(current.tools['empty_app-ping']).toBeDefined();
-                expect(current.tools['empty_app-set_body']).toBeDefined();
-                await result('empty_app-set_body', { view_id: 'no_children_1', body }, `set-body-${index}`);
+                expect(current.tools['empty_app-EmptyType-ping']).toBeDefined();
+                expect(current.tools['empty_app-EmptyType-set_body']).toBeDefined();
+                await result('empty_app-EmptyType-set_body', { view_id: 'no_children_1', body }, `set-body-${index}`);
                 current = await observe();
                 const snapshot = await preview(app);
                 expect(snapshot.source.revision).toBeGreaterThan(initialRevision + index);
                 expect(snapshot.views.find(view => view.id === 'no_children_1')?.content.value).toBe(body);
-                expect(current.tools['empty_app-ping']).toBeDefined();
+                expect(current.tools['empty_app-EmptyType-ping']).toBeDefined();
                 expect(viewBodyFromMessage(viewMessage(current, 'no_children_1'))).toBe(body);
                 expect(viewMessage(current, 'healthy_view_1')).toContain('HEALTHY_SIBLING_BODY');
                 await current.release?.();

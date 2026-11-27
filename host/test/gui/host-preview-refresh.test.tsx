@@ -83,7 +83,7 @@ function assembly(topicId: string, instanceId: string) {
     };
     function publish(body: string, notify = true) {
         businessValue = body;
-        const accepted = core.committer.accept({ schemaVersion: 8, appId: 'preview_app', instanceId,
+        const accepted = core.committer.accept({ schemaVersion: 9, healthySince: 1, appId: 'preview_app', instanceId,
             producerSeq: ++sequence, sourceEpoch: sequence, capturedAt: Date.now(),
             views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Workspace', region: 'dynamic', name: 'Current work',
                 content: { format: 'markdown-v1', value: body } }], refs: {},
@@ -210,7 +210,7 @@ describe('current Host preview subscription', () => {
                 expect(screen.getByText('Committed two')).toBeInTheDocument();
                 expect(screen.queryByText('Initial topic_a')).toBeNull();
                 expect(f.sessions.get('topic_a').state).toBe('paused');
-                expect((await context.executeTool!('preview_app-inspect', { view_id: 'work_1' }, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
+                expect((await context.executeTool!('preview_app-Workspace-inspect', { view_id: 'work_1' }, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
                 expect(app.entries()).toBe(1);
                 // The GUI initiates no second request; notifications drive independent reads.
                 expect(queries.mock.calls.length).toBeGreaterThan(initialQueries);

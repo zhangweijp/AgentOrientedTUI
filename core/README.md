@@ -6,7 +6,7 @@ For a custom host, `createSnapshotCore` owns an App instance's committed snapsho
 
 When assembling an App directly, bind `RuntimeContext.readViewId: owner => projection.readViewId(owner, registry)` to the same `SemanticProjectionCoordinator` and View-owned Tool registry as `publishFrame`. The SDK passes the actual View handle as the owner. The coordinator reads its ID from the healthy committed frame.
 
-The low-level `AppLifecyclePort.register(callbacks)` returns a function that starts the registered stop and close callbacks. The owner joins the same cleanup during formal close and reports any failure. The SDK's author-facing `registerCleanup` returns `void`.
+The low-level `AppLifecyclePort.register(callbacks)` returns `void`. Only the Runtime owner can initiate stop or close. A factory initializes with `void | Promise<void>` and registers resources before acquiring them. The SDK exposes the same contract as `registerLifecycle`.
 
 Tool and Ref value declarations are bounded plain JSON Schema 2020-12 objects in the supported AOTUI profile. A Tool schema has an object root. `{}` accepts bounded JSON in business fields, including array items and nested properties. A declared Ref or `refParam` value schema requires a concrete root rule. Declare a fixed tuple with `prefixItems`, `items: false` and a matching `minItems`. An empty tuple omits `prefixItems`. Core compiles admitted rules with `typebox/schema` from TypeBox 1.4.3 and reuses them for calls. Model addresses resolve against the original observation before the resolved JSON undergoes the same business validation.
 

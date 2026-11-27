@@ -86,10 +86,10 @@ manager.on('message', ({ type, message }) => {
 const open = 'system-open_app', close = 'system-close_app';
 const ideName = 'system_ide', planningName = 'planning_app';
 const ideInstallation = 'ide_installation', planInstallation = 'planning_installation', browserInstallation = 'browser_installation';
-const workspace = ideName + '-multi_open_file';
-const hover = ideName + '-lsp_hover';
-const create = planningName + '-create_plan';
-const addPhase = planningName + '-add_phase';
+const workspace = ideName + '-Workspace-multi_open_file';
+const hover = ideName + '-FileDetail-lsp_hover';
+const create = planningName + '-PlanList-create_plan';
+const addPhase = planningName + '-PlanDetail-add_phase';
 let callId = 0;
 
 function schema(tools: Record<string, Tool>, name: string) {
@@ -372,12 +372,12 @@ try {
         assert.equal((await invoke(current, addPhase, { plan, title: 'Added phase', tasks: [{ title: 'Added task' }] })).outcomeStatus, 'succeeded');
     });
     await context(async current => {
-        const reply = await invoke(current, planAppId + '-complete_phase', { phase: planAddress(current, 'current_phase') });
+        const reply = await invoke(current, planAppId + '-PlanDetail-complete_phase', { phase: planAddress(current, 'current_phase') });
         assert.equal(reply.outcomeStatus, 'succeeded');
     }, current => planDetail(current).includes('Added phase'));
     await context(async current => {
         assert.match(planDetail(current), /\[Added task\]\(pending_tasks\[0\]\)/);
-        const reply = await invoke(current, planAppId + '-complete_task', { task: planAddress(current, 'pending_tasks[0]') });
+        const reply = await invoke(current, planAppId + '-PlanDetail-complete_task', { task: planAddress(current, 'pending_tasks[0]') });
         assert.equal(reply.outcomeStatus, 'succeeded');
     }, current => planDetail(current).includes('[Added phase](private current_phase: Phase)'));
     planningFacts.refCalls = ['Plan', 'Phase', 'Task'];

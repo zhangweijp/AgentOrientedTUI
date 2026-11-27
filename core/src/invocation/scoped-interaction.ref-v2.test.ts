@@ -18,9 +18,9 @@ function fixture() {
     const calls = { policy: 0, execute: 0 }, seen: any[] = [];
     const controls = { authorize: (_ctx: any): any => true };
     function publish(label = 'A', mounted = true) {
-        const s = ++seq;const r = core.committer.accept({ schemaVersion: 8, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
-            views: mounted ? [{ toolBindings: [{ toolId: id, activationId: label === 'rule' ? 'rule-2' : 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', region: 'dynamic', content: { format: 'markdown-v1', value: label } }] : [],
-            refs: mounted ? { [refKey('aa', 'mount', 'id')]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value', payload: { label } } } } : {},
+        const s = ++seq;const r = core.committer.accept({ healthySince: 1,  schemaVersion: 9, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
+            views: mounted ? [{ toolBindings: [{ toolId: id, activationId: label === 'rule' ? 'a:2' : 'a:1' }], id: 'aa', viewInstanceId: 'm:1', type: 'File', name: 'File', region: 'dynamic', content: { format: 'markdown-v1', value: label } }] : [],
+            refs: mounted ? { [refKey('aa', 'm:1', 'id')]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected', id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'm:1', refType: 'unknown', target: { kind: 'snapshot-value', payload: { label } } } } : {},
             tools: mounted ? { [id]: { multiplicity: 'multiple', id, name: 'read', viewType: 'File',  description: 'Read', inputSchema: schema } } : {} });
         expect(r.status).toBe('published');if (r.status !== 'published') throw Error('publication');return r.snapshot;
     }
@@ -54,7 +54,7 @@ describe('R08/R09/R11 unchanged Core coordination with versioned Ref admission',
         const f = fixture(), started = deferred(), release = deferred();f.controls.authorize = () => { started.resolve();return release.promise.then(() => true); };
         const running = f.client.invoke(await f.request());await started.promise;
         if (kind === 'rule') f.changeRule();if (kind === 'unmount') f.publish('A', false);if (kind === 'instance') f.client.close();release.resolve();
-        const result: any = await running;expect(f.calls.execute).toBe(0);expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'rule' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'VIEW_INSTANCE_REVOKED' : 'APP_INTERACTION_UNAVAILABLE');
-        f.client.close();expect(f.core.store.inspect().activeHolds).toBe(0);
+        const result: any = await running;expect(f.calls.execute).toBe(0);expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'rule' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'VIEW_INSTANCE_REVOKED' : 'APP_STOPPED');
+        f.client.close();await f.client.whenClosed();expect(f.core.store.inspect().activeHolds).toBe(0);
     });
 });

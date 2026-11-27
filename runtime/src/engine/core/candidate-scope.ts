@@ -1,4 +1,4 @@
-import type { InteractionIssue, ObservationCandidate, PrepareObservationResult } from '@aotui/core';
+import type { InteractionIssue, ObservationCandidate, ObservationOptions, PrepareObservationResult } from '@aotui/core';
 import type { CandidateScope, RunningApp } from '../../spi/runtime/kernel.interface.js';
 
 const closedScope = Object.freeze({ status: 'rejected', issue: Object.freeze({
@@ -41,9 +41,9 @@ export function createCandidateScope(): CandidateScope {
     }
 
     return Object.freeze({
-        async observe(app: Pick<RunningApp, 'observe'>): Promise<PrepareObservationResult> {
+        async observe(app: Pick<RunningApp, 'observe'>, options?: ObservationOptions): Promise<PrepareObservationResult> {
             if (closed) return closedScope;
-            const result = await app.observe();
+            const result = await app.observe(options);
             if (result.status === 'rejected') return result;
             if (closed) {
                 throwCleanupIssues(discardCandidate(result.candidate));

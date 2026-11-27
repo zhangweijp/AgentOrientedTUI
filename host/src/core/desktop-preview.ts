@@ -10,6 +10,7 @@ export interface DesktopPreviewApp {
     readonly installationId: string;
     readonly name: string;
     readonly status: AppDiscoveryInfo['status'];
+    readonly run?: AppDiscoveryInfo['run'];
     readonly views: readonly DesktopPreviewView[];
 }
 
@@ -21,9 +22,9 @@ export interface DesktopPreview {
 export async function readDesktopPreview(desktop: IDesktop): Promise<DesktopPreview> {
     const applications: DesktopPreviewApp[] = [];
     const diagnostics: string[] = [];
-    for (const { installationId, appId, appInstanceId, name, status } of desktop.listApps()) {
+    for (const { installationId, appId, appInstanceId, name, status, run } of desktop.listApps()) {
         const views: DesktopPreviewView[] = [];
-        if (status === 'running' && appId && appInstanceId) {
+        if (status === 'running' && appId && appInstanceId && (!run || run.phase === 'opened')) {
             try {
                 const access = desktop.getRunningApp(appId, appInstanceId);
                 const preview = access.status === 'ready' ? await access.app.preview() : access;
@@ -39,7 +40,7 @@ export async function readDesktopPreview(desktop: IDesktop): Promise<DesktopPrev
                 diagnostics.push(`${name}: App projection unavailable.`);
             }
         }
-        applications.push({ installationId, name, status, views });
+        applications.push({ installationId, name, status, views, ...(run ? { run } : {}) });
     }
     return { applications, diagnostics };
 }

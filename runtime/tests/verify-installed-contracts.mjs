@@ -60,7 +60,7 @@ const ref: RefTarget = { kind: 'snapshot-value', payload: { id: 'one', version: 
 ref.payload = {};
 // @ts-expect-error Business identity belongs inside the captured payload.
 const oldRef: RefTarget = { kind: 'entity', entityId: 'one' };
-const schemaVersion: 8 = SNAPSHOT_SCHEMA_VERSION;
+const schemaVersion: 9 = SNAPSHOT_SCHEMA_VERSION;
 const result: ToolResult = { success: false, error: { code: 'PARTIAL', message: 'Application reports partial work' } };
 // @ts-expect-error The former Tool failure classification is retired.
 const oldResult: ToolResult = { ...result, effects: 'none' };
@@ -111,8 +111,8 @@ try {
 // @ts-expect-error The IDE package has one default managed factory, not route-specific entries.
 import { ideEntryForRoute } from '@agentina/aotui-ide';`;
     const ideTypeAssertions = `const ideFactory: TUIAppFactory = ideDefault;
-const ideLifecycleSupport: 'app-lifecycle-v2' = ideFactory.appLifecycleSupport;
-const ideToolAuthoringProtocol: 'view-type-tools-v8' = ideFactory.toolAuthoringProtocol;
+const ideLifecycleSupport: 'app-lifecycle-v3' = ideFactory.appLifecycleSupport;
+const ideToolAuthoringProtocol: 'view-type-tools-v9' = ideFactory.toolAuthoringProtocol;
 void [ideLifecycleSupport, ideToolAuthoringProtocol, ideFactory];`;
     await fs.writeFile(path.join(folder, 'sdk-types.ts'), `import { Type } from 'typebox';
 import { createRuntime, type AppInteractionOptions } from '@aotui/runtime';
@@ -150,8 +150,8 @@ export function checkHostRequests(app: RunningApp, turn: ActiveTurn, raw: unknow
 }
 import { createApp, createView, defineViewType, formatRef, ref, refParam, type ArgsOf, type AppLifecycleCallbacks } from '@aotui/sdk';
 ${refOnly ? '' : ideTypeImports}
-import type { AppFrameRef, AppProjectionFrame, ProjectionCommitResult, RuntimeContext, TUIAppFactory } from '@aotui/core';
-export function publishCompleteFrame(context: RuntimeContext): ProjectionCommitResult {
+import type { AppFrameRef, AppProjectionFrame, PublishResult, RuntimeContext, TUIAppFactory } from '@aotui/core';
+export function publishCompleteFrame(context: RuntimeContext): PublishResult {
   const selected: AppFrameRef = { valueSchema: { type: 'object', properties: { title: { type: 'string' } } }, id: 'selected', scope: 'protected', value: { title: 'Note' } };
   // @ts-expect-error Captured JSON values replace commit-local Ref tokens.
   const token: AppFrameRef = { id: 'selected', token: {} };
@@ -197,18 +197,18 @@ const owner: AppLifecycleCallbacks = { stop() {}, async close() {} };
 ${refOnly ? '' : ideTypeAssertions}
 const managedFactory = createApp({
  app_name: 'package_types', viewTypes: [Counter],
- initialize({ prepareProjection, registerCleanup }) {
-  const registered: void = registerCleanup(owner);
+ initialize({ publish: publishAuthorFrame, registerLifecycle }) {
+  const registered: void = registerLifecycle(owner);
   void registered;
-  const page = createView(Counter, { idPrefix: 'counter', region: 'dynamic', render() {
+  const page = (() => { const handle = createView(Counter, { idPrefix: 'counter', region: 'dynamic' }); return { handle, frame: () => {
    const selected = ref('current_record', { id: 'record-1' }, { scope: 'protected', refType: 'Record', schema: Type.Object({ id: Type.String() }) });
-   return { body: formatRef('Current record', selected), refs: [selected], context: {} };
-  } });
-  prepareProjection({ views: [page] });
+   return handle.frame({ body: formatRef('Current record', selected), refs: [selected], context: {} });
+  } }; })();
+  publishAuthorFrame(() => ([page]).map(page => page.frame()));
  },
 });
-const lifecycleSupport: 'app-lifecycle-v2' = managedFactory.appLifecycleSupport;
-const toolAuthoringProtocol: 'view-type-tools-v8' = managedFactory.toolAuthoringProtocol;
+const lifecycleSupport: 'app-lifecycle-v3' = managedFactory.appLifecycleSupport;
+const toolAuthoringProtocol: 'view-type-tools-v9' = managedFactory.toolAuthoringProtocol;
 // @ts-expect-error Managed lifecycle support is the default factory contract.
 createApp({ app_name: 'retired_lifecycle_flag', initialize() {}, viewTypes: [Counter], experimentalAppLifecycle: true });
 export default managedFactory;
@@ -216,7 +216,7 @@ const writable: AppInteractionOptions = { toolsEnabled: true };
 const readOnly: AppInteractionOptions = { toolsEnabled: false };
 // @ts-expect-error The retired array cannot select Host tool availability.
 const oldOptions: AppInteractionOptions = { interactionModes: [] };
-const lifecyclePort = (port: AppLifecyclePort): (() => void) => port.register(owner);
+const lifecyclePort = (port: AppLifecyclePort): void => port.register(owner);
 void [writable, readOnly, oldOptions, lifecyclePort, lifecycleSupport, toolAuthoringProtocol, createRuntime];
 `);
     await fs.writeFile(path.join(folder, 'sdk-tsconfig.json'), JSON.stringify({ compilerOptions: { ...compiler, lib: ['ES2022'], types: ['node'], outDir: './sdk-out' }, files: ['./sdk-types.ts'] }));
@@ -281,15 +281,14 @@ const File = defineViewType()({ multiplicity: 'multiple', name: 'FileDetail', to
 } });
 export default createApp({
  app_name: 'package_type_tool_consumer', viewTypes: [Guide, File],
- initialize({ prepareProjection }) {
+ initialize({ publish: publishAuthorFrame }) {
   let content = 'OLD_PACKAGE_VIEW_VALUE';
-  const root = createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({ body: 'Package consumer tool test.' }) });
-  const page = createView(File, { idPrefix: 'file_a', region: 'dynamic', render() {
+  const root = (() => { const handle = createView(Guide, { idPrefix: 'root', region: 'static' }); return { handle, frame: () => handle.frame({ body: 'Package consumer tool test.' }) }; })();
+  const page = (() => { const handle = createView(File, { idPrefix: 'file_a', region: 'dynamic' }); return { handle, frame: () => {
     const current = ref('current_file', { filePath, content }, { scope: 'protected', refType: 'File', schema: Type.Object({ filePath: Type.String(), content: Type.String() }) });
-    return { body: formatRef('Current file', current) + '\\n\\n' + content, refs: [current],
-      context: { content, setContent(value) { content = value; prepareProjection({ views: [root, page] }); } } };
-  } });
-  prepareProjection({ views: [root, page] });
+    return handle.frame({ body: formatRef('Current file', current) + '\\n\\n' + content, refs: [current], context: { content, setContent(value) { content = value; publishAuthorFrame(() => ([root, page]).map(page => page.frame())); } } });
+  } }; })();
+  publishAuthorFrame(() => ([root, page]).map(page => page.frame()));
  },
 });
 `);
@@ -378,7 +377,7 @@ try {
 import fs from 'node:fs/promises'; import path from 'node:path'; import {tmpdir} from 'node:os';
 import {createRuntime} from '@aotui/runtime'; import {SemanticAOTUIDrivenSource} from '@aotui/agent-driver-adapter'; import ideFactory from '@agentina/aotui-ide';
 const ideModulePath=import.meta.resolve('@agentina/aotui-ide');
-assert.equal(Object.getOwnPropertyDescriptor(ideFactory,'appLifecycleSupport')?.value,'app-lifecycle-v2');
+assert.equal(Object.getOwnPropertyDescriptor(ideFactory,'appLifecycleSupport')?.value,'app-lifecycle-v3');
 const base = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-public-package-'))), root=path.join(base,'project'); await fs.mkdir(root);
 const file=path.join(root,'example.ts'), unopenedFile=path.join(root,'not-open.ts'); await fs.writeFile(file,'export const answer = 1;\\n'); await fs.writeFile(path.join(root,'tsconfig.json'),'{}');
 const runtime=createRuntime({worker:{timeoutMs:45000,maxWorkers: 1}}); const outcomes=[]; let source, context, report;
