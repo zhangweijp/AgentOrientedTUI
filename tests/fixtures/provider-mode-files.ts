@@ -1,16 +1,17 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createApp, createView, formatRef, ref, type ToolResult, type ViewHandle } from '@aotui/sdk';
+import { createApp, createView, formatRef, ref, type ToolResult, type ViewHandle, type ViewFrame } from '@aotui/sdk';
+type FixturePage = { handle: ViewHandle; frame(): ViewFrame };
 import { fileIO } from './file-io.mjs';
 import { Directory, File, fileUnavailable, textSchema } from './files.js';
 
 export default createApp({
     app_name: 'delivered_files', viewTypes: [Directory, File],
-    initialize({ launchConfig, prepareProjection, prepareOpeningProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         if (typeof launchConfig?.folder !== 'string') throw new Error('A fixture folder is required');
         const io = fileIO(launchConfig.folder);
         const signal = join(launchConfig.folder, 'background-b');
-        let files = new Map<string, ViewHandle>();
+        let files = new Map<string, FixturePage>();
         let aWritable = true;
         const frame = (pages = files) => ({ views: [directory, ...pages.values()] });
         const success = { success: true } as const;
@@ -20,35 +21,30 @@ export default createApp({
             if (current === undefined) return fileUnavailable;
             if (files.has(name) && !replace) return success;
             let text = current;
-            const view = createView(File, { name, idPrefix: 'doc',
-                onClose() { files.delete(name); prepareProjection(frame()); return success; },
-                render() {
+            const view = (() => { const handle = createView(File, { idPrefix: 'doc' }); const displayName = name; const closeAction = function() { files.delete(name); commit(() => frame().views.map(page => page.frame())); return success; }; return { handle, frame: () => {
                     const writable = name !== 'A.txt' || aWritable;
                     const content = ref('content', text, { scope: writable ? 'public' : 'private', schema: textSchema });
-                    return { body: name + '\n' + text + '\n' + formatRef('Content', content), refs: [content],
-                        context: { writable, write(next) {
+                    return handle.frame({ name: displayName, body: name + '\n' + text + '\n' + formatRef('Content', content), refs: [content], context: { ...({ writable, write(next) {
                             if (!io.write(name, next)) return fileUnavailable;
                             text = next;
-                            prepareProjection(frame());
+                            commit(() => ((frame()).views).map(page => page.frame()));
                             return success;
-                        } },
-                    };
-                },
-            });
+                        } }), close: closeAction } });
+                } }; })();
             const pages = new Map(files).set(name, view);
-            const prepared = prepareOpeningProjection(frame(pages));
-            if (prepared.status === 'rejected')
+            const prepared = commit(() => ((frame(pages)).views).map(page => page.frame()), { mode: 'candidate' });
+            if (!prepared.ok)
                 return { success: false, error: { code: prepared.issue.code, message: prepared.issue.message } };
             files = pages;
             return success;
         }
 
-        const directory = createView(Directory, { render: () => ({ body: 'Files A.txt and B.txt.', context: {
+        const directory = (() => { const handle = createView(Directory); return { handle, frame: () => handle.frame({ body: 'Files A.txt and B.txt.', context: {
             open,
             reload: () => open('A.txt', true),
-            disable() { aWritable = false; prepareProjection(frame()); return success; },
-        } }) });
-        prepareProjection(frame());
+            disable() { aWritable = false; commit(() => ((frame()).views).map(page => page.frame())); return success; },
+        } }) }; })();
+        commit(() => ((frame()).views).map(page => page.frame()));
         let lastSignal: string | undefined;
         const poll = setInterval(() => {
             if (!existsSync(signal)) return;
@@ -57,6 +53,6 @@ export default createApp({
             lastSignal = token;
             open('B.txt', true);
         }, 15);
-        registerCleanup({ stop: () => clearInterval(poll) });
+        registerLifecycle({ stop: () => clearInterval(poll) });
     },
 });

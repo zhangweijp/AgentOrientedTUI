@@ -21,10 +21,15 @@ it('stops admission and joins the accepted App before cleaning the Desktop', asy
     const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
     const cleanup = vi.spyOn(DesktopLogger.prototype, 'cleanup');
     const runtime = createRuntime({ executionBackends: { delayed: {
-        start(_launch, emit) {
+        start(launch, emit) {
             return {
                 send({ kind, id }) {
                     if (kind === 'initialize') { emit({ kind: 'reply', id, status: 'ready' });return; }
+                    if (kind === 'open') {
+                        const accepted = launch.acceptProjection({ sourceEpoch: 1, producerSeq: 1, healthySince: 1, views: [], refs: [], tools: [] }, 'authoritative');
+                        if (accepted.status !== 'accepted') throw Error(accepted.issue.code);
+                        emit({ kind: 'reply', id, status: 'done', publication: accepted.publication }); return;
+                    }
                     if (kind === 'close') {
                         entered.resolve();
                         void release.promise.then(() => emit({ kind: 'reply', id, status: 'done', cleanup: { state: 'completed', issues: [] } }));

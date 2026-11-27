@@ -1,4 +1,4 @@
-import { fixtureHost } from './__tests__/worker-fixture.js';
+import { emitHealthyOpen, fixtureHost } from './__tests__/worker-fixture.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, expect, it } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
@@ -10,19 +10,23 @@ function fixture(fault?: (request: any, response: any) => any) {
         messages: any[] = []; threadId = 1;
         postMessage(request: any) {
             this.messages.push(request);
-            const report = { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId,
+            const report = { protocol: 'app-lifecycle-v3', instanceId: host.appInstanceId,
                 state: request.type === 'APP_CLOSE' ? 'completed' : 'stopped', issues: [] };
             const response = { requestId: request.requestId, success: true,
                 type: request.type === 'INIT' ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
                 ...(request.type === 'INIT' ? {
-                    appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId },
+                    appLifecycle: { protocol: 'app-lifecycle-v3', instanceId: host.appInstanceId },
                     protocol: request.protocol, toolsEnabled: request.toolsEnabled,
                     projectionLimits: request.projectionLimits,
                     appInstanceId: host.appInstanceId,
                 } : ['APP_STOP', 'APP_CLOSE'].includes(request.type) ? {
                     appCleanup: report,
                 } : {}) };
-            queueMicrotask(() => this.emit('message', fault ? fault(request, response) : response));
+            queueMicrotask(() => {
+                const reply = fault ? fault(request, response) : response;
+                if (request.type === 'APP_OPEN' && reply.success === true) reply.publication = emitHealthyOpen(this, request, host.appId, host.appInstanceId);
+                this.emit('message', reply);
+            });
         }
         async terminate() { this.threadId = -1; this.emit('exit', 0); return 0; }
     }();
@@ -33,7 +37,7 @@ afterEach(async () => { for (const host of hosts.splice(0)) { host.terminate(); 
 
 it('accepts the callback result without owner counts or resource-proof fields', async () => {
     const x = fixture(); await x.host.start(); await x.host.open(); await x.host.close();
-    expect(x.host.getResourceReport().appCleanup?.report).toEqual({ protocol: 'app-lifecycle-v2', instanceId: x.host.appInstanceId,
+    expect(x.host.getResourceReport().appCleanup?.report).toEqual({ protocol: 'app-lifecycle-v3', instanceId: x.host.appInstanceId,
         state: 'completed', issues: [] });
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });
@@ -51,7 +55,7 @@ it.each(['wrong-response-type', 'wrong-instance', 'wrong-protocol', 'retired-num
         ? { requestId: response.requestId, type: 'LIFECYCLE_RESPONSE', success: true }
         : fault === 'missing-lifecycle-ack' ? (({ appLifecycle, ...missing }) => missing)(response)
         : { ...response, appLifecycle: { ...response.appLifecycle, ...(fault === 'wrong-instance' ? { instanceId: 'other' }
-            : fault === 'wrong-protocol' ? { protocol: 'app-lifecycle-v3' } : { version: 2 }) } });
+            : fault === 'wrong-protocol' ? { protocol: 'app-lifecycle-v2' } : { version: 2 }) } });
     const error = fault === 'wrong-response-type' ? 'APP_INIT_ACK_INVALID' : 'APP_LIFECYCLE_NEGOTIATION_FAILED';
     await expect(x.host.start()).rejects.toThrow(error);
     expect(x.host.getResourceReport().appCleanup?.support).toBe('rejected');
@@ -85,4 +89,18 @@ it('rejects a false APP_CLOSE terminal even when appCleanup reports completed', 
 
     expect(x.host.getResourceReport().appCleanup?.report).toMatchObject({ state: 'completed', issues: [] });
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
+});
+
+
+it('retains a confirmed cleanup failure when a later lifecycle report contradicts it', async () => {
+    const x = fixture((request, response) => request.type === 'APP_STOP' ? {
+        ...response, success: false,
+        appCleanup: { ...response.appCleanup, state: 'failed', issues: ['APP_CLEANUP_FAILED'] },
+    } : response);
+    await x.host.start(); await x.host.open();
+    await expect(x.host.close()).rejects.toHaveProperty('code', 'APP_CLEANUP_FAILED');
+    expect(await x.host.waitForResourceRelease()).toMatchObject({
+        worker: 'exited', resourcesReleased: true,
+        appCleanup: { report: { state: 'failed', issues: ['APP_CLEANUP_FAILED'] } },
+    });
 });

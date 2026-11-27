@@ -82,6 +82,7 @@ it('uses the same packaged file App through an independent Host and the product 
         await register('files_install');
         await register('OtherInstall');
         const receipts: { request: AppInvocation; receipt: InvocationReceipt }[] = [];
+        const refused: { request: AppInvocation; result: Extract<Awaited<ReturnType<import('@aotui/runtime').ActiveTurn['invoke']>>, {kind:'refused'}> }[] = [];
         const adopt = desktop.adoptTurn.bind(desktop);
         vi.spyOn(desktop, 'adoptTurn').mockImplementation(selection => {
             const result = adopt(selection);
@@ -90,6 +91,7 @@ it('uses the same packaged file App through an independent Host and the product 
             return { ...result, turn: { ...active, get isCurrent() { return active.isCurrent; }, async invoke(appId, request, timeout, signal) {
                 const result = await active.invoke(appId, request, timeout, signal);
                 if (result.kind === 'receipt') receipts.push({ request, receipt: result.receipt });
+                if (result.kind === 'refused') refused.push({request,result});
                 return result;
             } } };
         });
@@ -157,38 +159,38 @@ it('uses the same packaged file App through an independent Host and the product 
         const inactive = await step('launch', [modelCall('launch', 'system-open_app', { installation_id: 'files_install' })]);
         expect(inactive.tools.find(tool => tool.function.name === 'system-open_app')?.function.parameters).toMatchObject({ required: ['installation_id'] });
         expect(JSON.stringify(inactive.messages)).not.toContain('OtherInstall');
-        const home = await step('directory', [modelCall('open-a', 'batch_files-open_file', { name: 'A.txt' })]);
-        expect(home.tools.some(tool => tool.function.name === 'batch_files-edit')).toBe(false);
-        expect(home.tools.find(tool => tool.function.name === 'batch_files-open_file')?.function.parameters).toMatchObject({ required: ['name'] });
-        const oneFile = await step('one-file', [modelCall('open-b', 'batch_files-open_file', { name: 'B.txt' })]);
-        expect(oneFile.tools.filter(tool => tool.function.name === 'batch_files-edit')).toHaveLength(1);
+        const home = await step('directory', [modelCall('open-a', 'batch_files-workspace-open_file', { name: 'A.txt' })]);
+        expect(home.tools.some(tool => tool.function.name === 'batch_files-file-edit')).toBe(false);
+        expect(home.tools.find(tool => tool.function.name === 'batch_files-workspace-open_file')?.function.parameters).toMatchObject({ required: ['name'] });
+        const oneFile = await step('one-file', [modelCall('open-b', 'batch_files-workspace-open_file', { name: 'B.txt' })]);
+        expect(oneFile.tools.filter(tool => tool.function.name === 'batch_files-file-edit')).toHaveLength(1);
         const address = '$ref.batch_files.doc_1.content';
-        const opened = await step('two-files', [modelCall('literal-edit', 'batch_files-edit', { view_id: 'doc_2', text: '$' + address })]);
-        expect(opened.tools.filter(tool => tool.function.name === 'batch_files-edit')).toHaveLength(1);
+        const opened = await step('two-files', [modelCall('literal-edit', 'batch_files-file-edit', { view_id: 'doc_2', text: '$' + address })]);
+        expect(opened.tools.filter(tool => tool.function.name === 'batch_files-file-edit')).toHaveLength(1);
         const prompt = JSON.stringify(opened.messages);
         expect(prompt).toContain('view_id=\\"doc_1\\" view_type=\\"file\\" app_id=\\"batch_files\\" app_name=\\"batch_files\\"');
         expect(prompt).toContain('view_id=\\"doc_2\\"');
         expect(await readFile(join(data, 'B.txt'), 'utf8')).toBe(address);
         const updatedA = 'new A outside the app';
         const afterLiteral = await step('after-literal', [
-            modelCall('reload', 'batch_files-reload_source', {}),
-            modelCall('ref-edit', 'batch_files-edit', { view_id: 'doc_2', text: address }),
+            modelCall('reload', 'batch_files-workspace-reload_source', {}),
+            modelCall('ref-edit', 'batch_files-file-edit', { view_id: 'doc_2', text: address }),
         ], () => writeFile(join(data, 'A.txt'), updatedA));
         const modelViews = (request: ProviderRequest, id: string) =>
             userText(request).filter(text => text.startsWith('<view view_id="' + id + '"'));
         expect(modelViews(afterLiteral, 'doc_2')).toHaveLength(1);
         expect(modelViews(afterLiteral, 'doc_2')[0]).toContain('[' + address.replaceAll('_', '\\_') + '](protected content: string)');
         expect(await readFile(join(data, 'B.txt'), 'utf8')).toBe('original A');
-        await step('before-authorization', [modelCall('disable-a', 'batch_files-mark_a_readonly', {})]);
-        await step('authorization', [modelCall('disabled-a', 'batch_files-edit', { view_id: 'doc_1', text: 'must be rejected' })]);
-        await step('close-a', [modelCall('close-a', 'batch_files-close', { view_id: 'doc_1' })]);
-        const after = await step('one-remaining', [modelCall('close-b', 'batch_files-close', { view_id: 'doc_2' })]);
+        await step('before-authorization', [modelCall('disable-a', 'batch_files-workspace-mark_a_readonly', {})]);
+        await step('authorization', [modelCall('disabled-a', 'batch_files-file-edit', { view_id: 'doc_1', text: 'must be rejected' })]);
+        await step('close-a', [modelCall('close-a', 'batch_files-file-close', { view_id: 'doc_1' })]);
+        const after = await step('one-remaining', [modelCall('close-b', 'batch_files-file-close', { view_id: 'doc_2' })]);
         expect(JSON.stringify(after.messages)).not.toContain('<view view_id=\\"doc_1\\"');
         expect(modelViews(after, 'doc_2')).toHaveLength(1);
         expect(modelViews(after, 'doc_2')[0]).toContain('[original A](protected content: string)');
-        expect(after.tools.some(tool => tool.function.name === 'batch_files-edit')).toBe(true);
+        expect(after.tools.some(tool => tool.function.name === 'batch_files-file-edit')).toBe(true);
         const homeAgain = await step('directory-again');
-        expect(homeAgain.tools.some(tool => tool.function.name === 'batch_files-edit')).toBe(false);
+        expect(homeAgain.tools.some(tool => tool.function.name === 'batch_files-file-edit')).toBe(false);
         const writes = (await readFile(join(data, 'writes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
         expect(writes).toEqual([
             { name: 'B.txt', text: address }, { name: 'B.txt', text: 'original A' },
@@ -223,6 +225,17 @@ it('uses the same packaged file App through an independent Host and the product 
         for (const id of ['open-a', 'open-b', 'literal-edit', 'reload', 'ref-edit', 'disabled-a', 'close-a', 'close-b']) {
             const product = receipts.find(entry => entry.request.invocationId === id);
             const other = facts.calls.find((entry: { request: AppInvocation }) => entry.request.invocationId === id);
+            if (id === 'disabled-a') {
+                const denied=refused.find(entry=>entry.request.invocationId===id);
+                expect(product).toBeUndefined();
+                expect(denied?.request.input).toEqual(other.request.input);
+                expect(denied?.request.viewId).toEqual(other.request.viewId);
+                expect(denied?.result).toEqual(other.result);
+                expect(denied?.result).toMatchObject({kind:'refused',code:'TOOL_UNAVAILABLE',path:'$.view_id'});
+                expect(denied?.result).not.toHaveProperty('locator');
+                expect(JSON.stringify(history.filter(item=>item.role==='tool'))).toContain('TOOL_UNAVAILABLE');
+                continue;
+            }
             expect(product, id).toBeDefined();
             expect(product!.request.input).toEqual(other.request.input);
             if (id === 'close-b') {

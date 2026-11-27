@@ -76,22 +76,22 @@ function literalBlock(text: string): string {
 export default createApp({
     ...pkg.aotui,
     viewTypes: workViewTypes,
-    async initialize({ launchConfig, prepareProjection, prepareOpeningProjection, registerCleanup, signal }) {
+    async initialize({ launchConfig, publish: commit, registerLifecycle, signal }) {
         const sqlite = openSqlite(launchConfig?.databasePath, launchConfig?.sqliteExecutable);
-        registerCleanup({ stop: sqlite.stop, close: sqlite.close });
+        registerLifecycle({ stop: sqlite.stop, close: sqlite.close });
         type Content = { readonly body: string; readonly refs?: readonly PublishedRef[] };
-        type Detail = { id: number; content: Content; view: ViewHandle };
+        type Detail = { id: number; content: Content; view: ViewHandle<typeof WorkDetailType> };
         type WorkState = { available: boolean; list: Content; detail?: Detail | undefined };
         let state: WorkState = { available: false, list: { body: 'Loading work items.' } };
-        let candidate: WorkState | undefined;
-        const displaying = () => candidate ?? state;
-        const root = createView(WorkInstructionsType, {
-            id: 'root', name: 'SQLite work items', render: () => ({ body: instructions }),
-        });
-        const list = createView(WorkListType, {
-            id: 'items', name: 'Work items',
-            render: () => ({ ...displaying().list, context: { available: displaying().available, openItem, refresh: refreshReceipt } }),
-        });
+        const root = createView(WorkInstructionsType, { id: 'root' });
+        const list = createView(WorkListType, { id: 'items' });
+        const frames = (next: WorkState) => [
+            root.frame({ name: 'SQLite work items', body: instructions }),
+            list.frame({ name: 'Work items', ...next.list,
+                context: { available: next.available, openItem, refresh: refreshReceipt } }),
+            ...(next.detail ? [next.detail.view.frame({ name: 'Work item detail', ...next.detail.content,
+                bindingKey: next.detail.id, context: { available: next.available, id: next.detail.id, setStatus, closeItem } })] : []),
+        ];
 
         async function openItem(id: number): Promise<ToolResult> {
             const issue = await refresh(id, true);
@@ -133,34 +133,23 @@ SELECT changes() AS direct, total_changes() AS total;`);
                 : { written: true, refreshed: true } };
         }
 
-        function createDetail(id: number): ViewHandle {
-            return createView(WorkDetailType, {
-                id: 'detail', name: 'Work item detail',
-                render: () => ({
-                    ...displaying().detail!.content,
-                    context: { available: displaying().available, id, setStatus, closeItem },
-                }),
-            });
+        function createDetail(_id: number): ViewHandle<typeof WorkDetailType> {
+            return createView(WorkDetailType, { id: 'detail' });
         }
 
         function show(next: WorkState, opening = false): SqliteIssue | undefined {
-            const views = next.detail ? [root, list, next.detail.view] : [root, list];
-            candidate = next;
-            try {
-                if (opening && next.detail && next.detail.view !== state.detail?.view) {
-                    const result = prepareOpeningProjection({ views });
-                    if (result.status === 'rejected') return { code: result.issue.code, message: 'The selected item does not fit in the current projection.' };
-                } else prepareProjection({ views });
-                state = next;
-            } finally { candidate = undefined; }
+            if (!opening) state = next;
+            const result = commit(() => frames(next), { mode: opening ? 'candidate' : 'authoritative' });
+            if (!result.ok) return { code: result.issue.code, message: 'The selected item does not fit in the current projection.' };
+            state = next;
         }
 
         function unavailable(issue: SqliteIssue): SqliteIssue {
             if (signal.aborted) return issue;
             const body = `Work item data is unavailable (${issue.code}). ${issue.message} Use refresh to read SQLite.`;
             const detail = state.detail && { ...state.detail, content: { body: 'Detail unavailable. Use refresh to read it again.' } };
-            try { show({ available: false, list: { body }, detail }); }
-            catch { return { code: 'WORK_ITEMS_PROJECTION_FAILED', message: 'Could not publish the refresh issue.' }; }
+            if (show({ available: false, list: { body }, detail }))
+                return { code: 'WORK_ITEMS_PROJECTION_FAILED', message: 'Could not publish the refresh issue.' };
             return issue;
         }
 

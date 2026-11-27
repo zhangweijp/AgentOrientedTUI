@@ -63,7 +63,7 @@ const completed = () => ({ success: true as const });
 export default createApp({
     app_name: 'batch_files',
     viewTypes: [Guide, Workspace, File, Marker, Status],
-    initialize({ launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const configuredFolder = launchConfig?.folder;
         if (typeof configuredFolder !== 'string') throw new Error('Missing test folder');
         const folder: string = configuredFolder;
@@ -71,12 +71,10 @@ export default createApp({
         const files = new Map<FileName, ReturnType<typeof mount>>();
         let aWritable = true;
         let watcher: ReturnType<typeof setInterval> | undefined;
-        const guide = createView(Guide, { render: () => ({ body: '# File instructions' }) });
-        const status = createView(Status, { render: () => ({ body: files.size + ' files open.' }) });
-        const marker = createView(Marker, { region: 'static', idPrefix: '2note', render: () => ({ body: 'Static marker' }) });
-        const workspace = createView(Workspace, { id: 'main', render: () => ({
-            body: 'Files A.txt and B.txt.',
-            context: {
+        const guide = (() => { const handle = createView(Guide); return { handle, frame: () => handle.frame({ body: '# File instructions' }) }; })();
+        const status = (() => { const handle = createView(Status); return { handle, frame: () => handle.frame({ body: files.size + ' files open.' }) }; })();
+        const marker = (() => { const handle = createView(Marker, { region: 'static', idPrefix: '2note' }); return { handle, frame: () => handle.frame({ body: 'Static marker' }) }; })();
+        const workspace = (() => { const handle = createView(Workspace, { id: 'main' }); return { handle, frame: () => handle.frame({ body: 'Files A.txt and B.txt.', context: {
                 open(name) {
                     text[name] = readFileSync(join(folder, name), 'utf8');
                     if (!files.has(name)) files.set(name, mount(name));
@@ -107,13 +105,12 @@ export default createApp({
                     }, 20);
                     return completed();
                 },
-            },
-        }) });
-        const ready = createView(Marker, { region: 'dynamic', render: () => ({ body: 'Dynamic marker' }) });
-        registerCleanup({ stop: () => { clearInterval(watcher); } });
-        function publish() { prepareProjection({ views: [guide, workspace, marker, ...files.values(), ready, status] }); }
+            } }) }; })();
+        const ready = (() => { const handle = createView(Marker, { region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: 'Dynamic marker' }) }; })();
+        registerLifecycle({ stop: () => { clearInterval(watcher); } });
+        function publish() { commit(() => ([guide, workspace, marker, ...files.values(), ready, status]).map(page => page.frame())); }
         function mount(name: FileName) {
-            return createView(File, { idPrefix: 'doc', render: () => {
+            return (() => { const handle = createView(File, { idPrefix: 'doc' }); return { handle, frame: () => {
                 const content = ref('content', text[name], { scope: 'protected', schema: Type.String() });
                 const hidden = ref('hidden', 'private data', { scope: 'private', schema: Type.String() });
                 const lines = arrayRef('lines', Array.from({ length: 100 }, (_, i) => 'line ' + i),
@@ -121,11 +118,8 @@ export default createApp({
                 const quoted = ref('quoted', { 'lines[0]': 'literal bracket name' },
                     { scope: 'protected', schema: Type.Object({ 'lines[0]': Type.String() }) });
                 const count = ref('count', 7, { scope: 'protected', schema: Type.Integer() });
-                return {
-                    body: [name, formatRef(text[name], content), formatRef('Line list', lines), formatRef('First line', lines, 0),
-                        formatRef('Other value', quoted)].join('\n'),
-                    refs: [content, hidden, lines, quoted, count],
-                    context: {
+                return handle.frame({ body: [name, formatRef(text[name], content), formatRef('Line list', lines), formatRef('First line', lines, 0),
+                        formatRef('Other value', quoted)].join('\n'), refs: [content, hidden, lines, quoted, count], context: {
                         name, writable: name === 'B.txt' || aWritable,
                         write(next: string) {
                             writeFileSync(join(folder, name), next);
@@ -135,9 +129,8 @@ export default createApp({
                             return completed();
                         },
                         close() { files.delete(name); publish(); return completed(); },
-                    },
-                };
-            } });
+                    } });
+            } }; })();
         }
         publish();
     },

@@ -29,16 +29,16 @@ it('exports the portable thin root and two specialized sub-entries', () => {
         'isToolResultData', 'isViewTypeName', 'normalizeProjectionLimits', 'readAppFactory', 'refKey', 'utf8Size',
     ].sort());
     expect(Object.keys(producer).sort()).toEqual([
-        'SemanticProjectionCoordinator', 'ViewToolContractError', 'captureSnapshotDraftEnvelope',
+        'SemanticProjectionCoordinator', 'ViewToolContractError', 'captureSnapshotDraftEnvelope', 'captureViewTypes',
         'captureSnapshotPrepareIssue', 'commitAppFrame', 'createViewOwnedTools', 'viewToolReceiver', 'hostedObservationCapacityIssue',
-        'checkRefViews', 'refPath', 'scopeAllows', 'TOOL_REQUEST_LIMITS', 'validatePreparedSnapshot',
+        'checkRefViews', 'refLane', 'refPath', 'scopeAllows', 'stoppedPublication', 'TOOL_REQUEST_LIMITS', 'validatePreparedSnapshot',
     ].sort());
     expect(Object.keys(host).sort()).toEqual([
         'RAW_TOOL_ARGUMENT_LIMITS', 'REF_VALUE_LIMITS',
         'RESOLVED_TOOL_ARGUMENT_LIMITS', 'TOOL_REQUEST_LIMITS',
         'captureSnapshotDraftEnvelope', 'captureSnapshotPrepareIssue',
-        'createAppInteraction', 'createSnapshotCore', 'createTurnCoordinator', 'encodeRefLiteral', 'formatRefPath',
-        'hostedObservationCapacityIssue', 'hostedObservationNamespace',
+        'captureObservationOptions', 'createAppInteraction', 'createHostedAppInteraction', 'createSnapshotCore', 'createTurnCoordinator', 'encodeRefLiteral', 'formatRefPath',
+        'hostedObservationCapacityIssue', 'hostedObservationNamespace', 'normalizeInteractionLimits',
         'parseRefAddress', 'prepareViewTypeParameters',
         'projectCompleteViews', 'REF_ADDRESS_PREFIX', 'refPath', 'refConsumerAllowed', 'scopeAllows',
         'snapshotId',
@@ -56,7 +56,7 @@ it('keeps the mutable terminal result contract', () => {
 
 it('exports the execution port and MOD-01/MOD-02 contracts used by the current observation', () => {
     expectTypeOf<keyof core.ExecutionBinding>().toEqualTypeOf<'identity' | 'isLive' | 'execute'>();
-    expectTypeOf<core.ObservationWindowSelection>().toEqualTypeOf<{ readonly activeViews: readonly core.ViewIdentity[] }>();
+    expectTypeOf<core.ObservationWindowSelection>().toEqualTypeOf<{ readonly activeViews: readonly core.ViewIdentity[]; readonly closeViews?: readonly core.ViewIdentity[] }>();
     expectTypeOf<core.PublicRefValue>().toEqualTypeOf<{
         readonly appId: string;
         readonly viewId: string;
@@ -80,7 +80,7 @@ it('C18 runs actual Core, Registry and instance dispatch through the explicit en
     frame.accept();
     const tool = frame.tools[0]!, view = frame.instances[0]!;
     const snapshots = host.createSnapshotCore({ appId: 'app', instanceId: 'instance', now: () => 0 });
-    expect(snapshots.committer.accept({ schemaVersion: 8, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    expect(snapshots.committer.accept({ healthySince: 1,  schemaVersion: 9, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', region: 'dynamic', content: { format: 'markdown-v1', value: 'state' } }],
         refs: {}, tools: { [tool.id]: tool } }).status).toBe('published');
     const binding: core.ExecutionBinding = { identity: {},

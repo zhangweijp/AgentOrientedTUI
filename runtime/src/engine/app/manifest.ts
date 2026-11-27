@@ -1,3 +1,4 @@
+import { runtimeProtocolError } from '../../adapters/initialization-error.js';
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,12 +42,12 @@ function findAppManifest(target: string): AppManifest | undefined {
                 location = manifestPath + '#version';
                 if (typeof manifest.version !== 'string' || !manifest.version.trim())
                     throw new TypeError('Build the App to generate a manifest with a version');
-                if (!hasViewTypeToolAuthoringProtocol(manifest)) throw Object.assign(new Error('The generated manifest declares an unsupported authoring protocol; rebuild with the matching SDK'), {
+                if (!hasViewTypeToolAuthoringProtocol(manifest)) throw runtimeProtocolError({ message: 'The generated manifest declares an unsupported authoring protocol; rebuild with the matching SDK',
                     code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', path: manifestPath + '#toolAuthoringProtocol',
                 });
                 location = manifestPath + '#appLifecycleSupport';
                 if (manifest.appLifecycleSupport !== APP_LIFECYCLE_PROTOCOL)
-                    throw new TypeError('The generated manifest requires the current App lifecycle contract');
+                    throw runtimeProtocolError({ message: 'The generated manifest requires the current App lifecycle contract; rebuild with the matching SDK', code: 'APP_LIFECYCLE_UNSUPPORTED', path: location });
                 location = manifestPath + '#entry.main';
                 if (typeof manifest.entry?.main !== 'string' || !manifest.entry.main.trim())
                     throw new TypeError('Build the App to generate a manifest with entry.main');
@@ -61,7 +62,7 @@ function findAppManifest(target: string): AppManifest | undefined {
         }
     } catch (error) {
         const issue = error as { code?: string; path?: string } | undefined;
-        if (error instanceof AOTUIError || issue?.code === 'APP_AUTHORING_PROTOCOL_UNSUPPORTED') throw error;
+        if (error instanceof AOTUIError || issue?.code === 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' || issue?.code === 'APP_LIFECYCLE_UNSUPPORTED') throw error;
         if (issue?.code === 'APP_METADATA_INVALID' && issue.path) location += '#' + issue.path;
         throw new AOTUIError('APP_MANIFEST_INVALID', { path: location,
             reason: error instanceof Error ? error.message : 'Build the App to generate aoapp.json' });

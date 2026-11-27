@@ -26,8 +26,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 outfile: workerFile, bundle: true, platform: 'node',
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
             });
-            const fixture = `
-                import Type from 'typebox';
+            const fixture = `import Type from 'typebox';
                 import { createApp, createView, defineViewType } from './sdk/src/index.ts';
 
 
@@ -52,10 +51,9 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 } });
 
                 export default createApp({ viewTypes: [FileDetail], app_name: 'test_result',
-                    initialize({ prepareProjection }) {
-                        const page = createView(FileDetail, { idPrefix: 'root', region: 'static',
-                            render: () => ({ body: 'Tool receipts', context: {} }) });
-                        prepareProjection({ views: [page] });
+                    initialize({ publish: publishAuthorFrame }) {
+                        const page = (() => { const handle = createView(FileDetail, { idPrefix: 'root', region: 'static' }); return { handle, frame: () => handle.frame({ body: 'Tool receipts', context: {} }) }; })();
+                        publishAuthorFrame(() => ([page]).map(page => page.frame()));
                     },
                 });
             `;
@@ -70,7 +68,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             host = fixtureHost(AppWorkerHost, {
                 appId: 'result_app' as any, desktopId: 'result_desktop' as any,
                 appModulePath: appFile,
-                config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
+                config: { AOTUI_DATA_DIR: temporary },
             }, { script: workerFile });
             await host.start();
             await host.open();

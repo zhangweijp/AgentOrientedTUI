@@ -7,9 +7,9 @@ import { createApp, createView, defineViewType, ref, type ToolResult } from '@ao
 type Name = 'A' | 'B' | 'C' | 'D' | 'E';
 const largeText = 'B-LATEST ' + 'b'.repeat(8_000);
 const succeeded = () => ({ success: true as const, data: { saved: true } });
-const File = defineViewType<{
+const File = defineViewType<({
     name: Name; edit(mode: 'large' | 'short' | 'late'): Promise<ToolResult>;
-}>()({ name: 'file', multiplicity: 'multiple', region: 'dynamic',
+}) & { close?: (() => ToolResult) | undefined }>()({ onClose: { enabled: context => !!context.close, execute: ({ context }) => context.close!() },  name: 'file', multiplicity: 'multiple', region: 'dynamic',
     tools: {
         edit: { description: 'Apply the selected editing operation to this open file.',
             inputSchema: Type.Object({ mode: Type.Union([Type.Literal('large'), Type.Literal('short'), Type.Literal('late')]) }),
@@ -30,7 +30,7 @@ const Workspace = defineViewType<{ open(names: readonly Name[]): ToolResult }>()
 
 export default createApp({
     app_name: 'window_files', viewTypes: [Workspace, File],
-    initialize({ launchConfig, prepareProjection, prepareOpeningProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const folder = launchConfig?.folder;
         if (typeof folder !== 'string') throw new Error('Missing file fixture directory');
         const dir: string = folder;
@@ -38,8 +38,7 @@ export default createApp({
         const generations = new Map<Name, number>();
         const writeLog = (name: string, value: object) => appendFileSync(join(dir, name + '.jsonl'), JSON.stringify(value) + '\n');
         const disk = (name: Name) => join(dir, name + '.txt');
-        const workspace = createView(Workspace, { render: () => ({ body: 'Workspace files A, B, C, D and E.',
-            context: { open(requested) {
+        const workspace = (() => { const handle = createView(Workspace); return { handle, frame: () => handle.frame({ body: 'Workspace files A, B, C, D and E.', context: { open(requested) {
                 const candidate = new Map(files);
                 const added: Name[] = [];
                 try {
@@ -48,8 +47,8 @@ export default createApp({
                         candidate.set(name, mount(name, readFileSync(disk(name), 'utf8')));
                         added.push(name);
                     }
-                    const open = prepareOpeningProjection(frame(candidate));
-                    if (open.status === 'rejected')
+                    const open = commit(() => ((frame(candidate)).views).map(page => page.frame()), { mode: 'candidate' });
+                    if (!open.ok)
                         return { success: false, error: { code: open.issue.code, message: open.issue.message } };
                     files = candidate;
                     for (const name of added) generations.set(name, files.get(name)!.generation);
@@ -58,10 +57,9 @@ export default createApp({
                     return { success: false, error: { code: (error as { code?: string }).code ?? 'OPEN_FAILED',
                         message: error instanceof Error ? error.message : 'Open failed' } };
                 }
-            } },
-        }) });
+            } } }) }; })();
         const frame = (current: typeof files) => ({ views: [workspace, ...[...current.values()].map(page => page.handle)] });
-        const publish = () => prepareProjection(frame(files));
+        const publish = () => commit(() => ((frame(files)).views).map(page => page.frame()));
         function mount(name: Name, text: string) {
             const generation = (generations.get(name) ?? 0) + 1;
             function close(): ToolResult {
@@ -72,13 +70,7 @@ export default createApp({
                 publish();
                 return { success: true };
             }
-            const handle = createView(File, {
-                idPrefix: 'file_' + name,
-                region: name === 'A' || (name === 'B' && launchConfig?.staticB === true) ? 'static' : 'dynamic',
-                ...(name === 'C' ? {} : { onClose: close }),
-                render: () => ({ body: name + '.txt generation ' + generation + '\n' + text,
-                    refs: [ref('content', text, { scope: 'protected', schema: Type.String() })],
-                    context: { name, async edit(mode) {
+            const handle = (() => { const handle = createView(File, { idPrefix: 'file_' + name, region: name === 'A' || (name === 'B' && launchConfig?.staticB === true) ? 'static' : 'dynamic' }); const closeAction = name === 'C' ? undefined : close; return { handle, frame: () => handle.frame({ body: name + '.txt generation ' + generation + '\n' + text, refs: [ref('content', text, { scope: 'protected', schema: Type.String() })], context: { ...({ name, async edit(mode) {
                         const value = mode === 'large' ? largeText : name + '-EDITED';
                         writeFileSync(disk(name), value);
                         writeLog('writes', { name, generation, size: value.length, threadId });
@@ -86,9 +78,7 @@ export default createApp({
                         publish();
                         if (mode === 'late') await new Promise(resolve => setTimeout(resolve, 240));
                         return succeeded();
-                    } },
-                }),
-            });
+                    } }), close: closeAction } }) }; })();
             return { handle, generation, update(textFromDisk: string) { text = textFromDisk; } };
         }
         publish();
@@ -107,7 +97,7 @@ export default createApp({
             if (remount) {
                 const next = mount(name, current);
                 const candidate = new Map(files).set(name, next);
-                if (prepareOpeningProjection(frame(candidate)).status === 'rejected') return;
+                if (!commit(() => ((frame(candidate)).views).map(page => page.frame()), { mode: 'candidate' })) return;
                 files = candidate;
                 generations.set(name, next.generation);
             } else {
@@ -115,6 +105,6 @@ export default createApp({
                 publish();
             }
         }, 20);
-        registerCleanup({ stop: () => { clearInterval(watcher); writeLog('lifecycle', { event: 'stop', threadId }); } });
+        registerLifecycle({ stop: () => { clearInterval(watcher); writeLog('lifecycle', { event: 'stop', threadId }); } });
     },
 });

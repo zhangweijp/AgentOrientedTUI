@@ -89,21 +89,15 @@ const FileDetail = defineViewType()({ multiplicity: 'multiple', name: 'Detail', 
 const viewTypes = [Guide, FileDetail];
 
 export default createApp({ app_name: 'interaction_example', viewTypes,
-  initialize({ prepareProjection }) {
+  initialize({ publish: publishAuthorFrame }) {
     let count = 0, text = 'original';
     const filePath = '/open/note.txt';
-    const root = createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({
-      body: '# File Application Instruction\\n\\nSelect the receiving View by view_id. Use the published File Ref address.',
-    }) });
-    const detail = createView(FileDetail, { idPrefix: 'detail', region: 'dynamic', render: () => {
+    const root = (() => { const handle = createView(Guide, { idPrefix: 'root', region: 'static' }); return { handle, frame: () => handle.frame({ body: '# File Application Instruction\\n\\nSelect the receiving View by view_id. Use the published File Ref address.' }) }; })();
+    const detail = (() => { const handle = createView(FileDetail, { idPrefix: 'detail', region: 'dynamic' }); return { handle, frame: () => {
       const file = ref('file', { filePath, text }, { scope: 'protected', refType: 'File', schema: FileSchema });
-      return {
-        refs: [file],
-        body: ['Open file: ' + filePath, formatRef('Current file value', file), text, 'Completed actions: ' + count].join('\\n\\n'),
-        context: { filePath, edit(value) { text = value; count++; publish(); } },
-      };
-    } });
-    function publish() { prepareProjection({ views: [root, detail] }); }
+      return handle.frame({ refs: [file], body: ['Open file: ' + filePath, formatRef('Current file value', file), text, 'Completed actions: ' + count].join('\\n\\n'), context: { filePath, edit(value) { text = value; count++; publish(); } } });
+    } }; })();
+    function publish() { publishAuthorFrame(() => ([root, detail]).map(page => page.frame())); }
     publish();
   },
 });
@@ -266,7 +260,7 @@ import { createApp, createView, defineViewType } from '@aotui/sdk';
 import { projectNativeToolSchema } from '@aotui/runtime/adapters';
 
 export const modelSchemaFor = inputSchema => projectNativeToolSchema({ multiplicity: 'multiple',
-    viewType: 'Detail', inputSchema }, { appId: 'schema_capacity', instanceId: 'capacity' }, [], []);
+    viewType: 'Detail', inputSchema });
 
 const limit = 64 * 1024;
 const base = { type: 'object', properties: {}, required: [], additionalProperties: false, description: '' };
@@ -285,11 +279,9 @@ export const oversizedSchema = { ...base, description: 'x'.repeat(limit) };
 export const modelSchema = modelSchemaFor(Detail.tools.wide.inputSchema);
 export const modelBytes = bytes(modelSchema);
 export const schemaBytes = bytes(Detail.tools.wide.inputSchema);
-export default createApp({ app_name: 'schema_capacity', viewTypes: [Detail], initialize({ prepareProjection }) {
-    const detail = createView(Detail, { idPrefix: 'detail', region: 'dynamic', render: () => ({
-        body: 'Schema ready', context: {},
-    }) });
-    prepareProjection({ views: [detail] });
+export default createApp({ app_name: 'schema_capacity', viewTypes: [Detail], initialize({ publish: publishAuthorFrame }) {
+    const detail = (() => { const handle = createView(Detail, { idPrefix: 'detail', region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: 'Schema ready', context: {} }) }; })();
+    publishAuthorFrame(() => ([detail]).map(page => page.frame()));
 } });
 `);
     const fixture = await import(pathToFileURL(entry).href);
@@ -297,7 +289,7 @@ export default createApp({ app_name: 'schema_capacity', viewTypes: [Detail], ini
     expect(fixture.schemaBytes).toBeLessThan(fixture.modelBytes);
     const overLimit = fixture.define(1);
     expect(() => fixture.modelSchemaFor(overLimit.tools.wide.inputSchema)).toThrow(expect.objectContaining({
-        code: 'TOOL_SCHEMA_CAPACITY', path: '$',
+        code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED', path: expect.any(String),
     }));
     const coreEntry = join(directory, 'capacity-core.mjs');
     await capture(coreEntry, "export { compileToolParameters } from '@aotui/core';\n");
@@ -352,7 +344,7 @@ export * as sdk from '@aotui/sdk';
 ${declaration}
 export default ${variant === 'invalid-export' ? '[' : ''}{
     app_name: 'legacy_sdk',
-    toolAuthoringProtocol: abi, appLifecycleSupport: 'app-lifecycle-v2',
+    toolAuthoringProtocol: abi, appLifecycleSupport: 'app-lifecycle-v3',
     initialize() {
         throw Error('INCOMPATIBLE_FACTORY_ENTERED');
     }
@@ -360,7 +352,7 @@ export default ${variant === 'invalid-export' ? '[' : ''}{
             const issue = variant === 'import'
                 ? { code: 'E_INIT_FAILED', cause: { message: expect.stringContaining('ORDINARY_INVOCATION_MODE') } }
                 : variant === 'invalid-export' ? { code: 'E_INIT_FAILED', cause: { code: 'APP_INVALID_EXPORT' } }
-                : { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', message: expect.stringContaining('view-type-tools-v8') };
+                : { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', message: expect.stringContaining('view-type-tools-v9') };
             await expect(install(runtime, 'd', variant, undefined, { name: 'legacy_sdk' }, file)).rejects.toMatchObject({
                 code: 'INSTALL_FAILED', cause: issue,
             });
@@ -598,7 +590,7 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
             const handlersBeforeClose = await handlerCount();expect(handlersBeforeClose).toBe(stage === 'authorize' ? 0 : 1);
             const closing = parent === 'desktop' ? runtime.getDesktop('d').beginClose()
                 : parent === 'app' ? s.running.beginClose() : runtime.beginClose(), before = closing.inspect();expect((await closing.wait({ timeoutMs: 5 })).status).toBe('deadline');
-            expect(closing.inspect()).toMatchObject({ resourcesReleased: false, hasFailures: false, interactions: { verified: true, retainedOperations: stage === 'authorize' ? 2 : 1 } });
+            expect(closing.inspect()).toMatchObject({ resourcesReleased: false, hasFailures: false, interactions: { verified: true, retainedOperations: 1 } });
             expect(await s.client.invoke(input)).toHaveProperty('code', parent === 'app' ? 'OBSERVATION_UNAVAILABLE' : 'TURN_NOT_ACTIVE');expect(calls).toBe(1);
             if (reject) gate.reject(Error('held policy'));else gate.resolve(true);
             expect(await work).not.toHaveProperty('kind', 'receipt');const report = await closing.completion;
@@ -613,7 +605,7 @@ it('keeps the trusted setting through collapse, expand and reopen while revoking
     const pendingApp = join(directory, 'pending-limits.mjs');
     const original = await readFile(app, 'utf8');
     const author = original
-        .replace('initialize({ prepareProjection }) {', 'initialize({ prepareProjection, projectionLimits: { maxViews, observation } }) {')
+        .replace('initialize({ publish: publishAuthorFrame }) {', 'initialize({ publish: publishAuthorFrame, projectionLimits: { maxViews, observation } }) {')
         .replace("'# File Application Instruction", "'Configured limits ' + maxViews + '/' + observation.maxCanonicalBytes + '");
     expect(author).not.toBe(original);
     await capture(pendingApp, author);
@@ -637,7 +629,7 @@ it('keeps the trusted setting through collapse, expand and reopen while revoking
         expect(desktop.getRunningApp(authorName, s.instanceId).app).toBe(s.running);
         expectLimits(first);
         expect(await s.client.invoke(request(first, 'ordinary', { text: 'change' }, 'old-expanded-route'))).toMatchObject({
-            receipt: { executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'TOOL_UNAVAILABLE' } },
+            kind:'refused',code:'TOOL_UNAVAILABLE',
         });
         const expanded = await s.observe();
         expect((await s.client.invoke(request(expanded, 'ordinary', { text: 'change' }, 'fresh-expanded-route'))).receipt.outcome.status).toBe('succeeded');
@@ -655,14 +647,13 @@ it('keeps the trusted setting through collapse, expand and reopen while revoking
 
 it('fails an initially over-limit projection and releases its Worker even when the App catches preparation', async () => {
     const entry = join(directory, 'initial-projection-limit.mjs'), disposed = join(directory, 'initial-projection-limit-closed');
-    await capture(entry, `
-import { appendFileSync } from 'node:fs';
+    await capture(entry, `import { appendFileSync } from 'node:fs';
 import { createApp, createView, defineViewType } from '@aotui/sdk';
 const Page = defineViewType({ multiplicity: 'multiple', name: 'Page' });
-export default createApp({ app_name: 'initial_projection_limit', viewTypes: [Page], initialize({ prepareProjection, registerCleanup }) {
-    registerCleanup({ close() { appendFileSync(${JSON.stringify(disposed)}, 'closed'); } });
-    const views = ['a','b'].map(id => createView(Page, { idPrefix: id, region: 'dynamic', render: () => ({ body: id }) }));
-    try { prepareProjection({ views }); }
+export default createApp({ app_name: 'initial_projection_limit', viewTypes: [Page], initialize({ publish: publishAuthorFrame, registerLifecycle }) {
+    registerLifecycle({ close() { appendFileSync(${JSON.stringify(disposed)}, 'closed'); } });
+    const views = ['a','b'].map(id => (() => { const handle = createView(Page, { idPrefix: id, region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: id }) }; })());
+    try { publishAuthorFrame(() => (views).map(page => page.frame())); }
     catch (error) { if (error.code !== 'OBSERVATION_CAPACITY') throw error; }
 }});
 `);
@@ -713,7 +704,7 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         expect(definitions(first)).toEqual(base);
         expect((await call(first, 'system-open_app', { installation_id: 'a' }, 'already-open'))?.error?.code).toBe('INVALID_APP_TARGET');
         expect(first.tools['system-expand_app']).toBeUndefined();
-        const dynamicTool = Object.keys(first.tools).find(name => name === 'interaction_example-ordinary');
+        const dynamicTool = Object.keys(first.tools).find(name => name === 'interaction_example-Detail-ordinary');
         expect(dynamicTool).toBeDefined();
         const firstInstance = desktop.listApps().find((entry: any) => entry.installationId === 'a')?.appInstanceId;
         expect(typeof firstInstance).toBe('string');

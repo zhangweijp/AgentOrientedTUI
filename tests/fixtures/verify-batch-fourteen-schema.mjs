@@ -87,21 +87,21 @@ const declaration = external.native.codes.declaration;
 assert.equal(declaration, product.native.codes.declaration);
 const typeProbe = join(output, 'model-console.ts');
 await writeFile(typeProbe, declaration + `
-tools['cinema-lookup']({ seat: ['A', 12] });
-tools['cinema-lookup']({ seat: ['A', '$ref.cinema.hall.seat[1]'] });
-tools['cinema-lookup']({ seat: '$ref.cinema.hall.seat' });
-tools['cinema-selection']({ seat: '$ref.cinema.hall.seat' });
-tools['cinema-lookup_at']({ seat: refs.cinema.hall.seat, view_id: 'west', label: '$literal', tags: [] });
+tools['cinema-Hall-lookup']({ seat: ['A', 12] });
+tools['cinema-Hall-lookup']({ seat: ['A', '$ref.cinema.hall.seat[1]'] });
+tools['cinema-Hall-lookup']({ seat: '$ref.cinema.hall.seat' });
+tools['cinema-Hall-selection']({ seat: '$ref.cinema.hall.seat' });
+tools['cinema-Desk-lookup_at']({ seat: refs.cinema.hall.seat, view_id: 'west', label: '$literal', tags: [] });
 const seat0: string = refs.cinema.hall.seat[0];
 const seat1: number = refs.cinema.hall.seat[1];
 // @ts-expect-error Wrong type at the seat position.
-tools['cinema-lookup']({ seat: ['A', '12'] });
+tools['cinema-Hall-lookup']({ seat: ['A', '12'] });
 // @ts-expect-error A whole-seat address must use the reserved prefix.
-tools['cinema-lookup']({ seat: '$HOME' });
+tools['cinema-Hall-lookup']({ seat: '$HOME' });
 // @ts-expect-error Multiple View tool requires its receiving view_id.
-tools['cinema-lookup_at']({ seat: ['A', 12], label: 'wrong', tags: [] });
+tools['cinema-Desk-lookup_at']({ seat: ['A', 12], label: 'wrong', tags: [] });
 // @ts-expect-error Nominal selection requires an address.
-tools['cinema-selection']({ seat: ['A', 12] });
+tools['cinema-Hall-selection']({ seat: ['A', 12] });
 // @ts-expect-error Published tuples are read-only.
 refs.cinema.hall.seat[0] = 'B';
 `);

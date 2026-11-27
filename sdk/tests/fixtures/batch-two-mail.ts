@@ -21,7 +21,7 @@ const Draft = defineViewType<{ setRecipients(to: readonly string[]): Promise<Too
 export default createApp({
     app_name: 'mail',
     viewTypes: [Draft],
-    initialize({ launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const configured = launchConfig?.folder;
         if (typeof configured !== 'string') throw new Error('Missing draft folder');
         const folder = configured;
@@ -29,9 +29,7 @@ export default createApp({
         const entered = join(folder, 'draft-handler.jsonl');
         const writes = join(folder, 'draft-writes.jsonl');
         const witness = join(folder, 'mail-lifecycle.jsonl');
-        const draft = createView(Draft, { render: () => ({
-            body: '# Mail draft\nTo: ' + recipients.join(', '),
-            context: { async setRecipients(to) {
+        const draft = (() => { const handle = createView(Draft); return { handle, frame: () => handle.frame({ body: '# Mail draft\nTo: ' + recipients.join(', '), context: { async setRecipients(to) {
                 appendFileSync(entered, JSON.stringify({ to, threadId }) + '\n');
                 const expires = Date.now() + 15000;
                 while (existsSync(join(folder, 'park-draft'))) {
@@ -41,12 +39,11 @@ export default createApp({
                 recipients = to.slice();
                 writeFileSync(join(folder, 'draft.json'), JSON.stringify({ to }));
                 appendFileSync(writes, JSON.stringify({ to, threadId }) + '\n');
-                prepareProjection({ views: [draft] });
+                commit(() => ([draft]).map(page => page.frame()));
                 return { success: true, data: { saved: true } };
-            } },
-        }) });
-        prepareProjection({ views: [draft] });
+            } } }) }; })();
+        commit(() => ([draft]).map(page => page.frame()));
         appendFileSync(witness, JSON.stringify({ event: 'start', threadId }) + '\n');
-        registerCleanup({ stop: () => { appendFileSync(witness, JSON.stringify({ event: 'stop', threadId }) + '\n'); } });
+        registerLifecycle({ stop: () => { appendFileSync(witness, JSON.stringify({ event: 'stop', threadId }) + '\n'); } });
     },
 });

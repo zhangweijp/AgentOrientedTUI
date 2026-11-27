@@ -1,6 +1,6 @@
-import { checkWireJson, DEFAULT_SNAPSHOT_LIMITS, SnapshotDataError } from '@aotui/core';
-import type { JsonValue, ObservationSource, ObservedRef, ObservedTool, RefConsumer, ViewIdentity } from '@aotui/core';
-import { encodeRefLiteral, REF_ADDRESS_PREFIX, refConsumerAllowed, scopeAllows } from '@aotui/core/host';
+import { canonicalJson, checkWireJson, copyWireJson, DEFAULT_SNAPSHOT_LIMITS, SnapshotDataError } from '@aotui/core';
+import type { InteractionIssue, JsonValue, ObservationSource, ObservedRef, ObservedTool } from '@aotui/core';
+import { encodeRefLiteral, REF_ADDRESS_PREFIX } from '@aotui/core/host';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 export interface PresentedRef {
@@ -10,10 +10,11 @@ export interface PresentedRef {
 
 const REF_KIND = 'x-aotui-ref-kind';
 const hint = 'A compatible $ref.app_id.view_id.ref_id address is also accepted.';
-/** The adapter-added address alternative. Script signatures can express it as a template literal. */
-export const NATIVE_REF_ADDRESS_SCHEMA = Object.freeze({ type: 'string', description: 'A complete $ref.app_id.view_id.ref_id address.' });
-export const NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA = Object.freeze({ ...NATIVE_REF_ADDRESS_SCHEMA,
-    pattern: '^\\$ref\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\.[A-Za-z_][A-Za-z0-9_]*([.\\[][\\s\\S]*)?$' });
+/** All generated address branches use this pattern, never an observed Ref shape. */
+export const NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA = Object.freeze({
+    type: 'string', description: 'A complete $ref.app_id.view_id.ref_id address.',
+    pattern: '^\\$ref\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\.[A-Za-z_][A-Za-z0-9_]*([.\\[][\\s\\S]*)?$',
+});
 const budgets = {
     maxDepth: DEFAULT_SNAPSHOT_LIMITS.maxDepth,
     maxNodes: DEFAULT_SNAPSHOT_LIMITS.maxNodes,
@@ -21,114 +22,135 @@ const budgets = {
 };
 const object = (value: JsonValue | undefined): value is JsonObject =>
     value !== null && typeof value === 'object' && !Array.isArray(value);
+const pathOf = (path: string, name: string) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+    ? path + '.' + name : path + '[' + JSON.stringify(name) + ']';
 
-function valueType(value: JsonValue): string {
-    return value === null ? 'null' : Array.isArray(value) ? 'array'
-        : typeof value === 'number' && Number.isInteger(value) ? 'integer' : typeof value;
+export class ModelToolSchemaError extends Error implements InteractionIssue {
+    readonly code = 'MODEL_TOOL_SCHEMA_UNSUPPORTED';
+    constructor(readonly path: string, message: string) { super(message); }
+}
+function unsupported(path: string, message: string): never {
+    throw new ModelToolSchemaError(path, message);
+}
+function annotation(key: string) { return key === 'description' || key === 'default'; }
+function unconstrained(schema: JsonObject, type?: string) {
+    return Object.keys(schema).every(key => annotation(key) || key === 'type' && schema.type === type)
+        && (type === undefined ? schema.type === undefined : schema.type === type);
+}
+function pureUnion(schema: JsonObject): boolean {
+    return Array.isArray(schema.anyOf) && Object.keys(schema).every(key => key === 'anyOf' || annotation(key));
+}
+function stringLiteral(value: JsonValue) { return typeof value === 'string' ? encodeRefLiteral(value) : value; }
+
+/** Only exact duplicates and obvious containment in {} / string are reduced. */
+function reduce(branches: readonly JsonObject[]): JsonObject[] {
+    const unique = [...new Map(branches.map(branch => [canonicalJson(branch), branch])).values()];
+    const universal = unique.find(branch => unconstrained(branch));
+    if (universal) return [universal];
+    const string = unique.find(branch => unconstrained(branch, 'string'));
+    if (!string) return unique;
+    return unique.filter(branch => branch === string || !(branch.type === 'string' ||
+        typeof branch.const === 'string' || Array.isArray(branch.enum) && branch.enum.every(value => typeof value === 'string')));
 }
 
-/** Include types at declared Ref paths, including item schemas of currently empty arrays. */
-function refShapes(schema: JsonValue, shapes: Set<string>): void {
-    if (!object(schema)) return;
-    for (const shape of types(schema)) shapes.add(shape);
-    if (Array.isArray(schema.anyOf)) for (const branch of schema.anyOf) refShapes(branch, shapes);
-    if (Array.isArray(schema.prefixItems)) for (const item of schema.prefixItems) refShapes(item, shapes);
-    if (object(schema.items)) refShapes(schema.items, shapes);
-    if (object(schema.properties)) for (const property of Object.values(schema.properties)) refShapes(property, shapes);
-    if (object(schema.additionalProperties)) refShapes(schema.additionalProperties, shapes);
-    else if (schema.type === 'object' && schema.additionalProperties !== false) shapes.add('*');
-    if (schema.type === 'array' && schema.items === undefined && schema.prefixItems === undefined) shapes.add('*');
+function alternatives(branches: readonly JsonObject[], field: JsonObject, description?: string): JsonObject {
+    const reduced = reduce(branches);
+    return { ...(reduced.length === 1 ? reduced[0]! : { anyOf: reduced }),
+        ...(description === undefined ? {} : { description }),
+        ...(Object.hasOwn(field, 'default') ? { default: field.default! } : {}) };
 }
 
-function types(schema: JsonObject): Set<string> {
-    if (typeof schema.type === 'string') return new Set([schema.type]);
-    if (Object.hasOwn(schema, 'const')) return new Set([valueType(schema.const!)]);
-    if (Array.isArray(schema.enum)) return new Set(schema.enum.map(valueType));
-    if (Array.isArray(schema.anyOf)) return new Set(schema.anyOf.flatMap(branch => object(branch) ? [...types(branch)] : []));
-    return new Set(['*']);
-}
-const shapeCache = new WeakMap<JsonObject, ReadonlySet<string>>();
-function shapesOf(schema: JsonValue): ReadonlySet<string> {
-    const cached = object(schema) ? shapeCache.get(schema) : undefined;
-    if (cached) return cached;
-    const shapes = new Set<string>();
-    refShapes(schema, shapes);
-    if (object(schema) && Object.isFrozen(schema)) shapeCache.set(schema, shapes);
-    return shapes;
-}
-
-function canSelect(shapes: ReadonlySet<string>, field: JsonObject): boolean {
-    return shapes.size > 0 && (shapes.has('*') || [...types(field)].some(type => shapes.has(type) ||
-        type === 'number' && shapes.has('integer') || type === 'integer' && shapes.has('number')));
-}
-
-function acceptsAnyString(schema: JsonObject): boolean {
-    if (schema.type !== undefined && schema.type !== 'string' || Object.hasOwn(schema, 'enum') || Object.hasOwn(schema, 'const') ||
-        Object.hasOwn(schema, 'minLength') || Object.hasOwn(schema, 'maxLength')) return false;
-    return !Array.isArray(schema.anyOf) || schema.anyOf.some(branch => object(branch) && acceptsAnyString(branch));
-}
-
-function addressSlot(field: JsonObject, shapes: ReadonlySet<string>): JsonObject {
+function addressOnly(field: JsonObject): JsonObject {
+    const kind = field[REF_KIND] as string;
+    const label = kind.length <= 128 ? kind + ' Ref' : 'type-matched Ref';
     const description = typeof field.description === 'string' ? field.description + ' ' : '';
-    if (typeof field[REF_KIND] === 'string') {
-        const label = field[REF_KIND].length <= 128 ? field[REF_KIND] + ' Ref' : 'type-matched Ref';
-        return { type: 'string', description: description + 'Provide a published ' + label + ' address using $ref.app_id.view_id.ref_id.' };
-    }
-    if (!canSelect(shapes, field) || acceptsAnyString(field)) return field;
-    const address = types(field).has('string') ? NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA : NATIVE_REF_ADDRESS_SCHEMA;
-    return { anyOf: [field, address], description: description + hint };
+    return { ...NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA,
+        description: description + 'Provide a published ' + label + ' address using $ref.app_id.view_id.ref_id.' };
 }
 
-function wireLiterals(schema: JsonObject, shapes: ReadonlySet<string>, directItems: boolean): JsonObject {
+function addressSlot(field: JsonObject): JsonObject {
+    if (unconstrained(field) || unconstrained(field, 'string')) return field;
+    const description = (typeof field.description === 'string' ? field.description + ' ' : '') + hint;
+    const branches = pureUnion(field) ? field.anyOf as readonly JsonObject[] : [field];
+    return alternatives([...branches, NATIVE_RESTRICTED_REF_ADDRESS_SCHEMA], field, description);
+}
+
+/** Compile literal spellings at exactly the decoded positions. Nested business JSON is untouched. */
+function wireLiterals(schema: JsonObject, directItems: boolean, path: string): JsonObject {
     const field = { ...schema };
-    const string = (value: JsonValue) => typeof value === 'string' ? encodeRefLiteral(value) : value;
-    const literal = (value: JsonValue) => directItems && Array.isArray(value) ? value.map(string) : string(value);
+    const literal = (value: JsonValue) => directItems && Array.isArray(value) ? value.map(stringLiteral) : stringLiteral(value);
     if (Object.hasOwn(schema, 'const')) field.const = literal(schema.const!);
     if (Object.hasOwn(schema, 'default')) field.default = literal(schema.default!);
     if (Array.isArray(schema.enum)) field.enum = schema.enum.map(literal);
-    // A literal may gain one dollar sign in transit. The original bounds are checked after decoding.
     if (typeof schema.maxLength === 'number' && schema.maxLength >= REF_ADDRESS_PREFIX.length)
         field.maxLength = schema.maxLength + 1;
-    if (Array.isArray(schema.anyOf)) field.anyOf = schema.anyOf.map(branch =>
-        object(branch) ? wireLiterals(branch, shapes, directItems) : branch);
-    if (directItems) {
-        const element = (item: JsonValue) => object(item) ? addressSlot(wireLiterals(item, shapes, false), shapes) : item;
-        if (object(schema.items)) field.items = element(schema.items);
-        if (Array.isArray(schema.prefixItems)) field.prefixItems = schema.prefixItems.map(element);
+
+    const hasArrayChoice = Array.isArray(schema.const) || Array.isArray(schema.enum) && schema.enum.some(Array.isArray);
+    if (Array.isArray(schema.anyOf)) {
+        // Do not distribute arbitrary intersecting constraints across resolved-array alternatives.
+        if (directItems && !pureUnion(schema) && (schema.type === 'array' || schema.type === undefined &&
+            (hasArrayChoice || Object.hasOwn(schema, 'const') || Object.hasOwn(schema, 'enum'))))
+            unsupported(path + '.anyOf', 'Intersecting array/choice alternatives exceed the standard generation profile.');
+        field.anyOf = schema.anyOf.map((branch, index) => {
+            if (!object(branch)) unsupported(path + '.anyOf[' + index + ']', 'Expected a schema object.');
+            return wireLiterals(branch, directItems, path + '.anyOf[' + index + ']');
+        });
+    }
+    if (!directItems) return field;
+
+    const element = (item: JsonValue, itemPath: string): JsonObject => {
+        if (!object(item)) unsupported(itemPath, 'Expected an element schema object.');
+        return typeof item[REF_KIND] === 'string' ? addressOnly(item) : addressSlot(wireLiterals(item, false, itemPath));
+    };
+    if (object(schema.items)) field.items = element(schema.items, path + '.items');
+    if (Array.isArray(schema.prefixItems)) field.prefixItems = schema.prefixItems.map((item, index) =>
+        element(item, path + '.prefixItems[' + index + ']'));
+
+    if (schema.type === 'array' && (Object.hasOwn(schema, 'const') || Object.hasOwn(schema, 'enum'))) {
+        // The widened array branch contains the original wire-literal array branch:
+        // same type, lengths and compiled element constraints, without resolved-array choices.
+        // A fixed empty tuple has no directly decoded elements and needs no widening.
+        if (schema.items !== false || Array.isArray(schema.prefixItems) && schema.prefixItems.length > 0) {
+            delete field.const;
+            delete field.enum;
+        }
+    } else if (schema.type === undefined && hasArrayChoice) {
+        // Untyped choices can also contain ordinary objects/scalars. Retain those literals.
+        if (Object.hasOwn(schema, 'const') && Object.hasOwn(schema, 'enum'))
+            unsupported(path + '.enum', 'Intersecting untyped array choices exceed the standard generation profile.');
+        const array = { type: 'array', items: {} };
+        if (Array.isArray(schema.const)) return alternatives([array], field, typeof field.description === 'string' ? field.description : undefined);
+        const rest = (field.enum as readonly JsonValue[]).filter(value => !Array.isArray(value));
+        return alternatives([...(rest.length ? [{ ...field, enum: rest }] : []), array], field,
+            typeof field.description === 'string' ? field.description : undefined);
     }
     return field;
 }
 
-function argumentSlot(schema: JsonObject, shapes: ReadonlySet<string>): JsonObject {
-    const field = wireLiterals(schema, shapes, true);
-    if (object(schema.items) && typeof schema.items[REF_KIND] === 'string' && !Object.hasOwn(schema, REF_KIND)) return field;
-    return addressSlot(field, shapes);
-}
-
-/** Project a tool for the actual receiving mounts and Ref sources in this model request. */
-export function projectNativeToolSchema(tool: ObservedTool, source: Pick<ObservationSource, 'appId' | 'instanceId'>,
-    receivingViews: readonly ViewIdentity[], references: readonly PresentedRef[]): JsonObject {
-    const targets: RefConsumer[] = receivingViews.map(view => ({ ...source, ...view }));
-    const shapes = new Set<string>();
-    for (const { source: publisher, ref } of references) {
-        const sameApp = publisher.appId === source.appId && publisher.instanceId === source.instanceId;
-        if (!targets.some(target => scopeAllows(ref.scope, ref.viewInstanceId, target.viewInstanceId, sameApp) &&
-            refConsumerAllowed(ref.consumers, target))) continue;
-        for (const shape of shapesOf(ref.valueSchema)) shapes.add(shape);
+/** Only the sealed business declaration participates, never observation or receiver state. */
+export function projectNativeToolSchema(tool: Pick<ObservedTool, 'inputSchema' | 'multiplicity' | 'viewType'>): JsonObject {
+    try {
+        const input = tool.inputSchema;
+        checkWireJson(input, budgets);
+        if (!object(input) || input.type !== 'object' || !object(input.properties) || !Array.isArray(input.required))
+            unsupported('$', 'Expected a sealed business parameter object.');
+        if (Object.hasOwn(input.properties, 'view_id'))
+            unsupported('$.properties.view_id', 'view_id is reserved for the receiving View.');
+        const properties = Object.fromEntries(Object.entries(input.properties).map(([name, schema]) => {
+            const path = pathOf('$.properties', name);
+            if (!object(schema)) unsupported(path, 'Expected a business parameter schema.');
+            if (typeof schema[REF_KIND] === 'string') return [name, addressOnly(schema)];
+            const field = wireLiterals(schema, true, path);
+            const addressArray = object(schema.items) && typeof schema.items[REF_KIND] === 'string';
+            return [name, addressArray ? field : addressSlot(field)];
+        }));
+        const multiple = tool.multiplicity === 'multiple';
+        return copyWireJson({
+            ...input, properties: { ...(multiple ? { view_id: { type: 'string', description: 'Receiving ' + tool.viewType + ' page XML view_id.' } } : {}), ...properties },
+            required: multiple ? ['view_id', ...input.required] : input.required,
+        }, budgets) as JsonObject;
+    } catch (error) {
+        if (error instanceof SnapshotDataError) unsupported(error.path, error.message);
+        throw error;
     }
-    const input = tool.inputSchema;
-    if (!object(input.properties) || !Array.isArray(input.required) || Object.hasOwn(input.properties, 'view_id'))
-        throw new SnapshotDataError('TOOL_SCHEMA_INVALID', '$', 'Expected a business parameter object.');
-    const multiple = tool.multiplicity === 'multiple';
-    const properties = Object.fromEntries(Object.entries(input.properties).map(([name, schema]) => {
-        if (!object(schema)) throw new SnapshotDataError('TOOL_SCHEMA_INVALID', '$.properties', 'Invalid business parameter.');
-        return [name, argumentSlot(schema, shapes)];
-    }));
-    const result = {
-        ...input, properties: { ...(multiple ? { view_id: { type: 'string', description: 'Receiving ' + tool.viewType + ' page XML view_id.' } } : {}), ...properties },
-        required: multiple ? ['view_id', ...input.required] : input.required,
-    };
-    try { checkWireJson(result, budgets); }
-    catch { throw new SnapshotDataError('TOOL_SCHEMA_CAPACITY', '$', 'The projected Tool schema exceeds the byte limit.'); }
-    return result;
 }

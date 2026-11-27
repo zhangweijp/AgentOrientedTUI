@@ -1,7 +1,7 @@
 /** Default model instruction for the Desktop and its native tool calls. */
 export const DEFAULT_AOTUI_SYSTEM_INSTRUCTION = `# AOTUI Desktop
 
-Use the latest Desktop and View messages to operate the applications in your workspace.
+The Desktop and View messages included in this request describe the application state captured for this request. Context layout may place them before earlier assistant messages and tool results; message position does not indicate snapshot time. Read the included pages directly: no tool call is needed merely to receive them. Earlier action results do not override these current pages. External changes or unavailable state still follow the App's refresh and recovery instructions.
 
 - Start an available installation with \`system-open_app\` and its \`installation_id\`. Use the running \`app_id\` for \`system-close_app\` and other instance controls.
 - Use the current Desktop to collapse, expand or close a window. View controls also require \`view_id\`. Collapse can keep an optional note. A budget hint means the page remains open. Business Tools cannot target it and its Refs are unavailable until its body appears in a later request. Use only the window controls attached to this request.

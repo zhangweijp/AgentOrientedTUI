@@ -90,3 +90,10 @@ export function captureSnapshotPrepareIssue(input: { code?: unknown; message?: u
 export function refKey(viewId: string, viewInstanceId: string, refId: string): string {
     return JSON.stringify([viewId, viewInstanceId, refId]);
 }
+
+/** Producer's three nested scope lanes. No additional Ref identity allocator. */
+export function nextRefContinuity(previous: import('./types.js').RefContinuity | undefined,
+    scope: import('./types.js').RefScope, epoch: number): import('./types.js').RefContinuity {
+    return [previous?.[0] || epoch, scope === 'private' ? 0 : previous?.[1] || epoch,
+        scope === 'public' ? previous?.[2] || epoch : 0];
+}

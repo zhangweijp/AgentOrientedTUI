@@ -53,9 +53,9 @@ export function savedParts(message, calls) {
 
 export async function exerciseDelivery(turn, folder) {
     const requests = {}, results = {};
-    const native = (id, name, input = {}) => modelCall(id, `${appName}-${name}`, input);
+    const native = (id, name, input = {}) => modelCall(id, `${appName}-${name === "edit" || name === "close" ? "file" : "directory"}-${name}`, input);
     const pages = request => request.messages.filter(message => message.role === 'user' && message.content.startsWith('<view ')).map(message => message.content);
-    const editTool = request => request.tools.filter(tool => tool.function.name === `${appName}-edit`);
+    const editTool = request => request.tools.filter(tool => tool.function.name === `${appName}-file-edit`);
     const run = async (label, calls, beforeReply) => {
         const { body, message } = await turn(label, calls, beforeReply);
         requests[label] = { pages: pages(body), tools: body.tools.map(tool => tool.function) };
@@ -91,13 +91,13 @@ export async function exerciseDelivery(turn, folder) {
     assert.equal(deniedRef.value.code, 'REF_NOT_VISIBLE');
 
     await run('console', [modelCall('console', 'run_code', {
-        code: `const found = await tools['${appName}-inspect_text']({ view_id: 'doc_2', text: refs.${appName}.doc_2.content }); inspect(found.text);`,
+        code: `const found = await tools['${appName}-file-inspect_text']({ view_id: 'doc_2', text: refs.${appName}.doc_2.content }); inspect(found.text);`,
     })]);
     const output = results.console[0].output;
     assert.equal(output.type, 'json', JSON.stringify(output));
     assert.deepEqual(output.value.output, ['Original A']);
     assert.deepEqual(output.value.subcalls.map(item => [item.toolName, item.status, item.phase]),
-        [[`${appName}-inspect_text`, 'succeeded', 'entered-returned']]);
+        [[`${appName}-file-inspect_text`, 'succeeded', 'entered-returned']]);
 
     await run('close-app', [modelCall('close', 'system-close_app', { app_id: appName })]);
     assert.deepEqual(results['close-app'][0].output, { type: 'json', value: { success: true, app_id: appName } });

@@ -15,33 +15,32 @@ type Catalog = {
 };
 
 export default createApp({ app_name: 'console_catalog', viewTypes: [list],
-    initialize({ launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const folder = String(launchConfig?.folder);
         const file = join(folder, 'catalog.json');
         const witness = (event: string) => appendFileSync(join(folder, 'catalog-life.jsonl'), JSON.stringify({ event, threadId }) + '\n');
         let previous = '';
-        const view = createView(list, { render() {
+        const view = (() => { const handle = createView(list); return { handle, frame: () => {
             const data = JSON.parse(previous) as Catalog;
             const email = typeof data.people[0]?.email === 'number' ? Type.Number() : Type.String();
             const person = Type.Object({ email }, { additionalProperties: false });
-            return { body: '# Console catalog ' + data.revision + (data.padding ?? ''),
-                refs: [
+            return handle.frame({ body: '# Console catalog ' + data.revision + (data.padding ?? ''), refs: [
                     arrayRef('todos', data.todos, { scope: 'public', itemType: 'Todo', schema: Type.Array(todo) }),
                     arrayRef('people', data.people.map(({ email }) => ({ email })), { scope: data.narrowed ? 'private' : 'public', itemType: 'Person', schema: Type.Array(person) }),
                     arrayRef('other_kind', data.todos, { scope: 'public', itemType: 'Other', schema: Type.Array(todo) }),
                     arrayRef('private_rows', data.todos, { schema: Type.Array(Type.Object({})), scope: 'private', itemType: 'Todo' }),
                     arrayRef('team_rows', data.todos, { schema: Type.Array(Type.Object({})), scope: 'protected', itemType: 'Todo' }),
-                ] };
-        } });
+                ] });
+        } }; })();
         const update = () => {
             const next = readFileSync(file, 'utf8');
             if (next === previous) return;
             previous = next;
-            prepareProjection({ views: [view] });
+            commit(() => ([view]).map(page => page.frame()));
         };
         update();
         witness('start');
         const timer = setInterval(update, 15);
-        registerCleanup({ stop: () => { clearInterval(timer);witness('stop'); } });
+        registerLifecycle({ stop: () => { clearInterval(timer);witness('stop'); } });
     },
 });

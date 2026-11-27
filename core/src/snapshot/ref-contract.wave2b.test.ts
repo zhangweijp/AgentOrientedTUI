@@ -13,27 +13,27 @@ const fixtureJsonSchema = { anyOf: [{ type: 'string' }, { type: 'number' }, { ty
 // Identities and declarations below are fixtures, not mounts performed by SDK.
 const appId = 'wave2b';
 const instanceId = 'wave2b-run';
-const mountA = 'fixture-mount-A';
-const mountB = 'fixture-mount-B';
+const mountA = 'm:1';
+const mountB = 'm:2';
 const toolId = JSON.stringify([appId, 'FileDetail', 'inspect']);
 const argsLimits = { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 };
 const refParameters = compileToolParameters({ type: 'object', properties: { file: { 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });
 if (!refParameters.ok) throw new Error('Invalid Ref fixture');
 
 function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraft {
-    return {
-        schemaVersion: 8, appId, instanceId,
+    return { healthySince: 1,
+        schemaVersion: 9, appId, instanceId,
         producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
         views: [['fd_A', a], ['fd_B', mountB]].map(([id, viewInstanceId]) => ({
-            toolBindings: [{ toolId, activationId: 'active-' + viewInstanceId }], id, viewInstanceId, type: 'FileDetail', name: id, region: 'dynamic',
+            toolBindings: [{ toolId, activationId: 'a:' + viewInstanceId.slice(2) }], id, viewInstanceId, type: 'FileDetail', name: id, region: 'dynamic',
             content: { format: 'markdown-v1', value: '[File](file)' },
         })),
         refs: {
-            [refKey('fd_A', a, 'file')]: { valueSchema: fixtureJsonSchema, scope: 'protected',
+            [refKey('fd_A', a, 'file')]: { continuity: [a === mountA ? 1 : sequence,a === mountA ? 1 : sequence,0] as const,  valueSchema: fixtureJsonSchema, scope: 'protected',
                 id: 'file', ownerViewId: 'fd_A', ownerViewInstanceId: a, refType: 'File',
                 target: { kind: 'snapshot-value', payload: valueA },
             },
-            [refKey('fd_B', mountB, 'file')]: { valueSchema: { type: 'object' }, scope: 'protected',
+            [refKey('fd_B', mountB, 'file')]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected',
                 id: 'file', ownerViewId: 'fd_B', ownerViewInstanceId: mountB, refType: 'File',
                 target: { kind: 'snapshot-value', payload: { value: 'B' } },
             },
@@ -50,7 +50,7 @@ function start(options: Omit<Parameters<typeof createSnapshotCore>[0], 'appId' |
 function publish(core: SnapshotCore, input = draft()) {
     const result = core.committer.accept(input);
     expect(result.status).toBe('published');
-    if (result.status !== 'published' || result.snapshot.schemaVersion !== 8) throw new Error('Expected a committed snapshot');
+    if (result.status !== 'published' || result.snapshot.schemaVersion !== 9) throw new Error('Expected a committed snapshot');
     return result.snapshot;
 }
 function selector(snapshotId: string, viewId = 'fd_A', viewInstanceId = mountA, refId = 'file') {
@@ -95,14 +95,14 @@ describe('Wave 2B: exact historical Ref lookup', () => {
     it('remount never retargets an old Ref while another same-type View keeps the shared Tool active', () => {
         const core = start(); const old = publish(core);
         const held = core.store.acquire(old.id); if (held.status !== 'acquired') throw Error('holder');
-        const fresh = publish(core, draft(2, { value: 'replacement' }, 'fixture-new-A'));
+        const fresh = publish(core, draft(2, { value: 'replacement' }, 'm:3'));
         expect(core.store.resolveRef(selector(old.id))).toMatchObject({
             status: 'resolved', target: { payload: { value: 'A' } },
         });
         expect(core.store.resolveRef(selector(fresh.id))).toMatchObject({
             status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' },
         });
-        expect(core.store.resolveRef(selector(old.id, 'fd_A', 'fixture-new-A'))).toMatchObject({
+        expect(core.store.resolveRef(selector(old.id, 'fd_A', 'm:3'))).toMatchObject({
             status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' },
         });
         expect(fresh.views.find(view => view.id === 'fd_B')?.toolBindings).toEqual(old.views.find(view => view.id === 'fd_B')?.toolBindings);

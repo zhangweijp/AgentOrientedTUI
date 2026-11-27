@@ -1,4 +1,3 @@
-// Private execution fixture: echoed values are test witnesses, not a public App authoring example.
 import { parentPort } from 'node:worker_threads';
 import Type from 'typebox';
 import { createApp, createView, defineViewType, ref as publishRef, arrayRef, formatRef, refParam } from '@aotui/sdk';
@@ -31,7 +30,7 @@ const array = { schema: Type.Array(schema), scope: 'protected', itemType: 'Data'
 
 export default createApp({
     app_name: 'ref_sdk_fixture', viewTypes: [FileType],
-    initialize({ prepareProjection, registerCleanup }) {
+    initialize({ publish: commit, registerLifecycle }) {
         const initial = () => ({ text: 'A', showRef: true, enabled: true, revision: 1 });
         let state = { aa: initial(), bb: initial(), toolEnabled: true };
         function execute(receiver, name, args) {
@@ -52,7 +51,7 @@ export default createApp({
                 return new Promise(resolve => { releaseHandler = () => resolve({ success: true, data: { calls } }); }); }
             return { success: true, data: { owner, args, calls, revision: current.revision } };
         }
-        const makeFile = owner => createView(FileType, { idPrefix: owner, region: 'dynamic', render() {
+        const makeFile = owner => (() => { const handle = createView(FileType, { idPrefix: owner, region: 'dynamic' }); return { handle, frame: () => {
             const current = state[owner], label = labelFor(owner);
             const refs = [], body = [];
             if (current.showRef) {
@@ -71,8 +70,8 @@ export default createApp({
                 body.push(formatRef('Foreign', foreign));
             }
             body.push('Revision ' + current.revision);
-            return { body: body.join('\n\n'), refs, context: { receiver: owner, execute, toolEnabled: state.toolEnabled } };
-        } });
+            return handle.frame({ body: body.join('\n\n'), refs, context: { receiver: owner, execute, toolEnabled: state.toolEnabled } });
+        } }; })();
         const views = [makeFile('aa'), makeFile('bb')];
         const receive = message => {
             if (message.type !== 'TEST_COMMAND') return;
@@ -80,12 +79,12 @@ export default createApp({
             if (type === 'configure') {
                 state = { ...state, ...(typeof data.toolEnabled === 'boolean' ? { toolEnabled: data.toolEnabled } : {}),
                     [viewId]: { ...state[viewId], ...data } };
-                prepareProjection({ views });
+                commit(() => (views).map(page => page.frame()));
             }
             if (type === 'release-handler') releaseHandler?.();
         };
         parentPort.on('message', receive);
-        registerCleanup({ stop() { parentPort.off('message', receive); } });
-        prepareProjection({ views });
+        registerLifecycle({ stop() { parentPort.off('message', receive); } });
+        commit(() => (views).map(page => page.frame()));
     },
 });

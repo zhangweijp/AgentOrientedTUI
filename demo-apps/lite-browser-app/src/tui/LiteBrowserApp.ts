@@ -2,7 +2,7 @@ import pkg from '../../package.json' with { type: 'json' };
 import { createApp, createView, type ViewHandle } from '@aotui/sdk';
 import { runWebFetch } from '../core/webfetch.js';
 import { runWebSearch } from '../core/websearch.js';
-import type { FetchFormat, PageState, SearchQuery, SearchState } from '../types.js';
+import type { FetchFormat, PageState, SearchQuery, SearchState, SearchResultItem } from '../types.js';
 import { pageBody } from './PageView.js';
 import { resultListBody } from './ResultListView.js';
 import { rootBody } from './RootView.js';
@@ -12,31 +12,31 @@ import { RootType, SearchType, ResultListType, PageType, browserViewTypes } from
 export default createApp({
     ...pkg.aotui,
     viewTypes: browserViewTypes,
-    initialize({ prepareProjection, prepareOpeningProjection, readViewId }) {
-        type BrowserState = { search: SearchState; results?: ViewHandle; page?: { state: PageState; view: ViewHandle } };
+    initialize({ publish, readViewId }) {
+        type BrowserState = { search: SearchState; results?: {view: ViewHandle<typeof ResultListType>; items: readonly SearchResultItem[]};
+            page?: { state: PageState; view: ViewHandle<typeof PageType> } };
         let current: BrowserState = { search: { status: 'idle' } };
-        let candidate: BrowserState | undefined;
-        const displayed = () => candidate ?? current;
+        const root = createView(RootType, { id: 'root' });
+        const search = createView(SearchType, { id: 'search' });
 
-        const root = createView(RootType, {
-            id: 'root', name: 'Root', render: () => ({ body: rootBody, context: { onFetch: fetchPage } }),
-        });
-        const search = createView(SearchType, {
-            id: 'search', name: 'Search', render: () => ({ body: searchBody(displayed().search), context: { onSearch: searchWeb } }),
-        });
-
+        function frames(next: BrowserState) {
+            return [
+                root.frame({name: 'Root', body: rootBody, context: { onFetch: fetchPage }}),
+                search.frame({name: 'Search', body: searchBody(next.search), context: { onSearch: searchWeb }}),
+                ...(next.results ? [next.results.view.frame({name: 'Result List', body: resultListBody(next.results.items),
+                    context: { results: next.results.items,
+                        onOpenResult: (url: string) => fetchPage({ url, format: 'markdown' }),
+                        onClearResults: () => show({ ...current, search: { status: 'idle' }, results: undefined }),
+                    } })] : []),
+                ...(next.page ? [next.page.view.frame({name: 'Page', body: pageBody(next.page.state),
+                    bindingKey: next.page.state.document?.url,
+                    context: { onClosePage: () => show({ ...current, page: undefined }) } })] : []),
+            ];
+        }
         function show(next: BrowserState): void {
-            const views = [root, search, ...(next.results ? [next.results] : []), ...(next.page ? [next.page.view] : [])];
-            candidate = next;
-            try {
-                if (next.results && next.results !== current.results || next.page && next.page.view !== current.page?.view) {
-                    const result = prepareOpeningProjection({ views });
-                    if (result.status === 'rejected') {
-                        throw Object.assign(new Error('The new browser View does not fit. Close the current Page or clear the results and try again.'), { code: result.issue.code });
-                    }
-                } else prepareProjection({ views });
-                current = next;
-            } finally { candidate = undefined; }
+            const result = publish(() => frames(next), {mode:'candidate'});
+            if (!result.ok) throw Object.assign(new Error('The browser View could not be prepared.'), {code: result.issue.code});
+            current = next;
         }
 
         async function searchWeb(query: SearchQuery): Promise<{ resultCount: number }> {
@@ -47,30 +47,15 @@ export default createApp({
                 throw error;
             }
             const { summary, results } = response;
-            const view = results.length ? createView(ResultListType, {
-                id: 'results', name: 'Result List',
-                render: () => ({
-                    body: resultListBody(results),
-                    context: {
-                        results,
-                        onOpenResult: (url: string) => fetchPage({ url, format: 'markdown' }),
-                        onClearResults: () => show({ ...current, search: { status: 'idle' }, results: undefined }),
-                    },
-                }),
-            }) : undefined;
-            show({ ...current, search: { status: 'success', query, summary }, results: view });
+            const view = results.length ? createView(ResultListType, {id: 'results'}) : undefined;
+            show({ ...current, search: { status: 'success', query, summary }, results: view ? {view, items: results} : undefined });
             return { resultCount: results.length };
         }
 
         function showPage(state: PageState): ViewHandle {
             const previous = current.page;
-            const view = previous && previous.state.document?.url === state.document?.url ? previous.view : createView(PageType, {
-                id: 'page', name: 'Page',
-                render: () => ({
-                    body: pageBody(displayed().page!.state),
-                    context: { onClosePage: () => show({ ...current, page: undefined }) },
-                }),
-            });
+            const view = previous && previous.state.document?.url === state.document?.url ? previous.view :
+                createView(PageType, { id: 'page' });
             show({ ...current, page: { state, view } });
             return view;
         }
@@ -89,6 +74,6 @@ export default createApp({
             return id;
         }
 
-        prepareProjection({ views: [root, search] });
+        publish(() => frames(current));
     },
 });

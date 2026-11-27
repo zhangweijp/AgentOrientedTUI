@@ -26,6 +26,7 @@ export interface RefAddress {
 }
 export interface LocalRefUse {
     readonly param: string;
+    readonly since: number;
     readonly index?: number;
     readonly viewId: string;
     readonly viewInstanceId: string;
@@ -86,11 +87,15 @@ export function checkRefViews(sources: readonly LocalRefUse[],
     }
 }
 
-export function checkCurrentRefScopes(sources: readonly LocalRefUse[], receiver: ViewToolReceiver,
+export function refLane(publisher: string, receiver: string, sameApp: boolean): 0 | 1 | 2 {
+    return !sameApp ? 2 : publisher === receiver ? 0 : 1;
+}
+
+export function checkCurrentRefScopes(sources: readonly LocalRefUse[], receiver: Pick<ViewToolReceiver, 'viewInstanceId'>,
     current: Readonly<Pick<AppSnapshot, 'refs'>>, sameApp = true) {
-    for (const { param, index, viewId, viewInstanceId, refId } of sources) {
+    for (const { param, index, viewId, viewInstanceId, refId, since } of sources) {
         const ref = current.refs[refKey(viewId, viewInstanceId, refId)];
-        if (!ref || !scopeAllows(ref.scope, viewInstanceId, receiver.viewInstanceId, sameApp)) return {
+        if (!ref || !scopeAllows(ref.scope, viewInstanceId, receiver.viewInstanceId, sameApp) || !since || ref.continuity[refLane(viewInstanceId, receiver.viewInstanceId, sameApp)] !== since) return {
             code: 'REF_NOT_VISIBLE', message: 'The publishing View no longer grants access to this Ref.', path: refPath(param, index),
         };
     }

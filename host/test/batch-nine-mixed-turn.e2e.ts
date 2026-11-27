@@ -87,7 +87,7 @@ try {
     await open();
     const original = driver();
     original.pause();
-    const consoleCall = codeCall('c-write', 'const item = await tools["console_tasks-accept"]({items:[],literal:"mixed write"}); inspect(item.saved);');
+    const consoleCall = codeCall('c-write', 'const item = await tools["console_tasks-workspace-accept"]({items:[],literal:"mixed write"}); inspect(item.saved);');
     const mcpCall = modelCall('m-read', 'mcp-local-read', {});
     const calls = order === 'console-first' ? [consoleCall, mcpCall] : [mcpCall, consoleCall];
     const ids = calls.map(call => call.id);
@@ -122,7 +122,7 @@ try {
     const mcpResult = saved.find(part => part.toolCallId === mcpCall.id)?.output;
     if (wrote) assert.deepEqual(consoleResult, { type: 'json', value: { output: ['true'], scope: 'retained', subcalls: [
         { invocationId: 'console:' + createHash('sha256').update(consoleCall.id).digest('hex') + ':1',
-            toolName: 'console_tasks-accept', status: 'succeeded', phase: 'entered-returned' },
+            toolName: 'console_tasks-workspace-accept', status: 'succeeded', phase: 'entered-returned' },
     ] } });
     else assert.equal(errorCode(consoleResult), 'E_TOOL_NOT_DISPATCHED');
     if (timing === 'pending') assert.equal(errorCode(mcpResult), 'E_TOOL_OUTCOME_UNKNOWN');

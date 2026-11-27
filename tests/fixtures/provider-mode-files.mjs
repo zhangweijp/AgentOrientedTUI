@@ -12,7 +12,7 @@ import { fileIO } from './dist/file-io.mjs';
 import { fileUnavailable } from './dist/files.js';
 import { localModel, sourceContext, userText, wireTools } from './provider-mode-local.mjs';
 
-const actionName = operation => appName + '-' + operation;
+const actionName = operation => appName + '-' + (operation === 'edit' ? 'file' : 'directory') + '-' + operation;
 const edit = actionName('edit');
 const entry = 'dispatch_file';
 const text = { type: 'string' };

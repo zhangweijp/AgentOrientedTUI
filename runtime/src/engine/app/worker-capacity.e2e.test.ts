@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -31,10 +31,9 @@ const RootType = defineViewType()({ multiplicity: 'multiple', name: 'Root', tool
     },
 } });
 export default createApp({ viewTypes: [RootType], app_name: 'c1',
-    initialize({ launchConfig: launch, prepareProjection }) {
-        const page = createView(RootType, { idPrefix: 'root', region: 'static',
-            render: () => ({ body: 'Worker capacity', context: { launch } }) });
-        prepareProjection({ views: [page] });
+    initialize({ launchConfig: launch, publish: publishAuthorFrame }) {
+        const page = (() => { const handle = createView(RootType, { idPrefix: 'root', region: 'static' }); return { handle, frame: () => handle.frame({ body: 'Worker capacity', context: { launch } }) }; })();
+        publishAuthorFrame(() => ([page]).map(page => page.frame()));
     },
 });`);
     const { createRuntime } = await import(url(join(repo, 'runtime/dist/index.js')));
@@ -44,14 +43,21 @@ export default createApp({ viewTypes: [RootType], app_name: 'c1',
     try {
         for (const [index, runtime] of runtimes.entries()) {
             const desktop = await runtime.createDesktop();
-            const { appId } = await desktop.installDynamicWorkerApp(url(app), { name: 'c1', config: { C1_LAUNCH: index ? 'B' : 'A', AOTUI_DATA_DIR: dir } });
-            const sandbox = desktop.appManager.getManagedApp(appId);sandboxes.push(sandbox);workers.push(sandbox.host.worker);
+            let physical: Worker | undefined;
+            const post = Worker.prototype.postMessage;
+            const spy = vi.spyOn(Worker.prototype, 'postMessage').mockImplementation(function(this: Worker, message, transferList) {
+                if (message?.type === 'INIT') physical = this;
+                return post.call(this, message, transferList);
+            });
+            const { appId } = await desktop.installDynamicWorkerApp(url(app), { name: 'c1', config: { C1_LAUNCH: index ? 'B' : 'A', AOTUI_DATA_DIR: dir } }).finally(() => spy.mockRestore());
+            expect(physical).toBeInstanceOf(Worker);
+            const sandbox = desktop.appManager.getManagedApp(appId);sandboxes.push(sandbox);workers.push(physical);
             const inspect = async () => {
                 const result = await invokeObservedTool((sandbox as any).host, 'inspect', {}, 'root_1');
                 expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
                 return result.receipt.outcome.value.data;
             };
-            expect(sandbox.host.worker).toBeInstanceOf(Worker);
+            expect(sandbox.host.getResourceReport().worker).toBe('owned');
             expect((await inspect()).launch).toBe(index ? 'B' : 'A');
             if (!index) {
                 expect(sandbox.host.timeout).toBe(2345);

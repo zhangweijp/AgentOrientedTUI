@@ -20,7 +20,7 @@ it.each([false, true])('reuses the shared contract across View reactivation and 
         runtime = context;
         context.defineViewTypes([{ name: "Detail", multiplicity: 'multiple', tools: [{ name: 'read', description: 'Read', inputSchema }] }]);
         publish();
-        return { close() {} };
+        return;
     } } } as any);
 
     try {
@@ -29,7 +29,7 @@ it.each([false, true])('reuses the shared contract across View reactivation and 
         const schema = first.tool.inputSchema;
         expect(schema.properties).toMatchObject({ file: property });
         const input = { file: typed ? { path: 'a.txt' } : 'a.txt' };
-        expect(await kernel.invokeBoundTypeTool(first.tool, first.receiver, input)).toMatchObject({ phase: 'entered-returned' });
+        expect(await kernel.invokeBoundTypeTool(first.tool, first.receiver, input, terminal => terminal)).toMatchObject({ phase: 'entered-returned' });
         expect(execute).toHaveBeenCalledOnce();
 
         publish(false);
@@ -45,7 +45,7 @@ it.each([false, true])('reuses the shared contract across View reactivation and 
         const replacement = publishedTool(kernel, 'read');
         expect(replacement.receiver.viewInstanceId).not.toBe(first.receiver.viewInstanceId);
         expect(replacement.tool.inputSchema).toEqual(schema);
-        expect(await kernel.invokeBoundTypeTool(first.tool, first.receiver, input)).toMatchObject({ phase: 'not-entered' });
+        expect(await kernel.invokeBoundTypeTool(first.tool, first.receiver, input, terminal => terminal)).toMatchObject({ phase: 'not-entered' });
         expect(execute).toHaveBeenCalledOnce();
     } finally {
         await kernel.onClose();

@@ -70,6 +70,7 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
     payload?: JsonValue; valueSchema?: JsonValue; store?: Omit<SnapshotStoreOptions, 'appId' | 'instanceId'>;
     limits?: ProjectionLimitOverrides; ready?: boolean; namespace?: string; instanceId?: string } = {}) {
     let time = 0, sequence = 0;
+    const birth = new Map<string, number>();
     const now = () => time;
     const identity = { ...context, instanceId: options.instanceId ?? context.instanceId };
     const core = createSnapshotCore({ ...identity, now, ...options.store });
@@ -96,10 +97,11 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
     function draft(patch: Partial<PreparedAppSnapshotDraft> = {}): PreparedAppSnapshotDraft {
         const available = prepare();
         const seq = ++sequence;
-        return { schemaVersion: 8, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+        for (const v of owners) if (!birth.has(v.viewInstanceId)) birth.set(v.viewInstanceId, seq);
+        return { healthySince: 1,  schemaVersion: 9, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, region: 'dynamic',
                 content: { format: 'markdown-v1', value: options.content ?? 'content-secret-' + v.viewId } })),
-            refs: Object.fromEntries(owners.flatMap(v => Array.from({ length: options.refs ?? 2 }, (_, i) => [refKey(v.viewId, v.viewInstanceId, 'r' + i), { valueSchema: fixtureJsonSchema, scope: 'protected',
+            refs: Object.fromEntries(owners.flatMap(v => Array.from({ length: options.refs ?? 2 }, (_, i) => [refKey(v.viewId, v.viewInstanceId, 'r' + i), { continuity: [birth.get(v.viewInstanceId)!,birth.get(v.viewInstanceId)!,0] as const, valueSchema: fixtureJsonSchema, scope: 'protected',
                 id: 'r' + i, ownerViewId: v.viewId, ownerViewInstanceId: v.viewInstanceId, refType: 'unknown',
                 ...(options.valueSchema === undefined ? {} : { valueSchema: options.valueSchema }),
                 target: { kind: 'snapshot-value', payload: options.payload ?? { value: `payload-secret-${v.viewId}-${i}` } },
@@ -109,7 +111,7 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
     function publish(patch: Partial<PreparedAppSnapshotDraft> = {}): AppSnapshot {
         const result = core.committer.accept(draft(patch));
         expect(result.status).toBe('published');
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 8) throw new Error('Expected a published Snapshot fixture');
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 9) throw new Error('Expected a published Snapshot fixture');
         return result.snapshot;
     }
     const source = options.ready === false ? undefined : publish();
@@ -749,7 +751,7 @@ describe('MOD-01 activeViews window eligibility', () => {
             ...disabledV1Snapshot,
             refs: {
                 ...disabledV1Snapshot.refs,
-                [v1RefKey]: { ...disabledV1Snapshot.refs[v1RefKey]!, scope: 'private' },
+                [v1RefKey]: { ...disabledV1Snapshot.refs[v1RefKey]!, scope: 'private', continuity: [1,0,0] },
             },
         });
         expect(planOnlyV2.plan.recheck()).toBeUndefined();
@@ -763,7 +765,8 @@ describe('MOD-01 activeViews window eligibility', () => {
         expect(planWithV2.status).toBe('ready');
         if (planWithV2.status !== 'ready') throw Error('Expected ready plan');
         f.rebindTool(1, 0);
-        f.publish();
+        const reenabled = f.draft();
+        f.publish({ ...reenabled, refs: { ...reenabled.refs, [v1RefKey]: { ...reenabled.refs[v1RefKey]!, continuity: [1,reenabled.sourceEpoch,0] } } });
         expect(planWithV2.plan.recheck()).toMatchObject({ code: 'OBSERVATION_WINDOW_CHANGED', path: '$.windows' });
 
         // Revoking a view mid-turn removes both ref and tool eligibility for that view only.
@@ -772,4 +775,52 @@ describe('MOD-01 activeViews window eligibility', () => {
         expect(code(f.registry.resolveTool({ observationId: obsOnlyV2.observationId, toolId: obsOnlyV2.tools[0]!.id, viewId: 'v_2' }))).toBe('TOOL_UNAVAILABLE');
         zero(f);
     });
+});
+
+
+it('B4-T01 validates the whole original grant before applying per-observation Tool exclusions', () => {
+    const f = fixture({views:2,tools:2,refs:2});
+    const full = f.grant(), old = f.observe(full);
+    const [first, second] = full.toolIds;
+    const unknown = JSON.stringify(['app','File','unknown']);
+    const capture = f.registry.captureOptions({excludeToolIds:[first,unknown]});
+    expect(capture.status).toBe('ready');
+    if(capture.status!=='ready')throw Error(capture.issue.code);
+    for(const invalid of [
+        {...full,toolIds:[first,first,second]},
+        {...full,toolIds:[first,unknown]},
+        {...full,refs:[...full.refs,{...full.refs[0],consumers:[{appId:'broken-id'}]}]},
+        {...full,closeViews:[{viewId:'v_1',viewInstanceId:'fake'}]},
+    ]) {
+        const token=f.begin();
+        expect(f.registry.complete(token.reservation,invalid,undefined,capture.options))
+            .toMatchObject({status:'rejected',issue:{code:'OBSERVATION_PROJECTION_INVALID'}});
+        expect(f.registry.resolveTool(key(old)).status).toBe('found');
+    }
+    const token=f.begin(), next=f.registry.complete(token.reservation,full,undefined,capture.options);
+    expect(next.status).toBe('observed');if(next.status!=='observed')throw Error(next.issue.code);
+    expect(next.observation.refs).toEqual(old.refs);
+    expect(next.observation.views).toEqual(old.views);
+    expect(next.observation.tools.map(t=>t.id)).toEqual([second]);
+    expect(f.registry.resolveTool(key(old)).status).toBe('found');
+    expect(f.registry.adoptObservation(next.observation.observationId)).toEqual({status:'adopted'});
+    expect(f.registry.resolveTool({observationId:next.observation.observationId,toolId:first!,viewId:'v_1'}).status).not.toBe('found');
+    expect(f.registry.resolveTool(key(next.observation)).status).toBe('found');
+    zero(f);
+});
+it('B4-T01 exact options diagnostics and immutable capture', () => {
+    const f=fixture({views:1,refs:0,tools:1,limits:{maxTools:2}});
+    const id=f.grant().toolIds[0]!, cases=[
+        [{unknown:true},'$.unknown'],
+        [{excludeToolIds:[id,id]},'$.excludeToolIds[1]'],
+        [{excludeToolIds:[1]},'$.excludeToolIds[0]'],
+        [{excludeToolIds:['not a canonical ID']},'$.excludeToolIds[0]'],
+        [{excludeToolIds:[id,id,id]},'$.excludeToolIds'],
+        [{excludeToolIds:undefined},'$.excludeToolIds'],
+    ] as const;
+    for(const [input,path] of cases)expect(f.registry.captureOptions(input)).toMatchObject({status:'rejected',issue:{code:'OBSERVATION_INVALID',path}});
+    const ids=[id], result=f.registry.captureOptions({excludeToolIds:ids}); ids[0]='mutated';
+    expect(result).toEqual({status:'ready',options:{excludeToolIds:[id]}});
+    if(result.status==='ready')expect(Object.isFrozen(result.options.excludeToolIds)).toBe(true);
+    zero(f);
 });

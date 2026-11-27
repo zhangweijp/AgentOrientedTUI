@@ -6,10 +6,10 @@ import { canonicalJson, utf8Size } from './json.js';
 import type { JsonValue } from './types.js';
 
 function draft(appId = 'a', instanceId = 'i', seq = 1, value = 'old') {
-    return { schemaVersion: 8 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
-        views: [{ toolBindings: [], id: 'v', viewInstanceId: 'g', type: 'Detail', name: value, region: 'dynamic' as const,
+    return { healthySince: 1,  schemaVersion: 9 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
+        views: [{ toolBindings: [], id: 'v', viewInstanceId: 'm:1', type: 'Detail', name: value, region: 'dynamic' as const,
             content: { format: 'markdown-v1' as const, value } }],
-        refs: { [refKey('v', 'g', 'r')]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'g', refType: 'Value',
+        refs: { [refKey('v', 'm:1', 'r')]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected', id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'm:1', refType: 'Value',
             target: { kind: 'snapshot-value' as const, payload: { value } } } }, tools: {} };
 }
 const size = (d: ReturnType<typeof draft>) => utf8Size(canonicalJson(d as unknown as JsonValue));
@@ -80,7 +80,7 @@ describe('W09-A Snapshot finite retention', () => {
         expect(core.store.readLatest('a')).toMatchObject({ status: 'degraded', lastGood: old });
         expect(core.store.inspect().currentBytes).toBe(cap);
         expect(core.committer.accept(draft('a', 'i', 1000, 'new'))).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SEQUENCE_STALE' } });
-        expect(core.store.resolveRef({ snapshotId: old.id, appId: 'a', instanceId: 'i', viewId: 'v', viewInstanceId: 'g', refId: 'r' }))
+        expect(core.store.resolveRef({ snapshotId: old.id, appId: 'a', instanceId: 'i', viewId: 'v', viewInstanceId: 'm:1', refId: 'r' }))
             .toMatchObject({ status: 'resolved', target: { payload: { value: 'first-value' } } });
         const next = draft('a', 'i', 1001, 'new');
         expect(published(core, next).revision).toBe(2);
@@ -121,7 +121,7 @@ describe('W09-A Snapshot finite retention', () => {
         else expect(result.issue.message).toBe('m'.repeat(509) + '…');
         expect(result.issue.path).toBe('😀'.repeat(127) + '…');
         expect(c.store.inspect().diagnosticBytes).toBe(utf8Size(result.issue.code + result.issue.message + result.issue.path));
-        published(c, draft('a', 'i', 2)); expect(c.store.inspect().diagnosticBytes).toBe(0);
+        published(c, { ...draft('a','i',2), healthySince: 2, refs: { [refKey('v','m:1','r')]: { ...Object.values(draft().refs)[0]!, continuity: [2,2,0] as const } } }); expect(c.store.inspect().diagnosticBytes).toBe(0);
     });
     it.each(['', '$', '$.x'])('A07 keeps short and empty diagnostic strings byte-for-byte: %s', path => {
         const c = createSnapshotCore(identity);
@@ -136,13 +136,13 @@ describe('W09-A Snapshot finite retention', () => {
             issue: { code, message: 'short', path: '$.x' } } as any)).toMatchObject({ issue: { code: 'SNAPSHOT_INVALID', message: 'short', path: '$.x' } });
         c.lifecycle.stop(); expect(c.store.inspect().diagnosticBytes).toBe(0);
     });
-    it('A07 bounds actual invalid Draft diagnostics and clears unchanged recovery', () => {
+    it('A07 bounds actual invalid Draft diagnostics and clears them on identical-content recovery', () => {
         const c = createSnapshotCore(identity); published(c);
         const bad = { ...draft('a', 'i', 2), refs: { ['key'.repeat(70000)]: {} } };
         const r = c.committer.accept(bad); expect(r.status).toBe('rejected'); if (r.status !== 'rejected') throw Error();
         expect(utf8Size(r.issue.path ?? '')).toBeLessThanOrEqual(512); expect(utf8Size(r.issue.message)).toBeLessThanOrEqual(512);
         expect(c.store.inspect().diagnosticBytes).toBeGreaterThan(0);
-        expect(c.committer.accept(draft('a', 'i', 3)).status).toBe('unchanged'); expect(c.store.inspect().diagnosticBytes).toBe(0);
+        expect(c.committer.accept(draft('a', 'i', 3))).toMatchObject({ status: 'published', snapshot: { revision: 2, admissionSinceRevision: 2 } }); expect(c.store.inspect().diagnosticBytes).toBe(0);
         expect(validatePreparedSnapshot(draft()).ok).toBe(true);
     });
     it.each([false, true])('A08/A09 permanent disposal works with failing clock=%s without reading hostile input', broken => {
@@ -162,6 +162,45 @@ describe('W09-A Snapshot finite retention', () => {
         const stats = c.store.inspect(); expect(stats.state).toBe('disposed');
         for (const [key, value] of Object.entries(stats)) if (key !== 'state') expect(value).toBe(0);
         expect(Object.isFrozen(stats)).toBe(true); expect(c.store.inspect()).not.toBe(stats); expect(reads).toBe(before);
-        expect(snapshot.refs[refKey('v', 'g', 'r')].target).toEqual({ kind: 'snapshot-value', payload: { value: 'old' } });
+        expect(snapshot.refs[refKey('v', 'm:1', 'r')].target).toEqual({ kind: 'snapshot-value', payload: { value: 'old' } });
+    });
+});
+
+
+describe('B1 fused candidate acceptance and Receiver admission period', () => {
+    it('keeps inventory and watermarks after actual retention rejection, then accepts the same candidate epoch', () => {
+        const core = createSnapshotCore({ ...identity, maxHeldSnapshots: 0, now: () => 0 });
+        const first = published(core);
+        const stamp = core.currentPublication();
+        const hold = core.store.acquire(first.id);
+        if (hold.status !== 'acquired') throw Error('Expected held snapshot');
+        const before = core.store.inspect();
+        const next = draft('a', 'i', 2, 'new');
+        expect(core.committer.accept(next, 'candidate')).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_CAPACITY' } });
+        expect(core.currentPublication()).toEqual(stamp);
+        expect(core.store.inspect()).toEqual(before);
+        expect(core.store.readLatest('a')).toEqual({ status: 'ready', snapshot: first });
+        hold.hold.release();
+        expect(core.committer.accept(next, 'candidate')).toMatchObject({ status: 'published', snapshot: { revision: 2, admissionSinceRevision: 1 } });
+        core.lifecycle.dispose();
+    });
+    it('does not consume rejected candidate epochs but requires a new epoch after authoritative rejection', () => {
+        const core = createSnapshotCore(identity);
+        const first = published(core);
+        const before = core.currentPublication();
+        const invalid = { ...draft('a', 'i', 2), refs: { malformed: {} } };
+        expect(core.committer.accept(invalid, 'candidate').status).toBe('rejected');
+        expect(core.currentPublication()).toEqual(before);
+        expect(core.store.readLatest('a')).toEqual({ status: 'ready', snapshot: first });
+        expect(core.committer.accept(invalid, 'authoritative').status).toBe('rejected');
+        expect(core.store.readLatest('a')).toMatchObject({ status: 'degraded', lastGood: first });
+        expect(core.committer.accept({ ...draft('a', 'i', 2), producerSeq: 3 }, 'candidate').status).toBe('rejected');
+        expect(core.committer.accept(draft('a', 'i', 4), 'candidate')).toMatchObject({
+            status: 'published', snapshot: { revision: 2, admissionSinceRevision: 2 },
+        });
+        expect(core.committer.accept(draft('a', 'i', 5), 'authoritative')).toMatchObject({
+            status: 'unchanged', snapshot: { revision: 2, admissionSinceRevision: 2 },
+        });
+        core.lifecycle.dispose();
     });
 });

@@ -91,16 +91,16 @@ try {
     const modules = name => new URL('./dist/batch-three-' + name + '.js', import.meta.url).href;
     await installFixture(desktop, 'contacts', 'contacts', modules('contacts'), folder, policy);
     await installFixture(desktop, 'mail', 'mail', modules('mail'), folder, policy);
-    const open = await turn('Open the draft', [modelCall('open', 'mail-open_draft', { name: 'Strict' })]);
+    const open = await turn('Open the draft', [modelCall('open', 'mail-workspace-open_draft', { name: 'Strict' })]);
     const body = await turn('Use the published priority and inspect its structure', [
-        modelCall('priority', 'mail-set_priority', { view_id: 'draft_1', priority: '$ref.contacts.list.score' }),
+        modelCall('priority', 'mail-draft-set_priority', { view_id: 'draft_1', priority: '$ref.contacts.list.score' }),
         modelCall('schema', 'system-inspect_ref', { address: '$ref.contacts.list.people', mode: 'schema' }),
     ]);
     const tools = Object.fromEntries(functions(body).map(tool => [tool.name, tool.parameters]));
-    assert.equal(tools['contacts-store_team'].properties.text.type, 'string');
-    assert.deepEqual(tools['mail-set_priority'].properties.priority.anyOf.map(branch => branch.type), ['integer', 'string']);
-    assert.match(consoleBindings(body), /"mail-set_priority"/);
-    assert.doesNotMatch(consoleBindings(open), /"mail-set_priority"/);
+    assert.equal(tools['contacts-team-store_team'].properties.text.type, 'string');
+    assert.deepEqual(tools['mail-draft-set_priority'].properties.priority.anyOf.map(branch => branch.type), ['integer', 'string']);
+    assert.match(consoleBindings(body), /"mail-draft-set_priority"/);
+    assert.doesNotMatch(consoleBindings(open), /"mail-draft-set_priority"/);
     assert.deepEqual(functions(open).find(tool => tool.name === 'run_code'), functions(body).find(tool => tool.name === 'run_code'));
     assert.deepEqual(tools.run_code.properties.imports.anyOf, [{ type: 'array', items: { type: 'string' } },
         beta ? { type: 'string', enum: ['default'] } : { type: 'null' }]);

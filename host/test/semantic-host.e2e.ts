@@ -27,8 +27,8 @@ const { AppCatalog } = await import('../src/app-distribution/app-catalog.js');
 const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
 const { DesktopManager } = await import('../src/core/desktop-manager.js');
 const browserInstallation = 'browser_installation';
-const ideTool = (name: string) => 'system_ide-' + name;
-const terminalTool = (name: string) => 'terminal-' + name;
+const ideTool = (name: string) => 'system_ide-' + (['multi_open_file', 'multi_open_dirs', 'multi_close_file'].includes(name) ? 'Workspace' : 'FileDetail') + '-' + name;
+const terminalTool = (name: string) => 'terminal-' + (name === 'new_terminal_and_send_command' ? 'TerminalConsole' : 'Terminal') + '-' + name;
 const runtime = createRuntime();
 const registry = new AppCatalog({ configPath: path.join(work, 'registry.json') });
 const manager = new DesktopManager({ kernel: runtime, appCatalog: registry });
@@ -151,7 +151,7 @@ try {
     assert.ok(!initial.tools[ideTool('edit_file')], 'No file edit tool before a FileDetail exists');
     assert.ok(initial.tools[terminalTool('new_terminal_and_send_command')]);
     assert.ok(!initial.tools[terminalTool('send_command_to_exist_terminal')]);
-    for (const name of ['system_ide-multi_open_file', 'terminal-new_terminal_and_send_command', 'system-open_app', 'system-close_app'])
+    for (const name of ['system_ide-Workspace-multi_open_file', 'terminal-TerminalConsole-new_terminal_and_send_command', 'system-open_app', 'system-close_app'])
         assert.ok(initial.tools[name], `Public name: ${name}`);
     assert.ok(!initial.tools[ideTool('multi_open_file')].inputSchema.jsonSchema.properties.view_id);
     const workspace = modelViews(initial.messages).find(page =>
@@ -162,8 +162,8 @@ try {
     assert.ok(!workspace.includes('batch_edit'), 'Workspace contains current data rather than a tool catalog');
     const ideInstruction = instruction(initial, 'system_ide');
     assert.ok(ideInstruction.includes('### Workspace') && ideInstruction.includes('### FileDetail') && ideInstruction.includes('### SearchResult'));
-    assert.ok(!initial.tools['system_ide-batch_edit']);
-    assert.ok(!initial.tools['system_ide-close_search_view']);
+    assert.ok(!Object.keys(initial.tools).some(name => name.startsWith('system_ide-') && name.endsWith('-batch_edit')));
+    assert.ok(!Object.keys(initial.tools).some(name => name.startsWith('system_ide-') && name.endsWith('-close_search_view')));
     const terminalInstruction = instruction(initial, 'terminal');
     assert.match(terminalInstruction, /Select a live Terminal/);
     assert.ok(content(initial).includes('## System Logs'));
@@ -198,13 +198,13 @@ try {
     applySourceControlsToSources(fixed, { aotuiSource: source });
     const restored = await observe();
     assert.ok(modelViews(restored.messages).some(page => page.type === 'Workspace' && page.id === 'workspace'));
-    assert.ok(restored.tools['system_ide-multi_open_file']);
-    assert.ok(restored.tools['terminal-new_terminal_and_send_command']);
+    assert.ok(restored.tools['system_ide-Workspace-multi_open_file']);
+    assert.ok(restored.tools['terminal-TerminalConsole-new_terminal_and_send_command']);
     assert.ok(content(restored).includes('lite_browser'), 'Pending Browser remains discoverable');
     release(restored);
     source.setAppEnabled('terminal', false);
     const explicitlyDisabled = await observe();
-    assert.ok(explicitlyDisabled.tools['system_ide-multi_open_file']);
+    assert.ok(explicitlyDisabled.tools['system_ide-Workspace-multi_open_file']);
     assert.ok(!Object.keys(explicitlyDisabled.tools).some(name => name.startsWith('terminal-')));
     assert.ok(!content(explicitlyDisabled).includes('app_name="terminal"'));
     release(explicitlyDisabled);
@@ -248,10 +248,10 @@ try {
 
     await call(ideTool('multi_open_file'), { filePaths: [otherFile] });
     const twoFiles = await observe();
-    assert.ok(twoFiles.tools['system_ide-edit_file']);
+    assert.ok(twoFiles.tools['system_ide-FileDetail-edit_file']);
     assert.equal(instruction(twoFiles, 'system_ide'), ideInstruction);
     assert.equal(Object.keys(twoFiles.tools).filter(name => name.endsWith('-edit_file')).length, 1);
-    assert.deepEqual(twoFiles.tools['system_ide-edit_file'].inputSchema.jsonSchema, edited.tools['system_ide-edit_file'].inputSchema.jsonSchema, 'Opening another file does not change the Tool schema');
+    assert.deepEqual(twoFiles.tools['system_ide-FileDetail-edit_file'].inputSchema.jsonSchema, edited.tools['system_ide-FileDetail-edit_file'].inputSchema.jsonSchema, 'Opening another file does not change the Tool schema');
     const noTarget = await invoke(twoFiles, ideTool('edit_file'), { oldString: 'other = 100', newString: 'bad' }, 'rejected');
     assert.equal(noTarget.error?.code, 'TOOL_INVALID_ARGS');
     const otherViewId = fileDetail(twoFiles, otherFile).id;
@@ -262,6 +262,11 @@ try {
     const stale = await invoke(edited, ideTool('read_loaded_diagnostics'), { view_id: firstDetail }, 'rejected');
     assert.equal(stale.error?.code, 'SEMANTIC_CONTEXT_RELEASED');
     release(edited);
+    const afterOtherEdit = await observe();
+    assert.equal(fileDetail(afterOtherEdit, file).markup, fileDetail(twoFiles, file).markup,
+        'The unrelated FileDetail XML-decoded Markdown is byte-for-byte unchanged');
+    assert.ok(fileDetail(afterOtherEdit, otherFile).markup.includes('export const other = 200;'));
+    release(afterOtherEdit);
     await invoke(twoFiles, ideTool('multi_close_file'), { filePaths: [otherFile] });
     const closedFile = await invoke(twoFiles, ideTool('edit_file'),
         { view_id: otherViewId, oldString: 'other = 200', newString: 'other = 300' }, 'rejected');
@@ -326,7 +331,7 @@ try {
     const browserId = (launched.result as { app_id: string }).app_id;
     assert.equal(browserId, installedBrowser()?.appId);
     assert.equal(browserId, 'lite_browser');
-    const fetchPage = browserId + '-fetch_url', closePage = browserId + '-close_page';
+    const fetchPage = browserId + '-Root-fetch_url', closePage = browserId + '-Page-close_page';
     const browser = await eventually(context => !!context.tools[fetchPage], 'lazy browser ready');
     assert.ok(!browser.tools[closePage]);
     const browserInstruction = instruction(browser, browserId);
@@ -386,7 +391,7 @@ try {
         await limited.adopt!();
         const capacity = await limited.executeTool!(fetchPage, { url: baseURL + '/image' }, 'image-over-capacity');
         assert.equal(capacity?.error?.code, 'OBSERVATION_CAPACITY');
-        assert.match(capacity?.error?.message ?? '', /does not fit/);
+        assert.equal(capacity?.error?.message, 'The browser View could not be prepared.');
         const preserved = await constrainedApp.preview();
         if (preserved.status !== 'previewed') throw Error(preserved.issue.message);
         assert.deepEqual(preserved.views.map(view => view.type).sort(), ['Root', 'Search']);

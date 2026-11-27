@@ -6,6 +6,8 @@ import type {
 } from './types.js';
 import { diagnosticDigest, utf8Size } from './json.js';
 import { captureSnapshotLimits, refKey, snapshotId } from './snapshot-support.js';
+import { normalizeProjectionLimits } from './projection-limits.js';
+import { hostedObservationCapacityIssue } from '../invocation/observation-projection.js';
 import { validatePreparedSnapshot } from './validate-snapshot.js';
 
 interface SnapshotEntry {
@@ -69,6 +71,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
     currentPublication(): SnapshotDraftEnvelope | undefined;
 } {
     const limits = captureSnapshotLimits(options);
+    const projectionLimits = options.projectionLimits === undefined ? undefined : normalizeProjectionLimits(options.projectionLimits, 'options.projectionLimits', true);
     const { appId, instanceId } = options;
     nonEmpty(appId, 'appId');
     nonEmpty(instanceId, 'instanceId');
@@ -98,8 +101,10 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
     let lastIssue: SnapshotIssue | undefined;
     let seenProducerSeq = 0;
     let seenSourceEpoch = 0;
+    let acceptedEpoch = 0, mountHighWater = 0, activationHighWater = 0, producerFaultEpoch = 0;
     const entries = new Map<string, SnapshotEntry>();
     const readReady = () => status === 'ready' ? current?.snapshot : undefined;
+    const isStopped = () => status === 'stopped';
     const liveReader = new WeakRef(readReady);
 
     function clock(): number {
@@ -167,6 +172,21 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
     });
 
     const committer = Object.freeze({
+        rejectPrepared(envelope: SnapshotDraftEnvelope | undefined, problem: SnapshotIssue, mode: 'authoritative' | 'candidate'): CommitResult {
+            const source = identity;
+            if (!source || isStopped()) return rejected('APP_STOPPED', 'Snapshot Core is closed');
+            if (mode !== 'authoritative' && mode !== 'candidate') return rejected('SNAPSHOT_INVALID', 'Invalid acceptance mode');
+            if (envelope && (envelope.appId !== source.appId || envelope.instanceId !== source.instanceId))
+                return rejected('APP_INSTANCE_MISMATCH', 'Draft belongs to a different App instance');
+            if (mode === 'authoritative' && (!envelope || envelope.producerSeq > seenProducerSeq)) {
+                if (envelope) {
+                    seenProducerSeq = envelope.producerSeq;
+                    seenSourceEpoch = Math.max(seenSourceEpoch, envelope.sourceEpoch);
+                }
+                markDegraded(source, problem);
+            }
+            return rejected(problem.code, problem.message, problem);
+        },
         reportPrepareFailure(failure: PreparedSnapshotFailure): CommitResult {
             const source = identity;
             if (!source) return rejected('APP_STOPPED', 'Snapshot Core is closed');
@@ -183,18 +203,22 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             }
             seenProducerSeq = failure.producerSeq;
             seenSourceEpoch = failure.sourceEpoch;
+            producerFaultEpoch = failure.sourceEpoch;
             return Object.freeze({ status: 'rejected', issue: markDegraded(source, failure.issue) });
         },
-        accept(input: unknown): CommitResult {
+        accept(input: unknown, mode: 'authoritative' | 'candidate' = 'authoritative', seal?: import('./types.js').ViewTypeSeal): CommitResult {
             const source = identity;
-            if (!source) return rejected('APP_STOPPED', 'Snapshot Core is closed');
+            if (!source || isStopped()) return rejected('APP_STOPPED', 'Snapshot Core is closed');
+            if (mode !== 'authoritative' && mode !== 'candidate')
+                return rejected('SNAPSHOT_INVALID', 'Invalid acceptance mode');
+            const candidate = mode === 'candidate';
             const time = clock();
             const checked = validatePreparedSnapshot(input, limits, (appId, instanceId) =>
-                appId === source.appId && instanceId === source.instanceId ? current?.snapshot.tools : undefined);
+                appId === source.appId && instanceId === source.instanceId ? current?.snapshot.tools : undefined, seal);
             if (!identity) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             if (!checked.ok) {
                 const envelope = checked.envelope;
-                if (envelope?.appId === source.appId && envelope.instanceId === source.instanceId &&
+                if (!candidate && envelope?.appId === source.appId && envelope.instanceId === source.instanceId &&
                     status !== 'stopped' && envelope.producerSeq > seenProducerSeq) {
                     seenProducerSeq = envelope.producerSeq;
                     seenSourceEpoch = Math.max(seenSourceEpoch, envelope.sourceEpoch);
@@ -220,53 +244,101 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             if (draft.producerSeq <= seenProducerSeq) {
                 return rejected('SNAPSHOT_SEQUENCE_STALE', 'Producer sequence did not advance', { appId: draft.appId });
             }
+            // No candidate failure may advance the watermarks or revoke a healthy publication.
+            function rejectDraft(problem: SnapshotIssue): CommitResult {
+                if (!candidate) {
+                    seenProducerSeq = draft.producerSeq;
+                    seenSourceEpoch = Math.max(seenSourceEpoch, draft.sourceEpoch);
+                    markDegraded(source!, problem);
+                }
+                return Object.freeze({ status: 'rejected', issue: problem });
+            }
             if (draft.sourceEpoch < seenSourceEpoch) {
-                seenProducerSeq = draft.producerSeq;
-                const problem = issue('SNAPSHOT_SOURCE_CONFLICT', 'Producer source epoch regressed', { appId: draft.appId });
-                markDegraded(source, problem);
-                return Object.freeze({ status: 'rejected', issue: problem });
+                return rejectDraft(issue('SNAPSHOT_SOURCE_CONFLICT', 'Producer source epoch regressed', { appId: draft.appId }));
             }
-            seenProducerSeq = draft.producerSeq;
             const equal = current?.canonical === data.canonicalContent;
-            if ((equal || !current) && lastIssue && draft.sourceEpoch === seenSourceEpoch) {
-                // Transport can replay a previously prepared frame. Only a new source
-                // commit proves recovery from a failure at this epoch.
-                return Object.freeze({ status: 'rejected', issue: lastIssue });
+            if (status === 'degraded' && draft.sourceEpoch === seenSourceEpoch) {
+                if (equal || !current) {
+                    if (!candidate) seenProducerSeq = draft.producerSeq;
+                    return Object.freeze({ status: 'rejected', issue: lastIssue! });
+                }
+                return rejectDraft(issue('SNAPSHOT_SOURCE_EPOCH_CONFLICT',
+                    'Semantic data changed without advancing the source epoch', { appId: draft.appId }));
             }
-            if (current && equal) {
-                seenSourceEpoch = draft.sourceEpoch;
-                status = 'ready';
-                lastIssue = undefined;
+            if (current && draft.sourceEpoch === acceptedEpoch && !equal) {
+                return rejectDraft(issue('SNAPSHOT_SOURCE_EPOCH_CONFLICT',
+                    'Semantic data changed without advancing the source epoch', { appId: draft.appId }));
+            }
+            // These watermarks track only actual accepted frames, never rejected proposals.
+            const previous = current?.snapshot;
+            const sameHealth = previous?.healthySince === draft.healthySince;
+            const mismatch = (path: string) => rejectDraft(issue('SNAPSHOT_INVALID', 'Invalid Producer continuity', { appId: draft.appId, path }));
+            if (producerFaultEpoch && draft.healthySince <= producerFaultEpoch ||
+                previous && !sameHealth && draft.healthySince <= acceptedEpoch)
+                return mismatch('$.healthySince');
+            let mounts = mountHighWater, activations = activationHighWater;
+            const oldViews = new Map(previous?.views.map(view => [view.viewInstanceId, view]));
+            for (const [i, view] of draft.views.entries()) {
+                const old = oldViews.get(view.viewInstanceId);
+                const path = '$.views[' + i + ']';
+                const mount = Number(view.viewInstanceId.slice(2));
+                if (old ? old.id !== view.id || old.type !== view.type : mount <= mountHighWater)
+                    return mismatch(path + '.viewInstanceId');
+                mounts = Math.max(mounts, mount);
+                const oldBindings = new Map(old?.toolBindings.map(binding => [binding.toolId, binding.activationId]));
+                for (const {toolId, activationId} of view.toolBindings) {
+                    const activation = Number(activationId.slice(2));
+                    if (!(sameHealth && oldBindings.get(toolId) === activationId) && activation <= activationHighWater)
+                        return mismatch(path + '.toolBindings');
+                    activations = Math.max(activations, activation);
+                }
+                if (view.closeActivationId) {
+                    const activation = Number(view.closeActivationId.slice(2));
+                    if (!(sameHealth && old?.closeActivationId === view.closeActivationId) && activation <= activationHighWater)
+                        return mismatch(path + '.closeActivationId');
+                    activations = Math.max(activations, activation);
+                }
+            }
+            for (const [key, ref] of Object.entries(draft.refs)) {
+                const old = sameHealth ? previous?.refs[key]?.continuity : undefined;
+                for (const [lane, start] of ref.continuity.entries()) {
+                    if (!start || old?.[lane] === start) continue;
+                    if (start <= acceptedEpoch || draft.sourceEpoch === acceptedEpoch + 1 && old?.[lane])
+                        return mismatch('$.refs[' + JSON.stringify(key) + '].continuity[' + lane + ']');
+                }
+            }
+            function acceptWatermarks() {
+                seenProducerSeq = draft.producerSeq;
+                seenSourceEpoch = acceptedEpoch = draft.sourceEpoch;
+                mountHighWater = mounts;
+                activationHighWater = activations;
+                producerFaultEpoch = 0;
+            }
+            const capacityIssue = projectionLimits && hostedObservationCapacityIssue(draft, projectionLimits);
+            if (capacityIssue) return rejectDraft(capacityIssue);
+            if (status === 'ready' && current && equal) {
+                acceptWatermarks();
                 return Object.freeze({ status: 'unchanged', snapshot: current.snapshot });
-            }
-            if (current && draft.sourceEpoch === seenSourceEpoch) {
-                const problem = issue('SNAPSHOT_SOURCE_EPOCH_CONFLICT',
-                    'Semantic data changed without advancing the source epoch', { appId: draft.appId });
-                markDegraded(source, problem);
-                return Object.freeze({ status: 'rejected', issue: problem });
             }
             const revision = (current?.snapshot.revision ?? 0) + 1;
             if (!Number.isSafeInteger(revision)) {
-                const problem = issue('SNAPSHOT_CAPACITY', 'Committed revision counter exhausted', { appId: draft.appId });
-                markDegraded(source, problem);
-                return Object.freeze({ status: 'rejected', issue: problem });
+                return rejectDraft(issue('SNAPSHOT_CAPACITY', 'Committed revision counter exhausted', { appId: draft.appId }));
             }
             if (data.bytes > retention.maxCurrentBytes) {
-                const problem = issue('SNAPSHOT_CAPACITY', 'Current snapshot budget exceeded: maxCurrentBytes', { appId: draft.appId });
-                markDegraded(source, problem);
-                return Object.freeze({ status: 'rejected', issue: problem });
+                return rejectDraft(issue('SNAPSHOT_CAPACITY', 'Current snapshot budget exceeded: maxCurrentBytes', { appId: draft.appId }));
             }
             if (!holdsFitAfterCommit()) {
-                const problem = issue('SNAPSHOT_CAPACITY', 'Held snapshot budget prevents a safe commit', { appId: draft.appId });
-                markDegraded(source, problem);
-                return Object.freeze({ status: 'rejected', issue: problem });
+                return rejectDraft(issue('SNAPSHOT_CAPACITY', 'Held snapshot budget prevents a safe commit', { appId: draft.appId }));
             }
+            const admissionSinceRevision = status === 'ready' && sameHealth && current ? current.snapshot.admissionSinceRevision : revision;
             const snapshot = Object.freeze({
                 schemaVersion: SNAPSHOT_SCHEMA_VERSION,
                 id: snapshotId(draft.appId, draft.instanceId, revision),
                 appId: draft.appId,
                 instanceId: draft.instanceId,
                 revision,
+                admissionSinceRevision,
+                healthySince: draft.healthySince,
                 createdAt: time,
                 views: data.draft.views,
                 refs: data.draft.refs,
@@ -282,7 +354,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             entries.set(snapshot.id, record);
             liveReaders.set(snapshot, liveReader);
             current = record;
-            seenSourceEpoch = draft.sourceEpoch;
+            acceptWatermarks();
             lastIssue = undefined;
             status = 'ready';
             return Object.freeze({ status: 'published', snapshot });

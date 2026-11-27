@@ -11,7 +11,7 @@ const SaveInput = Type.Object({ text: Text }, { additionalProperties: false });
 type Save = { save(input: string): ToolResult };
 const save = { description: 'Store a text selection from this request.', inputSchema: SaveInput,
     execute: ({ input, context }: { input: Type.Static<typeof SaveInput>; context: Save }) => context.save(input.text) };
-const List = defineViewType<Save>()({ name: 'list', multiplicity: 'single', region: 'dynamic', tools: { store_here: save } });
+const List = defineViewType<(Save) & { close?: (() => ToolResult) | undefined }>()({ onClose: { enabled: context => !!context.close, execute: ({ context }) => context.close!() },  name: 'list', multiplicity: 'single', region: 'dynamic', tools: { store_here: save } });
 const Team = defineViewType<Save>()({ name: 'team', multiplicity: 'single', region: 'dynamic', tools: { store_team: save } });
 type Directory = { revision: string; people: Type.Static<typeof People>; withdrawn?: boolean; privateScore?: boolean;
     score?: number; emails?: string[]; numbers?: number[] };
@@ -19,7 +19,7 @@ type Directory = { revision: string; people: Type.Static<typeof People>; withdra
 export default createApp({
     app_name: 'contacts',
     viewTypes: [List, Team],
-    initialize({ launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ launchConfig, publish: commit, registerLifecycle }) {
         const folder = launchConfig?.folder;
         if (typeof folder !== 'string') throw new Error('Missing contacts folder');
         const file = join(folder, 'people.json');
@@ -30,10 +30,7 @@ export default createApp({
             appendFileSync(join(folder, 'contacts-writes.jsonl'), JSON.stringify({ view, text, threadId }) + '\n');
             return { success: true };
         } });
-        const list = createView(List, { onClose: () => { opened = false; publish(); return { success: true }; }, render: () => ({
-            body: '# Contacts\nDirectory version ' + directory.revision,
-            context: storeOn('list'),
-            refs: directory.withdrawn ? [] : [
+        const list = (() => { const handle = createView(List); const closeAction = (): ToolResult => { opened = false; publish(); return { success: true }; }; return { handle, frame: () => handle.frame({ body: '# Contacts\nDirectory version ' + directory.revision, context: { ...(storeOn('list')), close: closeAction }, refs: directory.withdrawn ? [] : [
                 arrayRef('people', directory.people, { scope: 'public', itemType: 'Contact', schema: People }),
                 ref('secret', 'only-on-list', { scope: 'private', schema: Text }),
                 ref('team', 'inside-contacts', { scope: 'protected', schema: Text }),
@@ -41,11 +38,10 @@ export default createApp({
                 ref('score', directory.score ?? 7, { scope: directory.privateScore ? 'private' : 'public', schema: Type.Integer() }),
                 ...(directory.emails ? [arrayRef('emails', directory.emails, { scope: 'public', schema: Type.Array(Text) })] : []),
                 ...(directory.numbers ? [arrayRef('numbers', directory.numbers, { scope: 'public', schema: Type.Array(Type.Integer()) })] : []),
-            ],
-        }) });
-        const team = createView(Team, { render: () => ({ body: '# Team notes', context: storeOn('team') }) });
+            ] }) }; })();
+        const team = (() => { const handle = createView(Team); return { handle, frame: () => handle.frame({ body: '# Team notes', context: storeOn('team') }) }; })();
         let opened = true;
-        const publish = () => prepareProjection({ views: opened ? [list, team] : [team] });
+        const publish = () => commit(() => (opened ? [list, team] : [team]).map(page => page.frame()));
         const refresh = () => {
             const current = readFileSync(file, 'utf8');
             if (current === published) return;
@@ -57,7 +53,7 @@ export default createApp({
         refresh();
         appendFileSync(lifecycle, JSON.stringify({ event: 'start', threadId }) + '\n');
         const watcher = setInterval(refresh, 15);
-        registerCleanup({ stop: () => {
+        registerLifecycle({ stop: () => {
             clearInterval(watcher);
             appendFileSync(lifecycle, JSON.stringify({ event: 'stop', threadId }) + '\n');
         } });

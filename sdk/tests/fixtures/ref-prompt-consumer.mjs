@@ -14,7 +14,7 @@ const runtime = createRuntime();
 const runs = [];
 let diagnostic, source, current, active;
 const bytes = text => Buffer.byteLength(text, 'utf8');
-const toolName = name => 'refs-' + name;
+const toolName = name => 'refs-Editor-' + name;
 const textArgs = { path: 'dir/a.txt', text: 'files.items[0]' };
 const expectedActions = ['dir/a.txt', 'review task', 'dir/a.txt,dir/b.txt',
   ...[[['dir/b.txt', 'dir/a.txt', 'dir/b.txt'], textArgs.path, textArgs.text],
@@ -35,7 +35,7 @@ function checkSchemaCapacity() {
   const limit = 64 * 1024;
   const size = value => bytes(JSON.stringify(value));
   const modelSchemaFor = inputSchema => projectNativeToolSchema({ multiplicity: 'multiple',
-    viewType: 'Capacity', inputSchema }, { appId: 'capacity', instanceId: 'capacity-1' }, [], []);
+    viewType: 'Capacity', inputSchema });
   const declaration = (refType, padding) => defineViewType()({ multiplicity: 'multiple',
     name: 'Capacity',
     tools: { read: {
@@ -58,7 +58,7 @@ function checkSchemaCapacity() {
   const reachable = modelSchemaFor(near);
   assert.equal(size(reachable), limit);
   assert.throws(() => modelSchemaFor(registered('File', pad(limit - size(empty) + 1))),
-    { code: 'TOOL_SCHEMA_CAPACITY' });
+    { code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED' });
 
   const longType = '界😀'.repeat(9000);
   const long = registered(longType, pad(limit - size(declaration(longType, '').tools.read.inputSchema)));
@@ -69,7 +69,7 @@ function checkSchemaCapacity() {
   assert.match(longWire.properties.target.description, /type-matched Ref/);
   return { limit, declarationBytes: size(near), receiverBytes: size(reachable),
     longTypeBytes: bytes(longType), longDeclarationBytes: size(long), longReceiverBytes: size(longWire),
-    longHint: longWire.properties.target.description, extraReceiverCode: 'TOOL_SCHEMA_CAPACITY' };
+    longHint: longWire.properties.target.description, extraReceiverCode: 'MODEL_TOOL_SCHEMA_UNSUPPORTED' };
 }
 
 try {
@@ -80,8 +80,8 @@ try {
   await mkdir(broken, { recursive: true });
   await writeFile(new URL('index.mjs', broken), "export { broken as default } from '../full-out/ref-prompt-app.js';\n");
   await writeFile(new URL('aoapp.json', broken), JSON.stringify({
-    app_name: 'refs', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v8',
-    appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './index.mjs' },
+    app_name: 'refs', version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v9',
+    appLifecycleSupport: 'app-lifecycle-v3', entry: { main: './index.mjs' },
   }));
   const brokenId = await desktop.registerPendingApp({ installationId: 'broken_refs', localPath: fileURLToPath(broken) });
   const failure = await desktop.openApp(brokenId).then(() => null, error => error);
@@ -163,16 +163,14 @@ try {
   const latest = await app.observe();
   assert.equal(latest.status, 'prepared', JSON.stringify(latest.issue));
   const { observation } = latest.candidate;
-  const refs = observation.refs.map(ref => ({ source: observation.source, ref }));
   const observedSchemas = new Map(observation.tools.map(tool => [toolName(tool.name),
-    projectNativeToolSchema(tool, observation.source, observation.views.filter(view => view.type === tool.viewType)
-      .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })), refs),
+    JSON.parse(JSON.stringify(projectNativeToolSchema(tool))),
   ]));
   latest.candidate.discard();
-  const schemas = Object.fromEntries(wire.tools.filter(({ function: tool }) => tool.name.startsWith('refs-select_'))
+  const schemas = Object.fromEntries(wire.tools.filter(({ function: tool }) => tool.name.startsWith('refs-Editor-select_'))
     .map(({ function: tool }) => {
       assert.deepEqual(tool.parameters, observedSchemas.get(tool.name));
-      return [tool.name.slice('refs-select_'.length), tool.parameters];
+      return [tool.name.slice('refs-Editor-select_'.length), tool.parameters];
     }));
   const params = Object.fromEntries(Object.entries(schemas).map(([name, schema]) => [name, schema.properties.target]));
   for (const key of ['all', 'file', 'task']) {

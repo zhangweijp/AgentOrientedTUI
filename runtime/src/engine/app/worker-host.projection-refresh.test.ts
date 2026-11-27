@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import { projectCompleteViews } from '@aotui/core/host';
@@ -13,8 +14,8 @@ import { compileToolParameters } from '@aotui/core';
 
 const policy = { project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true };
 function draft(instanceId: string, seq: number, value = 'current') {
-    return { schemaVersion: 8, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
-        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', region: 'dynamic',
+    return { schemaVersion: 9, healthySince: 1, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'm:1', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value } }], refs: {}, tools: {} };
 }
 const snapshotId = (host: AppWorkerHost) => {
@@ -26,15 +27,15 @@ const cleanup: Array<() => void> = [];
 afterEach(() => { for (const close of cleanup.splice(0)) close(); vi.useRealTimers(); });
 function fixture(projectionLimits?: ConstructorParameters<typeof AppWorkerHost>[0]['projectionLimits']) {
     const directory = mkdtempSync(join(tmpdir(), 'aotui-refresh-unit-'));
+    const worker = Object.assign(new EventEmitter(), { postMessage: vi.fn(), terminate: vi.fn(async()=>{worker.emit('exit',0);return 0;}) });
     const host = fixtureHost(AppWorkerHost, { policy: policy, appId: 'app' as any, desktopId: 'desktop' as any,
-        appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory }, projectionLimits }, { timeoutMs: 50 });
-    const worker = { postMessage: vi.fn() };
-    const internals = host as any; internals.worker = worker; internals.status = 'running';
-    internals.snapshotReceiver.acceptPrepared(draft(host.appInstanceId, 1));
-    cleanup.push(() => { host.beginInteractionClose(); internals.snapshotReceiver.close(); rmSync(directory, { recursive: true, force: true }); });
+        appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory }, projectionLimits }, { timeoutMs: 50, worker:worker as any,attach:true });
+    const internals = host as any; internals.status = 'running';internals.opened=true;internals.initializeSent=true;
+    worker.emit('message',{type:'SNAPSHOT_PREPARED',draft:draft(host.appInstanceId,1),viewTypes:[{name:'File',multiplicity:'single'}]});
+    cleanup.push(() => { host.terminate();internals.snapshotReceiver.close(); rmSync(directory, { recursive: true, force: true }); });
     const opened = host.getAppInteraction(); if (opened.status !== 'ready') throw new Error(opened.issue.code);
     const sent = () => worker.postMessage.mock.calls.at(-1)![0];
-    const send = (message: object) => internals.handleMessage(message);
+    const send = (message: object) => worker.emit('message',message);
     const publish = (seq: number, value = 'updated', correlated = true) => send({ type: 'SNAPSHOT_PREPARED',
         ...(correlated ? { requestId: sent().requestId } : {}),
         draft: draft(host.appInstanceId, seq, value) });
@@ -52,7 +53,7 @@ describe('refresh before the existing Scope observation', () => {
     it('ordinary TS observes the synchronously committed source without any notification', async () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
         try {
-            receiver.acceptPrepared(draft('instance', 1));
+            receiver.acceptPrepared(draft('instance', 1),'authoritative',[{name:'File',multiplicity:'single'}]);
             const interaction = receiver.interaction(policy, { resolve: () => null });
             receiver.acceptPrepared(draft('instance', 2, 'latest TS commit'));
             const observed = await interaction.observe();
@@ -67,12 +68,12 @@ describe('refresh before the existing Scope observation', () => {
         const compiled = compileToolParameters({ type: 'object', properties: {}, additionalProperties: false });
         if (!compiled.ok) throw new Error('fixture Schema');
         const profile = compiled.contract.schema;
-        const target = { viewId: 'file', viewInstanceId: 'file-instance' };
+        const target = { viewId: 'file', viewInstanceId: 'm:1' };
         const toolId = JSON.stringify(['app', 'File', 'edit']);
         let value = 1;
         const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId: 'app', instanceId: 'instance' }) });
         const prepare = (payload = { value }) => projection.commit(() => ({
-                views: [{ toolBindings: [{ toolId, activationId: 'active-' + value }], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', region: 'dynamic',
+                views: [{ toolBindings: [{ toolId, activationId: 'a:' + value }], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', region: 'dynamic',
                     content: { format: 'markdown-v1', value: 'body:' + value } }],
                 refs: [{ ...target, scope: 'protected', id: 'selected', refType: 'Record', valueSchema: { type: 'object' }, value: payload }],
                 tools: [{ multiplicity: 'multiple', id: toolId, name: 'edit', viewType: 'File',  description: 'Edit',
@@ -80,7 +81,7 @@ describe('refresh before the existing Scope observation', () => {
         }));
         const publish = () => {
             const publication = projection.nextPublication();
-            return 'draft' in publication ? receiver.acceptPrepared(publication.draft) : receiver.acceptPrepareFailure(publication.failure);
+            return 'draft' in publication ? receiver.acceptPrepared(publication.draft,'authoritative',publication.draft.producerSeq===1?[{name:'File',multiplicity:'multiple'}]:undefined) : receiver.acceptPrepareFailure(publication.failure);
         };
         const fullPolicy = { ...policy, project: projectCompleteViews };
         let businessCalls = 0;
@@ -88,7 +89,7 @@ describe('refresh before the existing Scope observation', () => {
             isLive: () => true, execute: () => ({ kind: 'tool-result' as const, phase: 'entered-returned' as const,
                 result: { success: true, data: { calls: ++businessCalls } } }) };
         try {
-            expect(prepare()).toMatchObject({ status: 'prepared' });
+            expect(prepare()).toMatchObject({ ok: true });
             expect(publish().status).toBe('published');
             const interaction = receiver.interaction(fullPolicy, { resolve: () => binding });
             const initial = await interaction.observe();
@@ -98,25 +99,25 @@ describe('refresh before the existing Scope observation', () => {
                 toolId: initial.observation.tools[0]!.id, viewId: 'file', input: {  } });
             expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
             value = 2;
-            expect(prepare()).toMatchObject({ status: 'prepared' });
+            expect(prepare()).toMatchObject({ ok: true });
             expect(publish().status).toBe('published');
             const current = await interaction.observe(); expect(current.status).toBe('observed');
             if (current.status === 'observed') interaction.releaseObservation(current.observation.observationId);
             expect(JSON.stringify(current)).toContain('body:2');
             const latest = (receiver as any).core.store.readLatest('app').snapshot;
-            expect(latest.views[0].toolBindings).toEqual([{ toolId, activationId: 'active-2' }]);
+            expect(latest.views[0].toolBindings).toEqual([{ toolId, activationId: 'a:2' }]);
             expect(Object.values(latest.refs)).toMatchObject([{ target: { payload: { value: 2 } } }]);
             const before = receiver['core'].store.readLatest('app');
             if (before.status !== 'ready') throw Error('Expected a committed snapshot');
             expect(publish().status).toBe('unchanged');
             expect(receiver['core'].store.readLatest('app')).toMatchObject({ status: 'ready', snapshot: { id: before.snapshot.id } });
-            expect(prepare({ invalid: () => 0 } as any)).toMatchObject({ status: 'failed' });
+            expect(prepare({ invalid: () => 0 } as any)).toMatchObject({ ok: false, state: 'degraded' });
             expect(publish().status).toBe('rejected');
             expect((await interaction.observe()).status).toBe('rejected');
             expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
             expect(businessCalls).toBe(1);
             value = 5;
-            expect(prepare()).toMatchObject({ status: 'prepared' });
+            expect(prepare()).toMatchObject({ ok: true });
             expect(publish().status).toBe('published');
             expect((await interaction.observe()).status).toBe('observed');
             interaction.close(); expect(receiver.getInteractionStats()?.observations.observationSlots).toBe(0);
@@ -126,7 +127,7 @@ describe('refresh before the existing Scope observation', () => {
     it('joins reception of a correlated fresh snapshot instead of reading old data or waiting for a notification', async () => {
         const x = fixture(); x.host.onUpdate = vi.fn();
         const observing = x.turns.prepare();
-        expect(x.worker.postMessage).toHaveBeenCalledWith({ type: 'FLUSH_PROJECTION', requestId: expect.any(String) });
+        expect(x.worker.postMessage).toHaveBeenCalledWith({ type: 'FLUSH_PROJECTION', requestId: expect.any(String), known: expect.objectContaining({producerSeq:1}) });
         x.publish(2); const observed = await observing;
         expect(observed.status).toBe('prepared'); expect(JSON.stringify(observed)).toContain('updated');
         expect(x.host.onUpdate).not.toHaveBeenCalled();
@@ -159,11 +160,14 @@ describe('refresh before the existing Scope observation', () => {
         expect(x.worker.postMessage).toHaveBeenCalledTimes(2);
     });
 
-    it('App close rejects pending refresh and drains the request', async () => {
+    it('App close rejects the pending refresh waiter but retains the actual request until channel drain', async () => {
         const x = fixture(); const waiting = x.turns.prepare();
         x.host.beginInteractionClose();
         expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'PROJECTION_CLOSED' } });
         expect(x.host.getResourceReport().interactions).toMatchObject({ closed: true, retainedOperations: 0 });
+        expect(x.internals.pendingRequests.size).toBe(1);
+        expect(x.internals.projectionRefresh).toBeDefined();
+        x.worker.emit('exit',0);
         expect(x.internals.pendingRequests.size).toBe(0);
         expect(x.internals.projectionRefresh).toBeUndefined();
     });
@@ -211,20 +215,20 @@ describe('refresh before the existing Scope observation', () => {
     });
 
     it.each([
-        ['before first full', false, {}],
+        ['missing stamp', false, {sourceEpoch:undefined}],
         ['foreign App', true, { appId: 'other' }],
         ['old mount', true, { instanceId: 'old' }],
         ['wrong epoch', true, { sourceEpoch: 1 }],
         ['wrong sequence', true, { producerSeq: 3 }],
         ['additional data', true, { draft: {} }],
-    ])('rejects an active confirmation with %s and falls back to a full refresh', async (_name, prime, fields) => {
+    ])('rejects an active confirmation with %s and requires a new actual refresh', async (_name, prime, fields) => {
         const x = fixture();
         if (prime) await x.prime();
         const waiting = x.turns.prepare();
         x.confirm(fields);
         expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_REFRESH_FAILED' } });
         const next = x.turns.prepare();
-        expect(x.sent().known).toBeUndefined();
+        expect(x.sent().known).toEqual(x.internals.snapshotReceiver.currentPublication());
         x.publish(3);
         expect((await next).status).toBe('prepared');
     });
@@ -239,8 +243,9 @@ describe('refresh before the existing Scope observation', () => {
         x.confirm();
         expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_REFRESH_FAILED' } });
         const recovered = x.turns.prepare();
-        expect(x.sent().known).toBeUndefined();
-        x.publish(4);
+        expect(x.sent().known).toEqual(x.internals.snapshotReceiver.currentPublication());
+        if (mode === 'degraded') x.send({ type: 'SNAPSHOT_PREPARED', requestId: x.sent().requestId, draft: { ...draft(x.host.appInstanceId, 4, 'updated'), healthySince: 4 } });
+        else x.publish(4);
         expect((await recovered).status).toBe('prepared');
     });
 
@@ -270,16 +275,16 @@ describe('refresh before the existing Scope observation', () => {
         x.confirm();
         expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'PROJECTION_CLOSED' } });
         const next = x.turns.prepare();
-        expect(x.sent().known).toBeUndefined();
+        expect(x.sent().known).toEqual(x.internals.snapshotReceiver.currentPublication());
         x.publish(3);
         expect((await next).status).toBe('prepared');
     });
 
     it('does not treat a generic response as a fresh Snapshot and releases its failed request for an explicit retry', async () => {
         const x = fixture(); const waiting = x.turns.prepare();
-        x.internals.handleMessage({ type: 'ERROR_RESPONSE', requestId: x.worker.postMessage.mock.calls[0][0].requestId,
+        x.send({ type: 'ERROR_RESPONSE', requestId: x.worker.postMessage.mock.calls[0][0].requestId,
             success: false, error: { code: 'WORKER_ERROR', message: 'fixture refresh failed' } });
-        expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_REFRESH_FAILED', message: 'Committed projection could not be observed' } });
+        expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'WORKER_ERROR', message: 'Committed projection could not be observed' } });
         expect(x.internals.pendingRequests.size).toBe(0); expect(x.internals.projectionRefresh).toBeUndefined();
         const retry = x.turns.prepare(); x.publish(2); expect((await retry).status).toBe('prepared');
     });

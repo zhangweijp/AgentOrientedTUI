@@ -74,7 +74,7 @@ export type ViewToolInvokeMessage = Readonly<{
 }>;
 export type ViewCloseMessage = Readonly<{
     type: 'VIEW_CLOSE'; requestId: RequestID; appId: AppID; instanceId: string;
-    viewId: string; viewInstanceId: string;
+    viewId: string; viewInstanceId: string; closeActivationId: string;
 }>;
 export type ViewToolInvokeResponse = Readonly<{
     type: 'VIEW_TOOL_INVOKE_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
@@ -138,6 +138,7 @@ export interface InitResponse extends ResponseBase {
  */
 export interface LifecycleResponse extends ResponseBase {
     type: 'LIFECYCLE_RESPONSE';
+    publication?: SnapshotDraftEnvelope;
     appCleanup?: AppCleanupReport;
     error?: WorkerError;
 }
@@ -148,6 +149,8 @@ export interface LifecycleResponse extends ResponseBase {
 export interface ErrorResponse extends ResponseBase {
     type: 'ERROR_RESPONSE';
     success: false;
+    /** Only set by the actual internal factory compatibility check. */
+    protocolRejection?: 'factory.toolAuthoringProtocol' | 'factory.appLifecycleSupport';
     error: WorkerError;
 }
 
@@ -159,6 +162,7 @@ export interface ErrorResponse extends ResponseBase {
 export interface SnapshotPreparedPush {
     type: 'SNAPSHOT_PREPARED';
     requestId?: RequestID;
+    viewTypes?: readonly import('@aotui/core/producer').MinimalViewType[];
     draft: unknown;
 }
 

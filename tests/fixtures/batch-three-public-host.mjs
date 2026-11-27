@@ -103,9 +103,9 @@ async function independentStep(label) {
             const receivers = windows.activeViews.filter(receiver => observation.views.some(view => view.id === receiver.viewId &&
                 view.type === tool.viewType && (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id))));
             if (!receivers.length) continue;
-            const name = source.appId + '-' + tool.name;
+            const name = source.appId + '-' + tool.viewType + '-' + tool.name;
             routes.set(name, { appId: source.appId, tool, observationId: observation.observationId });
-            tools.push(wireTool(name, projectNativeToolSchema(tool, source, receivers, refs), tool.description));
+            tools.push(wireTool(name, projectNativeToolSchema(tool), tool.description));
         }
     }
     if (refs.length) tools.push(wireTool(inspector, inspectInput, 'Inspect an eligible Ref.'));
@@ -160,16 +160,16 @@ async function step(label, calls = [], beforeReply) {
 const contact = suffix => '$ref.contacts.list.' + suffix;
 const inspect = (id, suffix, mode) => modelCall(id, inspector, { address: contact(suffix), mode });
 const tool = (request, name) => request.tools.find(item => item.function.name === name)?.function;
-const call = (id, name, args) => modelCall(id, 'mail-' + name, args);
+const call = (id, name, args) => modelCall(id, 'mail-' + (name === 'open_draft' ? 'workspace' : 'draft') + '-' + name, args);
 const consoleCall = (id, code) => modelCall(id, 'run_code', { code });
 let result;
 try {
     const opening = await step('Open two drafts', driver ? [consoleCall('open-console', [
-        "await tools['mail-open_draft']({name:'A'});", "await tools['mail-open_draft']({name:'B'});",
-        "inspect(typeof tools['mail-set_recipients']);",
-        "try { await tools['mail-set_recipients']({}); } catch (error) { inspect(error.name); }",
+        "await tools['mail-workspace-open_draft']({name:'A'});", "await tools['mail-workspace-open_draft']({name:'B'});",
+        "inspect(typeof tools['mail-draft-set_recipients']);",
+        "try { await tools['mail-draft-set_recipients']({}); } catch (error) { inspect(error.name); }",
     ].join('\n'))] : [call('open-a', 'open_draft', { name: 'A' }), call('open-b', 'open_draft', { name: 'B' })]);
-    assert.ok(!tool(opening, 'mail-set_recipients'));
+    assert.ok(!tool(opening, 'mail-draft-set_recipients'));
     assert.match(JSON.stringify(opening.messages), /Theme: light/);
     if (driver) assert.deepEqual(outcome('open-console').data.output, ['undefined', 'TypeError']);
     const drafts = (await running.get('mail').preview()).views;
@@ -185,7 +185,7 @@ try {
     const expected = { ...mixed, label: contact('secret'), priority: 7,
         to: [mixed.to[0], people[0].email, people[0]['display.name'], people[0].email, ...mixed.to.slice(4, -1), contact('secret')] };
     const write = [call('native-write', 'set_recipients', { view_id: a.id, ...mixed })];
-    if (driver) write.push(consoleCall('console-write', "const r = await tools['mail-set_recipients'](" +
+    if (driver) write.push(consoleCall('console-write', "const r = await tools['mail-draft-set_recipients'](" +
         JSON.stringify({ view_id: b.id, ...mixed }) + "); inspect(r.saved); inspect((await tools['system-inspect_ref'](" +
         JSON.stringify({ address: contact('people[0].email'), mode: 'value' }) + ")).value);"));
     else write.push(call('second-write', 'set_recipients', { view_id: b.id, ...mixed }));
@@ -193,8 +193,8 @@ try {
         await publish('changed-in-flight', [people[1]]);
         await waitForCommit('changed-in-flight');
     });
-    assert.equal(common.tools.filter(entry => entry.function.name === 'mail-set_recipients').length, 1);
-    const wire = tool(common, 'mail-set_recipients').parameters;
+    assert.equal(common.tools.filter(entry => entry.function.name === 'mail-draft-set_recipients').length, 1);
+    const wire = tool(common, 'mail-draft-set_recipients').parameters;
     assert.equal(wire.properties.label.type, 'string');
     assert.ok(!wire.properties.label.anyOf);
     assert.deepEqual(wire.properties.extra, {});
@@ -219,7 +219,7 @@ try {
         assert.notEqual(outcome(id).status, 'succeeded', id);
     assert.ok(!authorizations.some(context => context.invocationId === 'private-live-write'));
 
-    const pass = (id, name, suffix) => modelCall(id, 'contacts-' + name, { text: contact(suffix) });
+    const pass = (id, name, suffix) => modelCall(id, 'contacts-' + (name === 'store_here' ? 'list' : 'team') + '-' + name, { text: contact(suffix) });
     await step('Check scope for inspection and tool use', [
         inspect('public-schema', 'people', 'schema'), inspect('public-value', 'people[0].email', 'value'),
         inspect('private-shape', 'secret', 'schema'), inspect('private-value', 'secret', 'value'),
@@ -239,8 +239,8 @@ try {
     assert.equal(outcome('public-value').data.value, people[1].email);
     if (driver) {
         await step('Transfer private and protected data without direct reads', [consoleCall('scope-console', [
-            "await tools['contacts-store_here']({text:'$ref.contacts.list.secret'});",
-            "await tools['contacts-store_team']({text:'$ref.contacts.list.team'});",
+            "await tools['contacts-list-store_here']({text:'$ref.contacts.list.secret'});",
+            "await tools['contacts-team-store_team']({text:'$ref.contacts.list.team'});",
             "try { await tools['system-inspect_ref']({ address:'$ref.contacts.list.team', mode:'value' }); } catch (error) { inspect(error.code); }",
         ].join('\n'))]);
         assert.deepEqual(outcome('scope-console').data.output, ['REF_VALUE_PRIVATE']);
@@ -252,8 +252,8 @@ try {
         assert.equal((await activeTurns.at(-1).inspectRef(contact('score'), 'value')).status, 'rejected');
         folded.add(list.viewInstanceId);
     }
-    const hidden = await step('The folded source supplies no Reference parameter branches');
-    assert.equal(tool(hidden, 'mail-set_priority').parameters.properties.priority.type, 'integer');
+    const hidden = await step('Folding a source changes availability, not declaration Schema');
+    assert.deepEqual(tool(hidden, 'mail-draft-set_priority').parameters, tool(common, 'mail-draft-set_priority').parameters);
     assert.equal(tool(hidden, inspector), undefined);
     const old = activeTurns.at(-2);
     if (old) assert.equal((await old.inspectRef(contact('people'), 'schema')).status, 'rejected');

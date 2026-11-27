@@ -6,35 +6,35 @@ import { DEFAULT_SNAPSHOT_LIMITS, VIEW_METADATA_BYTES } from './snapshot-support
 import { compileToolParameters } from '../tool/tool-parameters.js';
 
 const text = '中文😀\n"\\\ud800';
-const refId = '["view","mount","ref"]';
+const refId = '["view","m:1","ref"]';
 const toolId = '["app","Type","read"]';
 const empty = compileToolParameters({ type: 'object', properties: {} });
 if (!empty.ok) throw new Error('Fixture Tool schema must compile');
 const emptySchema = empty.contract.schema;
 const expected = {
     canonicalContent: canonicalJson({
-        schemaVersion: 8,
-        views: [{ toolBindings: [{ toolId, activationId: 'active-read' }], id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', region: 'dynamic',
+        healthySince: 1, schemaVersion: 9,
+        views: [{ toolBindings: [{ toolId, activationId: 'a:1' }], id: 'view', viewInstanceId: 'm:1', type: 'Type', name: 'View', region: 'dynamic',
             content: { format: 'markdown-v1', value: text } }],
-        refs: { [refId]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
+        refs: { [refId]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'm:1', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
         tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Type',  description: 'Read value',
             inputSchema: emptySchema } },
     } as any),
-    contentDigest: 'fnv1a64:d5745fd531cebede',
-    bytes: 860,
-    emptyCanonicalContent: '{"refs":{},"schemaVersion":8,"tools":{},"views":[]}',
-    emptyContentDigest: 'fnv1a64:692b628ab889e35b',
-    emptyBytes: 136,
+    contentDigest: 'fnv1a64:cc41b47accab3c99',
+    bytes: 884,
+    emptyCanonicalContent: '{"healthySince":1,"refs":{},"schemaVersion":9,"tools":{},"views":[]}',
+    emptyContentDigest: 'fnv1a64:ac6e779965e070ac',
+    emptyBytes: 153,
 };
 
 function fixture() {
-    return {
-        schemaVersion: 8 as const, appId: 'app', instanceId: 'instance',
+    return { healthySince: 1,
+        schemaVersion: 9 as const, appId: 'app', instanceId: 'instance',
         producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
-        views: [{ toolBindings: [{ toolId, activationId: 'active-read' }], id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', region: 'dynamic',
+        views: [{ toolBindings: [{ toolId, activationId: 'a:1' }], id: 'view', viewInstanceId: 'm:1', type: 'Type', name: 'View', region: 'dynamic',
             content: { format: 'markdown-v1', value: text } }],
-        refs: { [refId]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
+        refs: { [refId]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected', id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'm:1', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
         tools: { [toolId]: { multiplicity: 'multiple', id: toolId, name: 'read', viewType: 'Type',  description: 'Read value',
             inputSchema: emptySchema } },
@@ -136,7 +136,7 @@ describe('Snapshot metadata boundary', () => {
         input.appId = '1_app';
         input.instanceId = text + '\udc00';
         input.producerSeq = Number.MAX_SAFE_INTEGER;
-        input.sourceEpoch = 0;
+        input.sourceEpoch = 1;
         input.capturedAt = 12_345_678_901;
         input.refs[refId]!.target.payload.text = text.repeat(600);
         input.views[0]!.toolBindings = [];

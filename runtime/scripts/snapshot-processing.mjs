@@ -220,8 +220,7 @@ async function workers() {
     const { createRuntime } = await import(emitted(runtime, 'index.js'));
     const directory = await mkdtemp(join(tmpdir(), 'aotui-snapshot-processing-'));
     const modulePath = join(directory, 'app.mjs');
-    const source = `
-import { createApp, createView, defineViewType, ref, arrayRef } from ${JSON.stringify(emitted(sdk, 'index.js'))};
+    const source = `import { createApp, createView, defineViewType, ref, arrayRef } from ${JSON.stringify(emitted(sdk, 'index.js'))};
 const data = ${data.toString()};
 const body = ${body.toString()};
 const File = defineViewType()({ name: 'File', region: 'dynamic', multiplicity: 'multiple', tools: { advance: {
@@ -230,22 +229,18 @@ const File = defineViewType()({ name: 'File', region: 'dynamic', multiplicity: '
 export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initialize(context) {
     const fixture = data(context.launchConfig);
     let revision = 0;
-    const views = fixture.views.map(({ id, refs }) => createView(File, { idPrefix: id, render: () => ({
-        body: body(id, revision),
-        refs: fixture.rows.length ? [arrayRef('rows', fixture.rows, { itemType: 'Data', scope: 'protected', schema: { type: 'array', items: { type: 'object' } } })] :
-            refs.map(item => ref(item.id, item.value, { refType: 'Data', scope: 'protected', schema: { type: 'object' } })),
-        context: { advance() {
+    const views = fixture.views.map(({ id, refs }) => (() => { const handle = createView(File, { idPrefix: id }); return { handle, frame: () => handle.frame({ body: body(id, revision), refs: fixture.rows.length ? [arrayRef('rows', fixture.rows, { itemType: 'Data', scope: 'protected', schema: { type: 'array', items: { type: 'object' } } })] :
+            refs.map(item => ref(item.id, item.value, { refType: 'Data', scope: 'protected', schema: { type: 'object' } })), context: { advance() {
             revision++;
             const mutable = fixture.rows[0] ?? fixture.views[0].refs[0].value;
             mutable.n = revision;
             const start = performance.now();
-            const prepared = context.prepareProjection({ views });
+            const prepared = context.publish(() => (views).map(page => page.frame()));
             const prepareMs = performance.now() - start;
             if (prepared.status !== 'prepared') throw Error('Failed to prepare');
             return { success: true, data: { prepareMs } };
-        } },
-    }) }));
-    context.prepareProjection({ views });
+        } } }) }; })());
+    context.publish(() => (views).map(page => page.frame()));
 } });`;
     await writeFile(modulePath, source);
     try {

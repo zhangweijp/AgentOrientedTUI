@@ -23,18 +23,18 @@ const RootType = defineViewType()({ multiplicity: 'multiple', name: 'Root', tool
     },
 } });
 const factory = createApp({ viewTypes: [RootType], app_name: 'close',
-    initialize({ launchConfig, prepareProjection }) {
+    initialize({ launchConfig, publish: publishAuthorFrame, registerLifecycle }) {
+        registerLifecycle({ ${mode === 'async' ? 'async ' : ''}close(){${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private instance detail');} });
         const target = String(launchConfig.stateFile);
         const set = async value => {
             await mkdir(dirname(target), { recursive: true });
             await writeFile(target, JSON.stringify({ value }), 'utf8');
         };
-        const page = createView(RootType, { idPrefix: 'root', region: 'static',
-            render: () => ({ body: 'App state', context: { set } }) });
-        prepareProjection({ views: [page] });
+        const page = (() => { const handle = createView(RootType, { idPrefix: 'root', region: 'static' }); return { handle, frame: () => handle.frame({ body: 'App state', context: { set } }) }; })();
+        publishAuthorFrame(() => ([page]).map(page => page.frame()));
     },
 });
-const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}close(){renderer.close();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private instance detail');}};};export default factory;`);
+export default factory;`);
     const { createRuntime } = await import(url(join(repo, 'runtime/dist/index.js'))) as typeof import('../../index.js');
     const runtime = createRuntime({ worker: { timeoutMs: 3000, maxWorkers: 1 } });
     try {
@@ -50,7 +50,8 @@ const initialize=factory.initialize.bind(factory);factory.initialize=async(...ar
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
         const close = running.beginClose();expect(running.beginClose()).toBe(close);const report = await close.completion;
         expect(report).toMatchObject({ state: 'settled', resourcesReleased: true, ok: false, worker: 'exited' });
-        expect(report.failures).toEqual([{ stage: 'apps', appId: 'close', desktopId: 'd', codes: ['APP_UNMOUNT_FAILED'] }]);
+        expect(report.failures).toEqual([{ stage: 'apps', appId: 'close', desktopId: 'd', codes: ['APP_CLOSE_FAILED'] }]);
+        expect(report.appCleanupReport).toMatchObject({ protocol: 'app-lifecycle-v3', state: 'failed', issues: ['APP_CLEANUP_FAILED'] });
         expect(JSON.parse(await readFile(stateFile, 'utf8')).value).toBe(7);
         expect(JSON.stringify(report)).not.toContain('private instance detail');
         const shutdown = await runtime.beginClose().completion;

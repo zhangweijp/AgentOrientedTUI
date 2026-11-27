@@ -130,6 +130,7 @@ export const WorkspaceType = defineViewType<WorkspaceContext>()({ name: 'Workspa
 
 export const FileDetailType = defineViewType<FileDetailContext>()({
     name: 'FileDetail', multiplicity: 'multiple', region: 'dynamic',
+    onClose: { execute: ({context: {owner, file}}) => closeFileDetail(owner, file) },
     tools: {
         write_file: {
             description: 'Replace the contents of a currently loaded file after checking its disk identity and content.',

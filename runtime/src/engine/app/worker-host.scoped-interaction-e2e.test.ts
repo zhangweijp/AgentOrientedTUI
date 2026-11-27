@@ -33,7 +33,7 @@ async function start() {
     const post = worker.postMessage.bind(worker); worker.postMessage = (m: any) => { sent.push(m); post(m); };
     worker.stdout!.on('data', b => logs.push(String(b))); worker.stderr!.on('data', b => logs.push(String(b)));
     const authorization = policyProbe();
-    const host = fixtureHost(Host, { policy: authorization.policy, appId: 'scoped_sdk' as any, desktopId: 'd' as any, appModulePath: appFile,
+    const host = fixtureHost(Host, { policy: authorization.policy, appId: 'scoped_sdk' as any, desktopId: 'd' as any, appModulePath: appFile, interactionLimits: {maxPendingInvocations:1},
         config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') },
          }, { worker, timeoutMs: 1500 });
     worker.on('message', m => messages.push(m));
@@ -205,9 +205,9 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(await foreign.invoke(s.request(o, 'moved'))).toMatchObject({ kind: 'refused', code: 'TURN_SELECTION_INVALID' });
         expect(o.tools.some(tool => tool.name === 'read')).toBe(true);
         expect(o.tools.some(tool => ['optional', 'multi'].includes(tool.name))).toBe(false);
-        expect(receipt(await s.invoke({ invocationId: 'plain', observationId: o.observationId,
-            toolId: 'unobserved-tool', viewId: 'aa_1', input: { file: REF_A } }))).toMatchObject({
-            executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
+        expect(await s.invoke({ invocationId: 'plain', observationId: o.observationId,
+            toolId: 'unobserved-tool', viewId: 'aa_1', input: { file: REF_A } })).toMatchObject({
+            kind:'refused', code:'TOOL_UNAVAILABLE',
         });
         for (const [id, name, file] of [['unknown-ref', 'read', 'entity'], ['foreign-ref', 'read', '$ref.scoped_sdk.bb_1.private_beta']]) {
             expect(receipt(await s.invoke(s.request(o, id, { file }, name))).outcome.status).toBe('rejected');
@@ -253,6 +253,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(handler.calls).toBe(1);
         expect(await pending).toEqual({
             kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+            locator:{observationId:request.observationId,invocationId:request.invocationId},
             message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
         });
         expect((x.host as any).pendingRequests.has(wire.requestId)).toBe(true);
@@ -281,7 +282,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         {
             const result = await s.client.readReceipt(query, 25);
             expect(result).toEqual({
-                kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+                kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT', locator:query,
                 message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
             });
         }
@@ -323,6 +324,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         try {
             expect(await pending).toEqual({
                 kind: 'unavailable', code: 'INVOCATION_DEADLINE_EXCEEDED',
+                executionPhase:'not-dispatched',locator:query,
                 message: expect.stringContaining('before dispatch'),
             });
             expect(signal?.aborted).toBe(true);

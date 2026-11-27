@@ -7,7 +7,7 @@ import { compileToolParameters } from '../tool/tool-parameters.js';
 import type { PreparedAppSnapshotDraft, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
 const identity = { appId: 'task_app', instanceId: 'instance_a' };
-const KEY = refKey('workspace', 'mount_1', 'tasks');
+const KEY = refKey('workspace', 'm:1', 'tasks');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);
 const taskSchema = (() => {
     const compiled = compileToolParameters({ type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false });
@@ -21,23 +21,23 @@ function draft(
     id = 'task-a',
     override: Record<string, unknown> = {},
 ): PreparedAppSnapshotDraft {
-    return {
-        schemaVersion: 8,
+    return { healthySince: 1,
+        schemaVersion: 9,
         ...identity,
         producerSeq: seq,
         sourceEpoch: epoch,
         capturedAt: 1_000 + seq,
         views: [{
-            toolBindings: [{ toolId: TOOL, activationId: 'task-tool-activation-1' }], id: 'workspace',
-            viewInstanceId: 'mount_1',
+            toolBindings: [{ toolId: TOOL, activationId: 'a:1' }], id: 'workspace',
+            viewInstanceId: 'm:1',
             type: 'Workspace',
             name: 'Tasks',
             region: 'dynamic',
             content: { format: 'markdown-v1', value: '[Stable task](tasks)' },
         }],
         refs: {
-            [KEY]: { valueSchema: { type: 'object' }, scope: 'protected',
-                id: 'tasks', ownerViewId: 'workspace', ownerViewInstanceId: 'mount_1',
+            [KEY]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected',
+                id: 'tasks', ownerViewId: 'workspace', ownerViewInstanceId: 'm:1',
                 refType: 'Task',
                 target: { kind: 'snapshot-value', payload: { id, status: 'pending' } },
             },
@@ -51,6 +51,15 @@ function draft(
         },
         ...override,
     } as PreparedAppSnapshotDraft;
+}
+
+/** Explicit Producer recovery: the mount survives, activation and Ref witness do not. */
+function recoveredDraft(seq: number, epoch: number): PreparedAppSnapshotDraft {
+    const input = draft(seq, epoch);
+    return { ...input, healthySince: epoch,
+        views: input.views.map(v => ({ ...v, toolBindings: [{toolId: TOOL, activationId: 'a:2'}] })),
+        refs: { [KEY]: { ...input.refs[KEY]!, continuity: [epoch,epoch,0] } },
+    };
 }
 
 function ready(core: SnapshotCore) {
@@ -70,7 +79,7 @@ function published(core: SnapshotCore, next: PreparedAppSnapshotDraft) {
 function sourceRef(core: SnapshotCore, snapId: string) {
     return core.store.resolveRef({
         snapshotId: snapId, appId: 'task_app', instanceId: 'instance_a',
-        viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks',
+        viewId: 'workspace', viewInstanceId: 'm:1', refId: 'tasks',
     });
 }
 
@@ -81,7 +90,7 @@ describe('Snapshot Store limits', () => {
         const core = createSnapshotCore(options);
         try {
             const first = published(core, draft());
-            const views = [...draft().views, { ...draft().views[0]!, id: 'second', viewInstanceId: 'mount_2', toolBindings: [] }];
+            const views = [...draft().views, { ...draft().views[0]!, id: 'second', viewInstanceId: 'm:2', toolBindings: [] }];
             const rejectTwoViews = (seq: number) => {
                 expect(core.committer.accept(draft(seq, seq, 'task-a', { views }))).toMatchObject({
                     status: 'rejected', issue: { path: '$.views' },
@@ -191,8 +200,8 @@ describe('M1 pure Core — schema & safe value contract', () => {
         const checked = validatePreparedSnapshot(draft());
         expect(checked.ok).toBe(true);
         if (!checked.ok) return;
-        expect(checked.value.draft.refs[KEY].ownerViewInstanceId).toBe('mount_1');
-        expect(checked.value.draft.views[0]!.toolBindings).toEqual([{ toolId: TOOL, activationId: 'task-tool-activation-1' }]);
+        expect(checked.value.draft.refs[KEY].ownerViewInstanceId).toBe('m:1');
+        expect(checked.value.draft.views[0]!.toolBindings).toEqual([{ toolId: TOOL, activationId: 'a:1' }]);
         expect(checked.value.contentBytes).toEqual(new TextEncoder().encode(checked.value.canonicalContent));
         expect(Object.isFrozen(checked.value.draft.refs[KEY].target)).toBe(true);
     });
@@ -402,17 +411,17 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
     it('resolves two same-named Ref IDs only by exact View identity, never suffix search', () => {
         const core = createSnapshotCore(identity);
         const first = draft(1, 1);
-        const secondKey = refKey('detail', 'mount_2', 'tasks');
+        const secondKey = refKey('detail', 'm:2', 'tasks');
         const changed = draft(1, 1, 'entity-a', {
             views: [...first.views, {
-                toolBindings: [], id: 'detail', viewInstanceId: 'mount_2', type: 'FileDetail',
+                toolBindings: [], id: 'detail', viewInstanceId: 'm:2', type: 'FileDetail',
                 name: 'Another View', region: 'dynamic',
                 content: { format: 'markdown-v1', value: '[Task](tasks[0])' },
             }],
             refs: {
                 ...first.refs,
-                [secondKey]: { valueSchema: { type: 'object' }, scope: 'protected',
-                    id: 'tasks', ownerViewId: 'detail', ownerViewInstanceId: 'mount_2',
+                [secondKey]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected',
+                    id: 'tasks', ownerViewId: 'detail', ownerViewInstanceId: 'm:2',
                     refType: 'Task', target: { kind: 'snapshot-value', payload: { id: 'entity-b' } },
                 },
             },
@@ -421,7 +430,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         const firstRef = sourceRef(core, snap.id);
         const secondRef = core.store.resolveRef({
             snapshotId: snap.id, appId: 'task_app', instanceId: 'instance_a',
-            viewId: 'detail', viewInstanceId: 'mount_2', refId: 'tasks',
+            viewId: 'detail', viewInstanceId: 'm:2', refId: 'tasks',
         });
         expect(firstRef.status).toBe('resolved');
         expect(secondRef.status).toBe('resolved');
@@ -438,22 +447,22 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
     it('treats View close/reopen with same ID as a new generation', () => {
         const core = createSnapshotCore(identity);
         const old = published(core, draft());
-        const newKey = refKey('workspace', 'mount_2', 'tasks');
+        const newKey = refKey('workspace', 'm:2', 'tasks');
         const source = draft(2, 2, 'entity-b');
         const newer = published(core, {
             ...source,
-            views: source.views.map(view => ({ ...view, viewInstanceId: 'mount_2',
-                toolBindings: [{ toolId: TOOL, activationId: 'task-tool-activation-2' }] })),
+            views: source.views.map(view => ({ ...view, viewInstanceId: 'm:2',
+                toolBindings: [{ toolId: TOOL, activationId: 'a:2' }] })),
             refs: {
                 [newKey]: {
-                    ...source.refs[KEY], ownerViewInstanceId: 'mount_2',
+                    ...source.refs[KEY], ownerViewInstanceId: 'm:2', continuity: [2,2,0],
                 },
             },
         });
         expect(newer.revision).toBe(2);
-        expect(sourceRefWithGeneration(core, old.id, 'mount_2').status).toBe('rejected');
-        expect(sourceRefWithGeneration(core, newer.id, 'mount_1').status).toBe('rejected');
-        expect(sourceRefWithGeneration(core, newer.id, 'mount_2').status).toBe('resolved');
+        expect(sourceRefWithGeneration(core, old.id, 'm:2').status).toBe('rejected');
+        expect(sourceRefWithGeneration(core, newer.id, 'm:1').status).toBe('rejected');
+        expect(sourceRefWithGeneration(core, newer.id, 'm:2').status).toBe('resolved');
     });
 
     it('retains the exact historical payload, including its business version', () => {
@@ -522,7 +531,7 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
         expect(replacement.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         expect(original.store.resolveRef({
             snapshotId: old.id, appId: 'task_app', instanceId: 'instance_b',
-            viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks',
+            viewId: 'workspace', viewInstanceId: 'm:1', refId: 'tasks',
         })).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
 
         expect(replacement.committer.accept(draft(100))).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
@@ -633,8 +642,8 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
         expect(sourceSpoof.status).toBe('rejected');
         expect(core.store.readLatest('task_app').status).toBe('degraded');
         const recovery = core.committer.accept(draft(4, 4));
-        expect(recovery.status).toBe('unchanged'); // identical semantics: no new revision
-        expect(ready(core).revision).toBe(1);
+        expect(recovery.status).toBe('published'); // Recovery opens a new admission period even for identical content.
+        expect(ready(core)).toMatchObject({ revision: 2, admissionSinceRevision: 2 });
     });
 
     it('tracks Tool schema changes even when View content is unchanged', () => {
@@ -681,7 +690,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
         const current = published(core, draft());
         const missing = core.store.resolveRef({
             snapshotId: current.id, appId: 'task_app', instanceId: 'instance_a',
-            viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'task-a',
+            viewId: 'workspace', viewInstanceId: 'm:1', refId: 'task-a',
         });
         expect(missing.status).toBe('rejected');
         if (missing.status === 'rejected') expect(missing.issue.code).toBe('REF_NOT_FOUND');
@@ -690,7 +699,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
 
 
 describe('M1 Core — nonpublishable Producer input and explicit prepare failure', () => {
-    it('stays degraded when lastGood is replayed and recovers unchanged at a new source epoch', () => {
+    it('stays degraded when lastGood is replayed and opens a new admission period at a new source epoch', () => {
         const core = createSnapshotCore(identity);
         const first = published(core, draft(1, 1));
         const failure = core.committer.reportPrepareFailure({ appId: 'task_app', instanceId: 'instance_a',
@@ -701,7 +710,8 @@ describe('M1 Core — nonpublishable Producer input and explicit prepare failure
         expect(core.committer.accept(draft(4, 1, 'conflict'))).toMatchObject({
             status: 'rejected', issue: { code: 'SNAPSHOT_SOURCE_EPOCH_CONFLICT' },
         });
-        expect(core.committer.accept(draft(5, 2))).toMatchObject({ status: 'unchanged', snapshot: { id: first.id, revision: 1 } });
+        expect(core.committer.accept(recoveredDraft(5, 2))).toMatchObject({ status: 'published', snapshot: { revision: 2, admissionSinceRevision: 2 } });
+        expect(ready(core).id).not.toBe(first.id);
         expect(core.store.readLatest('task_app').status).toBe('ready');
     });
 
@@ -743,7 +753,7 @@ describe('M1 Core — nonpublishable Producer input and explicit prepare failure
         }
         const stale = core.committer.accept(draft(1, 1));
         expect(stale.status).toBe('rejected');
-        expect(published(core, draft(2, 2)).revision).toBe(1);
+        expect(published(core, recoveredDraft(2, 2)).revision).toBe(1);
         const unknown = core.committer.reportPrepareFailure({
             appId: 'task_app', instanceId: 'spoofed', producerSeq: 3, sourceEpoch: 3,
             issue: { code: 'SNAPSHOT_INVALID', message: 'Something bad happened' },

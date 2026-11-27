@@ -1,7 +1,9 @@
 export const MARKDOWN_VIEW_FORMAT = 'markdown-v1' as const;
-export const SNAPSHOT_SCHEMA_VERSION = 8 as const;
+export const SNAPSHOT_SCHEMA_VERSION = 9 as const;
 
 export const ViewRegion = Object.freeze({ Static: 'static', Dynamic: 'dynamic' } as const);
+export type MinimalViewType = Readonly<{ name: string; multiplicity: ViewMultiplicity }>;
+export type ViewTypeSeal = Readonly<{ types: readonly MinimalViewType[]; first: boolean }>;
 export type ViewRegion = typeof ViewRegion[keyof typeof ViewRegion];
 export const ViewMultiplicity = Object.freeze({ Single: 'single', Multiple: 'multiple' } as const);
 export type ViewMultiplicity = typeof ViewMultiplicity[keyof typeof ViewMultiplicity];
@@ -45,12 +47,14 @@ export interface ViewSnapshot {
     readonly name: string;
     readonly region: ViewRegion;
     readonly content: ViewContent;
-    readonly canClose?: true;
+    readonly closeActivationId?: string;
     readonly toolBindings: readonly ViewToolBinding[];
 }
 export type ViewToolBinding = Readonly<{ toolId: string; activationId: string }>;
 export type ViewToolReceiver = Readonly<{ viewId: string; viewInstanceId: string; activationId: string }>;
+export type RefContinuity = readonly [selfSince: number, sameAppSince: number, publicSince: number];
 export interface RefDescriptor {
+    readonly continuity: RefContinuity;
     readonly id: string;
     readonly ownerViewId: string;
     readonly ownerViewInstanceId: string;
@@ -76,6 +80,7 @@ export interface PreparedAppSnapshotDraft {
     readonly instanceId: string;
     readonly producerSeq: number;
     readonly sourceEpoch: number;
+    readonly healthySince: number;
     readonly capturedAt: number;
     readonly views: readonly ViewSnapshot[];
     readonly refs: Readonly<Record<string, RefDescriptor>>;
@@ -87,6 +92,9 @@ export interface AppSnapshot {
     readonly appId: string;
     readonly instanceId: string;
     readonly revision: number;
+    /** First revision in the uninterrupted Receiver admission period. */
+    readonly admissionSinceRevision: number;
+    readonly healthySince: number;
     readonly createdAt: number;
     readonly views: readonly ViewSnapshot[];
     readonly refs: Readonly<Record<string, RefDescriptor>>;
@@ -103,7 +111,7 @@ export type SnapshotDraftEnvelope = Readonly<{
 export type SnapshotHealth = 'unready' | 'ready' | 'degraded' | 'stopped';
 
 export const SNAPSHOT_PREPARE_ISSUE_CODES = Object.freeze([
-    'SNAPSHOT_INVALID', 'SNAPSHOT_SERIALIZATION_ERROR', 'TOOL_BINDING_INVALID',
+    'SNAPSHOT_INVALID', 'SNAPSHOT_SERIALIZATION_ERROR', 'TOOL_BINDING_INVALID', 'VIEW_TYPE_INVALID',
     'TOOL_SCHEMA_INVALID', 'TOOL_SCHEMA_UNSUPPORTED', 'TOOL_SCHEMA_CAPACITY', 'OBSERVATION_CAPACITY',
 ] as const);
 type SnapshotPrepareIssueCode = typeof SNAPSHOT_PREPARE_ISSUE_CODES[number];
@@ -190,6 +198,8 @@ export interface SnapshotStoreOptions {
     readonly appId: string;
     readonly instanceId: string;
     readonly now?: () => number;
+    /** Effective Host observation limits, checked before accepting a complete publication. */
+    readonly projectionLimits?: import("../invocation/observation-types.js").ProjectionLimits;
     /** Captured at Core creation. Omitted or undefined fields use their defaults.
      * Overrides are safe integers from zero to their default, inclusive.
      * Invalid property shapes throw TypeError; invalid values throw RangeError. */
@@ -228,7 +238,10 @@ export interface PreparedSnapshotFailure {
 }
 
 export interface SnapshotCommitter {
-    accept(input: unknown): CommitResult;
+    /** Fused candidate rejection preserves the accepted inventory and health. */
+    accept(input: unknown, mode?: 'authoritative' | 'candidate', seal?: ViewTypeSeal): CommitResult;
+    /** Trusted bound transport rejects an untranslatable Frame; this is not a Producer fault. */
+    rejectPrepared(envelope: SnapshotDraftEnvelope | undefined, issue: SnapshotIssue, mode: 'authoritative' | 'candidate'): CommitResult;
     /** Trusted transport reports a Producer failure before a Draft could be created. */
     reportPrepareFailure(failure: PreparedSnapshotFailure): CommitResult;
 }

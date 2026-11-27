@@ -1,39 +1,36 @@
 import { createHash } from 'node:crypto';
-import { jsonSchema, type ProviderToolSchemaPolicy, type Tool, type ToolResult } from '@aotui/agent-driver-v2';
+import { jsonSchema, type Tool, type ToolResult } from '@aotui/agent-driver-v2';
 import type { ActiveTurn, InvocationReceipt } from '@aotui/runtime';
 import type { PresentedRef } from '@aotui/runtime/adapters';
 import type { PendingAppReceipt } from '../semantic-aotui-driven-source.js';
 import { consoleDeclarations, RUN_CODE, type ConsoleToolDeclaration } from './declarations.js';
 import type { ConsoleExecutor } from './node-process.js';
+import { copyWireJson } from '@aotui/core';
+import { RAW_TOOL_ARGUMENT_LIMITS, parseRefAddress } from '@aotui/core/host';
 import { record } from './program-wire.js';
 import { consoleInputCapacity, prepareConsoleInputs } from './inputs.js';
 
 export { RUN_CODE };
-export interface ConsoleRoutedCall { result: ToolResult; receipt?: InvocationReceipt; pending?: PendingAppReceipt }
+export interface ConsoleRoutedCall { result: ToolResult; receipt?: InvocationReceipt; pending?: PendingAppReceipt; executionPhase?: InvocationReceipt['executionPhase'] }
 type Dispatch = (name: string, args: Record<string, unknown>, id: string, signal: AbortSignal) => Promise<ConsoleRoutedCall>;
 
 const reject = (id: string, code: string, message: string): ToolResult =>
     ({ toolName: RUN_CODE, toolCallId: id, outcomeStatus: 'rejected', error: { code, message } });
 const maxImports = 256;
-function argsSchema(scoped: boolean, strict: boolean, defaultImports: null | 'default') {
-    const imports = { type: 'array' as const, items: { type: 'string' as const } };
+function argsSchema(scoped: boolean) {
     return {
-        type: 'object' as const, additionalProperties: false,
-        required: strict ? ['code', 'imports', ...(scoped ? ['reset'] : [])] : ['code'],
+        type: 'object' as const, additionalProperties: false, required: ['code'],
         properties: {
-            code: { type: 'string' as const, ...(strict ? {} : { minLength: 1 }),
+            code: { type: 'string' as const, minLength: 1,
                 description: scoped ? 'JavaScript for the current scoped session. Top-level await is available.' : 'The body of an async TypeScript function.' },
-            imports: strict ? { anyOf: [imports, defaultImports === null ? { type: 'null' as const } :
-                { type: 'string' as const, enum: [defaultImports] }],
-                description: `Use ${JSON.stringify(defaultImports)} for the original observation’s default inputs, [] for no Refs, or up to ${maxImports} public Ref addresses.` }
-                : { ...imports, maxItems: maxImports, description: 'Optional public Ref addresses for this run. An empty array uses no Refs.' },
+            imports: { type: 'array' as const, items: { type: 'string' as const }, maxItems: maxImports,
+                description: 'Optional public Ref addresses for this run. An empty array uses no Refs.' },
             ...(scoped ? { reset: { type: 'boolean' as const, description: 'Use false to keep the current scope or true to start an empty scope.' } } : {}),
         },
     };
 }
 
-export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], refs: readonly PresentedRef[], executor: ConsoleExecutor,
-    provider?: ProviderToolSchemaPolicy): {
+export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], refs: readonly PresentedRef[], executor: ConsoleExecutor): {
     schema: ReturnType<typeof argsSchema>;
     tool: Tool;
     bindingsMessage: string;
@@ -43,11 +40,7 @@ export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], refs
     const sdk = consoleDeclarations(tools, refs);
     const bindings = new Set(sdk.names);
     const scoped = executor.mode === 'scoped';
-    const strict = provider?.strict === true;
-    const nullableSchema = argsSchema(scoped, strict, null);
-    const namedDefault = strict && provider.check?.(nullableSchema) !== undefined;
-    const defaultImports = namedDefault ? 'default' : null;
-    const schema = namedDefault ? argsSchema(scoped, strict, defaultImports) : nullableSchema;
+    const schema = argsSchema(scoped);
     const description = [
         scoped ? 'Run JavaScript in this live Agent’s isolated scoped Console. Top-level await, variables and functions are supported. Each call runs only its new code. A declaration shadows an old name while existing closures retain their bindings.'
             : 'Run a fresh isolated TypeScript async function body. await and return are supported; variables end with this call.',
@@ -86,7 +79,7 @@ export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], refs
                 const { result, receipt } = called;
                 if (called.pending) pending.push(called.pending);
                 receipts.push({ invocationId: id, toolName: name, status: result.outcomeStatus ?? 'unknown',
-                    phase: receipt?.executionPhase ?? (result.outcomeStatus === 'unknown' || result.outcomeStatus === 'accepted' ? 'unknown' : 'not-dispatched'),
+                    phase: receipt?.executionPhase ?? called.executionPhase ?? 'unknown',
                     ...(result.error ? { code: result.error.code } : {}) });
                 return result;
             },
@@ -105,19 +98,19 @@ export function createConsoleTool(tools: readonly ConsoleToolDeclaration[], refs
         schema, bindingsMessage, tool: { description, inputSchema: jsonSchema(schema) },
         execute(args: unknown, id: string, turn: Pick<ActiveTurn, 'readPublicRefs'>, signal: AbortSignal, dispatch: Dispatch,
             remember: (locator: PendingAppReceipt, result: ToolResult) => void): Promise<ToolResult> {
-            const input = record(args) ? args : {};
-            const { code, imports: suppliedImports, reset } = input;
-            const imports = strict && suppliedImports === defaultImports ? undefined : suppliedImports;
+            let input: Record<string, unknown>;
+            try {
+                const captured = copyWireJson(args, RAW_TOOL_ARGUMENT_LIMITS);
+                if (!record(captured)) throw new Error();
+                input = captured;
+            } catch { return Promise.resolve(reject(id, 'CONSOLE_INVALID_INPUT', 'Supply a bounded closed JSON object.')); }
+            const { code, imports, reset } = input;
             if (typeof code !== 'string' || !code.trim() || Buffer.byteLength(code) > 24 * 1024 ||
                 Object.keys(input).some(key => key !== 'code' && key !== 'imports' && !(scoped && key === 'reset')) ||
-                (strict && (suppliedImports === undefined || scoped && reset === undefined)) ||
                 (reset !== undefined && typeof reset !== 'boolean') ||
                 (imports !== undefined && (!Array.isArray(imports) || imports.length > maxImports ||
-                    imports.some(path => typeof path !== 'string' || Buffer.byteLength(path) > 4096)))) {
-                return Promise.resolve(reject(id, 'CONSOLE_INVALID_INPUT', strict
-                    ? `Supply nonblank code up to 24 KiB and imports as ${JSON.stringify(defaultImports)} or a list of up to ${maxImports} addresses.` +
-                        (scoped ? ' Set reset to false or true.' : '')
-                    : scoped
+                    imports.some(path => typeof path !== 'string' || !parseRefAddress(path))))) {
+                return Promise.resolve(reject(id, 'CONSOLE_INVALID_INPUT', scoped
                     ? 'Supply JavaScript up to 24 KiB, an optional bounded imports list, and an optional boolean reset.'
                     : 'Supply a TypeScript function body up to 24 KiB and optionally a bounded list of Ref addresses.'));
             }

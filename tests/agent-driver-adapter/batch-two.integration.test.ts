@@ -314,19 +314,29 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
             rejected(change, await held.result, 'REF_NOT_VISIBLE');
             await setContacts(folder, ORIGINAL);
             await waitContactBody(body => body.includes('(public emails:'));
+            invalidAdoption(desktop, 'revoked source grant cannot revive', selection(contacts!, draft!), 'OBSERVATION_WINDOW_CHANGED');
+            [contacts] = await byId(desktop, 'contacts');
         }
 
         await peer!.running.beginClose().completion;
         const staleSource = inAuthorization('source-reopened');
         await staleSource.entered.promise;
         const originalSource = contacts!;
-        await originalSource.running.beginClose().completion;
+        const sourceClosing=originalSource.running.beginClose();
+        expect((await sourceClosing.wait({timeoutMs:5})).status).toBe('deadline');
+        expect(sourceClosing.inspect().resourcesReleased).toBe(false);
+        staleSource.decision.resolve(true);
+        const stoppedSource=await staleSource.result;
+        expect(stoppedSource).toMatchObject({kind:'unavailable',code:'REF_VIEW_UNAVAILABLE',executionPhase:'not-dispatched',
+            locator:{observationId:staleSource.original.observationId,invocationId:staleSource.original.invocationId}});
+        if (stoppedSource.kind==='refused'||!stoppedSource.locator) throw Error(JSON.stringify(stoppedSource));
+        rejected('source retired during authorization', await desktop.readReceipt(stoppedSource.locator,5000), 'REF_VIEW_UNAVAILABLE');
+        expect((await sourceClosing.completion).resourcesReleased).toBe(true);
         const reopenedSource = (await desktop.openApp('contacts_b')).appId;
         expect(reopenedSource).toBe('contacts');
         [contacts] = await byId(desktop, reopenedSource);
         expect(contacts!.app.appInstanceId).not.toBe(originalSource.app.appInstanceId);
-        staleSource.decision.resolve(true);
-        rejected('source reopened in authorization', await staleSource.result, 'REF_VIEW_UNAVAILABLE');
+
 
         const staleTarget = inAuthorization('target-reopened');
         const targetContext = await staleTarget.entered.promise;
@@ -338,7 +348,7 @@ it('qualifies the actual source set, rejects revoked grants before dispatch and 
         expect((await desktop.openApp('mail_install', { policy })).appId).toBe('mail');
         [draft] = await byId(desktop, 'mail');
         expect(draft!.app.appInstanceId).not.toBe(oldDraft.app.appInstanceId);
-        rejected('target closed in authorization', await staleTarget.result, 'APP_INTERACTION_UNAVAILABLE', 'unavailable');
+        rejected('target closed in authorization', await staleTarget.result, 'APP_STOPPED', 'unavailable');
         rejected('old turn on reopened target', await staleTarget.turn.invoke('mail', staleTarget.original), 'OBSERVATION_UNAVAILABLE', 'refused');
         expect(await journal(folder, 'draft-handler')).toEqual([]);
         expect(await journal(folder, 'draft-writes')).toEqual([]);

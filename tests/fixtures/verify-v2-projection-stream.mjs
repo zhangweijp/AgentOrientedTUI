@@ -10,16 +10,15 @@ const [mode, evidence] = process.argv.slice(2);
 assert.ok(['headless', 'preview'].includes(mode) && evidence);
 const state = await mkdtemp(join(import.meta.dirname, 'stream-'));
 const entry = join(state, 'app.mjs'), go = join(state, 'go'), done = join(state, 'done');
-await writeFile(entry, `
-import { existsSync, writeFileSync } from 'node:fs';
+await writeFile(entry, `import { existsSync, writeFileSync } from 'node:fs';
 import { createApp, createView, defineViewType } from '@aotui/sdk';
 const Static = defineViewType({ name: 'static_page', multiplicity: 'multiple', region: 'static' });
 const Log = defineViewType({ name: 'log', multiplicity: 'single', region: 'dynamic' });
 export default createApp({ app_name: 'stream', viewTypes: [Static, Log], initialize(ctx) {
     let tick = 0, lines = [];
-    const fixed = ['A','B'].map(letter => createView(Static, { render: () => ({ body: letter.repeat(25 * 1024) }) }));
-    const log = createView(Log, { render: () => ({ body: (tick === 200 ? 'DONE' : 'Running') + ' ' + (tick * 5) + ' lines\\n' + lines.join('\\n') }) });
-    const publish = () => ctx.prepareProjection({ views: [...fixed, log] });
+    const fixed = ['A','B'].map(letter => (() => { const handle = createView(Static); return { handle, frame: () => handle.frame({ body: letter.repeat(25 * 1024) }) }; })());
+    const log = (() => { const handle = createView(Log); return { handle, frame: () => handle.frame({ body: (tick === 200 ? 'DONE' : 'Running') + ' ' + (tick * 5) + ' lines\\n' + lines.join('\\n') }) }; })();
+    const publish = () => ctx.publish(() => ([...fixed, log]).map(page => page.frame()));
     publish();
     const timer = setInterval(() => {
         if (tick === 0 && !existsSync(${JSON.stringify(go)})) return;
@@ -32,7 +31,7 @@ export default createApp({ app_name: 'stream', viewTypes: [Static, Log], initial
             writeFileSync(${JSON.stringify(done)}, String(tick + 1));
         }
     }, 5);
-    ctx.registerCleanup({ close: () => clearInterval(timer) });
+    ctx.registerLifecycle({ close: () => clearInterval(timer) });
 }});
 `);
 

@@ -10,7 +10,12 @@ vi.mock('./managed-app.js', () => ({ ManagedApp: class {
         this.isClosing = true; this.onClosing();
         return this.closing = { completion: Promise.resolve().then(() => { this.closed = true; this.status = 'closed'; this.onReleased(); }) };
     }
-    getAppInteraction() { return { status: 'ready', interaction: {} }; }
+    getAppInteraction(expected: string) { return this.appInstanceId === expected ? { status: 'ready', interaction: {} } : {status:'rejected',issue:{code:'APP_INSTANCE_MISMATCH'}}; }
+    readRunFacts() {
+        return {phase: this.isClosing ? 'closing' : 'opened', execution:{resource: this.closed ? 'exited' : 'owned',channel:this.closed ? 'ended' : 'open'},
+            projection:{health:this.closed ? 'stopped':'ready'}, availability:{status:this.isClosing ? 'unavailable':'ready'},
+            toolsEnabled:this.config.toolsEnabled, resourcesReleased:this.closed};
+    }
     readonly windowActions = this;
     getWindows() { return { appId: this.config.appId, instanceId: this.appInstanceId, views: [] }; }
 } }));
@@ -32,8 +37,7 @@ it('binds Semantic lifecycle controls to the observed Worker instance before acc
     expect(successorInstance).not.toBe(firstInstance);
 
     await first.beginClose().completion;
-    const oldMount = { appId: id, instanceId: firstInstance!, viewId: 'view', viewInstanceId: 'mount' };
-    await expect(manager.closeView(oldMount)).rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
+    expect(manager.getAppInteraction(id, firstInstance!)).toMatchObject({status:'rejected'});
     expect(manager.getAppWindows(id, firstInstance!)).toBeUndefined();
     expect(successor.closed).toBe(false);
     expect(successor.status).toBe('running');
@@ -51,8 +55,7 @@ it.each(['missing-worker', 'missing-identity'] as const)('rejects an expected in
     if (missing === 'missing-worker') (manager as any).workers.delete(id);
     else worker.appInstanceId = undefined;
 
-    await expect(manager.closeView({ appId: id, instanceId: expected, viewId: 'view', viewInstanceId: 'mount' }))
-        .rejects.toMatchObject({ code: 'APP_INSTANCE_CHANGED' });
+    expect(manager.getAppInteraction(id, expected)).toMatchObject({status:'rejected'});
     expect(manager.getAppWindows(id, expected)).toBeUndefined();
     expect(worker.closed).toBe(false);
     expect(manager.listApps()[0].status).toBe('running');

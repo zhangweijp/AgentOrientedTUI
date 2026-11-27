@@ -1,6 +1,4 @@
 import type { ViewIdentity } from '@aotui/core';
-import type { Issue } from '@aotui/core/host';
-import type { ToolResult } from '@aotui/core';
 import type { ViewRegion } from '@aotui/core';
 import type { AppID } from '@aotui/core';
 
@@ -23,8 +21,3 @@ export interface AppWindows {
     readonly instanceId: string;
     readonly views: readonly ViewWindow[];
 }
-
-export type ViewCloseResult =
-    | Readonly<{ status: 'closed' | 'accepted'; result: Extract<ToolResult, { success: true }> }>
-    | Readonly<{ status: 'rejected'; issue: Issue; result?: Extract<ToolResult, { success: false }> }>
-    | Readonly<{ status: 'unknown'; issue: Issue }>;

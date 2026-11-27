@@ -1,4 +1,4 @@
-import { fixtureHost } from './__tests__/worker-fixture.js';
+import { emitHealthyOpen, fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -19,18 +19,19 @@ function respond(worker: EventEmitter, request: Request) {
     const init = request.type === 'INIT' ? request : undefined;
     const instanceId = init ? (init as any).appInstanceId : managedInstances.get(worker);
     if (init && typeof instanceId === 'string') managedInstances.set(worker, instanceId);
+    const publication = request.type === 'APP_OPEN' && instanceId ? emitHealthyOpen(worker, request, 'r1_app', instanceId) : undefined;
     const closesApp = ['APP_STOP', 'APP_CLOSE'].includes(request.type);
     const fullyClosed = request.type === 'APP_CLOSE';
     worker.emit('message', {
         type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
-        requestId: request.requestId, success: true,
+        requestId: request.requestId, success: true, ...(publication ? { publication } : {}),
         ...(init ? {
-            appLifecycle: { protocol: 'app-lifecycle-v2', instanceId },
+            appLifecycle: { protocol: 'app-lifecycle-v3', instanceId },
             protocol: (init as any).protocol, toolsEnabled: (init as any).toolsEnabled,
             projectionLimits: (init as any).projectionLimits,
             appInstanceId: instanceId,
         } : {}),
-        ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
+        ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v3', instanceId,
             state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
     });
 }
@@ -39,34 +40,36 @@ function controlledHost(attach = true) {
     const sent: Request[] = [];
     const worker = Object.assign(new EventEmitter(), {
         postMessage(message: Request) { sent.push(message); },
-        terminate() { return Promise.resolve(0); },
+        terminate() { worker.emit('exit',0);return Promise.resolve(0); },
     });
     const host = fixtureHost(AppWorkerHost, {
         appId: 'r1_app' as any, desktopId: 'r1_desktop' as any,
         appModulePath: 'not-loaded',
     }, { attach, worker: worker as any, timeoutMs: 1000 });
-    if (attach) (host as any).status = 'running';
+    if (attach) { (host as any).status = 'ready'; (host as any).initializeSent=true;managedInstances.set(worker,host.appInstanceId); }
     return { host, worker, sent };
 }
 
 const workerSource = `
     const { parentPort } = require('node:worker_threads');
-    let appInstanceId;
+    let appInstanceId; let appId;
     parentPort.on('message', message => {
         const init = message.type === 'INIT';
-        if (init) appInstanceId = message.appInstanceId;
+        if (init) { appInstanceId = message.appInstanceId; appId=message.appId; }
+        const publication=message.type==='APP_OPEN'?{appId,instanceId:appInstanceId,sourceEpoch:1,producerSeq:1}:undefined;
+        if(publication)parentPort.postMessage({type:'SNAPSHOT_PREPARED',requestId:message.requestId,viewTypes:[],draft:{...publication,schemaVersion:9,healthySince:1,capturedAt:1,views:[],refs:{},tools:{}}});
         const closesApp = ['APP_STOP', 'APP_CLOSE'].includes(message.type);
         const fullyClosed = message.type === 'APP_CLOSE';
         parentPort.postMessage({
             type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
-            requestId: message.requestId, success: true,
+            requestId: message.requestId, success: true,...(publication?{publication}:{}),
             ...(init ? {
-                appLifecycle: { protocol: 'app-lifecycle-v2', instanceId: message.appInstanceId },
+                appLifecycle: { protocol: 'app-lifecycle-v3', instanceId: message.appInstanceId },
                 protocol: message.protocol, toolsEnabled: message.toolsEnabled,
                 projectionLimits: message.projectionLimits,
                 appInstanceId: message.appInstanceId,
             } : {}),
-            ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId: appInstanceId,
+            ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v3', instanceId: appInstanceId,
                 state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
 
         });
@@ -127,7 +130,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             expect(host.getStatus()).toBe('running');
             await host.close();
             const count = sent.length;
-            await expect(host.open()).rejects.toThrow(/shutdown is pending/);
+            await expect(host.open()).rejects.toThrow('APP_STOPPED');
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(sent).toHaveLength(count);expect(host.getStatus()).toBe('closed');
             expect((await host.waitForResourceRelease()).worker).toBe('exited');
@@ -143,13 +146,14 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
         const host = fixtureHost(AppWorkerHost, {
             appId: 'r1_real' as any, desktopId: 'r1_desktop' as any,
             appModulePath: 'not-loaded',
-        }, { attach: method !== 'start', worker, timeoutMs: 2000 });
-        if (method !== 'start') (host as any).status = 'running';
+        }, { worker, timeoutMs: 2000 });
+        if (method !== 'start') await host.start();
         const exited = new Promise<number>(resolve => worker.once('exit', resolve));
         const pending = settle(host[method]());
         let pendingAtTermination: number | undefined;
         let statusAtTermination: WorkerStatus | undefined;
-        worker.once('message', () => {
+        worker.on('message', (message) => {
+            if(message.type==='SNAPSHOT_PREPARED')return;
             pendingAtTermination = (host as any).pendingRequests.size;
             host.terminate();
             statusAtTermination = host.getStatus();
@@ -184,17 +188,18 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             host = fixtureHost(AppWorkerHost, {
                 appId: 'r1_restart' as any, desktopId: 'r1_desktop' as any,
                 appModulePath: 'not-loaded',
-            }, { attach: true, worker: initial, timeoutMs: 2000 });
+            }, { worker: initial, timeoutMs: 2000 });
             const currentHost = host;
-            (host as any).status = 'running';
+            await host.start();
             const old = settle(host.open());
-            initial.once('message', () => {
+            initial.on('message', (message) => {
+                if(message.type==='SNAPSHOT_PREPARED')return;
                 currentHost.terminate();
                 closedRestart = settle(currentHost.start());
                 nextHost = fixtureHost(AppWorkerHost, { appId: 'r1_restart' as any, desktopId: 'r1_desktop' as any,
                     appModulePath: 'not-loaded', }, { script: filename, timeoutMs: 2000 });
                 fresh = settle(nextHost.start());
-                replacement = (nextHost as any).worker;
+                replacement = fixtureWorker(nextHost);
             });
             expect(await old).toMatchObject({ status: 'rejected' });
             expect(replacement).toBeDefined();
@@ -207,7 +212,7 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             expect(host.getStatus()).toBe('closed');
             expect(nextHost!.getStatus()).toBe('ready');
             expect(nextHost!.appInstanceId).not.toBe(host.appInstanceId);
-            expect((nextHost as any).worker).toBe(replacement);
+            expect(fixtureWorker(nextHost!)).toBe(replacement);
         } finally {
             host?.terminate();
             nextHost?.terminate();

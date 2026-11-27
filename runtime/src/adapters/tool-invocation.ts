@@ -16,8 +16,8 @@ export function captureToolInvocation(input: unknown): ViewToolInvokeMessage {
     const args = input.effectiveArgs;
     const slots = new Set<string>();
     for (const ref of input.localRefs) {
-        if (!invocationObject(ref) || !exact(ref, ['param', 'refId', 'viewId', 'viewInstanceId', ...(ref.index === undefined ? [] : ['index'])]) ||
-            typeof ref.param !== 'string' || !text(ref.refId) || !text(ref.viewId) || !text(ref.viewInstanceId) || !Object.hasOwn(args, ref.param))
+        if (!invocationObject(ref) || !exact(ref, ['param', 'refId', 'viewId', 'viewInstanceId', 'since', ...(ref.index === undefined ? [] : ['index'])]) ||
+            typeof ref.param !== 'string' || typeof ref.since !== 'number' || !Number.isSafeInteger(ref.since) || ref.since <= 0 || !text(ref.refId) || !text(ref.viewId) || !text(ref.viewInstanceId) || !Object.hasOwn(args, ref.param))
             throw new Error('Invalid local Ref source');
         if (ref.index !== undefined) {
             const items = args[ref.param];

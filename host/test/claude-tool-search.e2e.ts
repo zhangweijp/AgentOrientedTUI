@@ -57,7 +57,7 @@ const models = { resolveLLMConfig: async () => settings, withModelInputBudget: (
 const history = new MessageService();
 const topic = new SessionManagerV3(desktops, models, history);
 const topicId = 'claude-tool-search';
-const EDIT = APP + '-edit';
+const EDIT = APP + '-file-edit';
 const measurements: { beforeRequest: number; size: ModelInputMeasurement }[] = [];
 const facts: Record<string, unknown> = { requests: provider.requests, measurements, passed: false };
 
@@ -136,7 +136,7 @@ try {
         return { message, request };
     }
 
-    await turn('Open both files', [useTool('toolu_open', APP + '-open_file', { names: ['A', 'B'] })]);
+    await turn('Open both files', [useTool('toolu_open', APP + '-workspace-open_file', { names: ['A', 'B'] })]);
     const original = windows(ready);
     const a = original.views.find(view => view.viewId.startsWith('file_A_'))!;
     const b = original.views.find(view => view.viewId.startsWith('file_B_'))!;
@@ -189,7 +189,7 @@ try {
     assert.equal(replayed.filter(block => block.type === 'tool_result' && block.tool_use_id.startsWith('srvtoolu_')).length, 0);
     facts.retiredResult = retired.message;
 
-    await turn('Open B again', [useTool('toolu_open_b', APP + '-open_file', { names: ['B'] })]);
+    await turn('Open B again', [useTool('toolu_open_b', APP + '-workspace-open_file', { names: ['B'] })]);
     const before = windows(ready);
     const oldB = before.views.find(view => view.viewId.startsWith('file_B_'))!;
     assert.ok(oldB);

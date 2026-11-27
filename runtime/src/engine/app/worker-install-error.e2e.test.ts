@@ -38,9 +38,10 @@ describe('installation errors across a real Worker and AppManager', () => {
     function app(renderBody: string) {
         return `import { createApp, createView, defineViewType } from '@aotui/sdk';
 const Page = defineViewType({ name: 'Page', multiplicity: 'single', region: 'dynamic' });
-export default createApp({ app_name: 'diagnostics', viewTypes: [Page], initialize({ prepareProjection }) {
-    const page = createView(Page, { render() { ${renderBody} } });
-    prepareProjection({ views: [page] });
+export default createApp({ app_name: 'diagnostics', viewTypes: [Page], initialize({ publish: publishAuthorFrame }) {
+    const page = createView(Page);
+    const result = publishAuthorFrame(() => [page.frame((() => { ${renderBody} })())]);
+    if (!result.ok) throw result.cause ?? Object.assign(new Error(result.issue.message), { code: result.issue.code });
 } });`;
     }
 

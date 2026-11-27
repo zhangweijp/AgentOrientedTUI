@@ -3,10 +3,10 @@ import { isTUIAppFactory, readAppFactory, VIEW_TYPE_TOOL_PROTOCOL, type TUIAppFa
 
 function createMockFactory(name: string): TUIAppFactory {
     return {
-        appLifecycleSupport: 'app-lifecycle-v2',
+        appLifecycleSupport: 'app-lifecycle-v3',
         toolAuthoringProtocol: VIEW_TYPE_TOOL_PROTOCOL,
         app_name: name,
-        initialize: vi.fn(async () => ({ close: vi.fn() })),
+        initialize: vi.fn(async () => {}),
     };
 }
 
@@ -24,8 +24,9 @@ it('accepts the App factory contract with its declared initialization', () => {
     const { appLifecycleSupport: _lifecycle, ...withoutLifecycle } = factory;
     expect(isTUIAppFactory(withoutLifecycle)).toBe(false);
     expect(isTUIAppFactory({ ...factory, appLifecycleSupport: 'legacy' })).toBe(false);
+    expect(readAppFactory({ ...factory, appLifecycleSupport: 'app-lifecycle-v2' })).toBe('APP_LIFECYCLE_UNSUPPORTED');
     const accessorMarker = { ...factory };
-    Object.defineProperty(accessorMarker, 'appLifecycleSupport', { get: () => 'app-lifecycle-v2' });
+    Object.defineProperty(accessorMarker, 'appLifecycleSupport', { get: () => 'app-lifecycle-v3' });
     expect(isTUIAppFactory(accessorMarker)).toBe(false);
 });
 

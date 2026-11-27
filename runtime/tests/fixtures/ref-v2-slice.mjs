@@ -58,14 +58,12 @@ const File = makeTools();
 const Guide = SDK.defineViewType({ multiplicity: 'multiple', name:"Root"});
 export default SDK.createApp({
   app_name: 'ref_v2_fixture', viewTypes: [Guide, File],
-  initialize({ prepareProjection, registerCleanup }) {
+  initialize({ publish: commit, registerLifecycle }) {
     let state = { text: 'A', revision: 1, rule: false, defaultValue: 2, enabled: true,
       show: true, showSecond: true, refType: '', capacityNodes: 8, tag: 0 };
-    const root = SDK.createView(Guide, { idPrefix: 'root', region: 'static', render: () => ({
-        body: '# Reference Inspector Application Instruction\n\nInspect displayed values from their original file views.' +
-            ((state.show || state.showSecond) ? '\n\n## File\nOriginal values and available tools: inspect, capacity, open_ref, typed and plain.' : ''),
-    }) });
-    const makeFile = id => SDK.createView(File, { idPrefix: id, region: 'dynamic', render() {
+    const root = (() => { const handle = SDK.createView(Guide, { idPrefix: 'root', region: 'static' }); return { handle, frame: () => handle.frame({ body: '# Reference Inspector Application Instruction\n\nInspect displayed values from their original file views.' +
+            ((state.show || state.showSecond) ? '\n\n## File\nOriginal values and available tools: inspect, capacity, open_ref, typed and plain.' : '') }) }; })();
+    const makeFile = id => (() => { const handle = SDK.createView(File, { idPrefix: id, region: 'dynamic' }); return { handle, frame: () => {
       const label = labelFor(id);
       const schema = Type.Object({});
       const options = { schema, scope: 'protected', refType: 'Data' };
@@ -73,15 +71,15 @@ export default SDK.createApp({
       // The fixture sizes the complete decoded request by the published list's node count.
       const big = SDK.ref('capacity_' + label, { view: id, list: Array(Math.max(0, state.capacityNodes - 4)).fill(null) }, options);
       const foreign = SDK.ref('private_' + label, { view: id }, options);
-      return { refs: [file, big, foreign], context: { id, state }, body: [
+      return handle.frame({ refs: [file, big, foreign], context: { id, state }, body: [
         'Private fixture object: ' + id, SDK.formatRef('Original file value', file),
         SDK.formatRef('List value', big), SDK.formatRef('View-specific value', foreign),
         'Private protocol tools: inspect and plain; availability is supplied by the committed Tool catalog.',
-      ].join('\n\n') };
-    } });
+      ].join('\n\n') });
+    } }; })();
     let first = makeFile('aa'), second = makeFile('bb');
     const mountKey = () => JSON.stringify([state.rule, state.defaultValue, state.refType]);
-    function publish() { prepareProjection({ views: [root, ...(first ? [first] : []), ...(second ? [second] : [])] }); }
+    function publish() { commit(() => ([root, ...(first ? [first] : []), ...(second ? [second] : [])]).map(page => page.frame())); }
     const receive = message => {
       if (message.type !== 'TEST_COMMAND') return;
       const { command: type, data } = message;
@@ -101,7 +99,7 @@ export default SDK.createApp({
       }
     };
     parentPort.on('message', receive);
-    registerCleanup({ stop() { parentPort.off('message', receive); } });
+    registerLifecycle({ stop() { parentPort.off('message', receive); } });
     publish();
     parentPort.postMessage({ type: 'REF_V2_COMMITTED', state, tag: state.tag });
   },

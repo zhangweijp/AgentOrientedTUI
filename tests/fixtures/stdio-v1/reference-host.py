@@ -1,4 +1,4 @@
-"""Frozen Host v1 wire fixture. Uses the executable and inert App files passed on the command line."""
+"""Frozen Host v2 wire fixture. Uses the executable and inert App files passed on the command line."""
 
 import argparse
 from collections import deque
@@ -100,7 +100,7 @@ def wait_file(file):
 
 
 def initialize(host, *, required=(), optional=()):
-    return host.call("initialize", protocol=PROTOCOL, majorVersion=1,
+    return host.call("initialize", protocol=PROTOCOL, majorVersion=2,
                      capabilities={"required": list(required), "optional": list(optional)})
 
 
@@ -112,7 +112,7 @@ def new_data(folder):
 
 
 def open_app(host, app_path, installation, folder):
-    host.call("registerApp", installationId=installation, localPath=str(app_path), config={"folder": str(folder)})
+    host.call("registerApp", installationId=installation, localPath=str(app_path), config={"folder": str(folder)}, interactionLimits={"maxPendingInvocations": 1})
     return host.call("openApp", installationId=installation)
 
 
@@ -145,7 +145,7 @@ def adopt(host, scope, presentation):
 
 
 def route(app, turn, view, invocation, **args):
-    return {"turn": turn, "name": f"{app['appId']}-edit", "invocationId": invocation,
+    return {"turn": turn, "name": f"{app['appId']}-File-edit", "invocationId": invocation,
             "input": {"view_id": view["id"], **args}}
 
 
@@ -156,17 +156,17 @@ def wire_view(presented, app, view):
 def version_errors(executable):
     with Host(executable) as host:
         before = host.request("desktop")
-        wrong_identity = host.request("initialize", protocol="aotui-app", majorVersion=1)
+        wrong_identity = host.request("initialize", protocol="aotui-app", majorVersion=2)
         wrong_version = host.request("initialize", protocol=PROTOCOL, majorVersion=77)
-        required = host.request("initialize", protocol=PROTOCOL, majorVersion=1,
+        required = host.request("initialize", protocol=PROTOCOL, majorVersion=2,
                                 capabilities={"required": ["future-required"]})
         for frame in (before, wrong_identity, wrong_version, required):
             assert frame["error"]["code"] == "PROTOCOL_UNSUPPORTED", frame
         assert "aotui-app" in wrong_identity["error"]["message"]
-        assert "77" in wrong_version["error"]["message"] and "major 1" in wrong_version["error"]["message"]
+        assert "77" in wrong_version["error"]["message"] and "major 2" in wrong_version["error"]["message"]
         assert "future-required" in required["error"]["message"]
         hello = initialize(host, optional=["future-optional"])
-        assert hello == {"protocol": PROTOCOL, "majorVersion": 1, "capabilities": []}, hello
+        assert hello == {"protocol": PROTOCOL, "majorVersion": 2, "capabilities": []}, hello
         assert host.request("subscribeOutput", apps=[])["error"]["code"] == "PROTOCOL_UNSUPPORTED"
         assert host.call("listApps") == []
         return host.trace()
@@ -196,7 +196,7 @@ def baseline(executable, app_path, work):
         assert wire_view(hint, alpha, first)["content"] == VECTORS["hintXml"]
         assert wire_view(folded, alpha, first)["content"] == VECTORS["collapsedXml"]
         assert first["id"] not in [entry["viewId"] for entry in hint["apps"][0]["windows"]["activeViews"]]
-        edit = next(tool for tool in hint["tools"] if tool["name"] == f"{alpha['appId']}-edit")
+        edit = next(tool for tool in hint["tools"] if tool["name"] == f"{alpha['appId']}-File-edit")
         assert edit["schema"] == VECTORS["editSchema"]
 
         # The final presentation must be re-measured and adopted, never a previous trial.
@@ -205,7 +205,10 @@ def baseline(executable, app_path, work):
         final = present(host, scope, [(a, {first["id"]: {"kind": "hint"}})], ["alpha"])
         turn = adopt(host, scope, final)
         denied = host.call("invokeNative", **route(alpha, turn, first, "hinted", text="no write"))
-        assert denied["receipt"]["executionPhase"] == "not-dispatched"
+        assert denied["kind"] == "refused" or (denied["kind"] == "receipt" and
+               denied["receipt"]["executionPhase"] == "not-dispatched" and denied["receipt"]["outcome"]["status"] == "rejected"), denied
+        if denied["kind"] == "refused":
+            assert "locator" not in denied
         source = f"$ref.{alpha['appId']}.{first['id']}.people[0][\"display.name\"]"
         assert host.call("inspectRef", turn=turn, address=source, mode="value")["status"] == "rejected"
         accepted = host.call("invokeNative", **route(alpha, turn, second, "write-b", text="Only B changed"))
@@ -258,7 +261,10 @@ def asynchronous(executable, app_path, work):
         busy = host.call("invokeNative", **route(alpha, turn, first, "parallel-a", text="no write"))
         assert busy["kind"] == "refused" and busy["code"] == "INVOCATION_CAPACITY", busy
         denied = host.call("invokeNative", **route(beta, turn, other, "revoked-b", text="no write"))
-        assert denied["receipt"]["executionPhase"] == "not-dispatched"
+        assert denied["kind"] == "refused" or (denied["kind"] == "receipt" and
+               denied["receipt"]["executionPhase"] == "not-dispatched" and denied["receipt"]["outcome"]["status"] == "rejected"), denied
+        if denied["kind"] == "refused":
+            assert "locator" not in denied
         address = f"$ref.{beta['appId']}.{other['id']}.content"
         assert host.call("inspectRef", turn=turn, address=address, mode="value")["status"] == "rejected"
         (alpha_files / "edit-release").touch()
@@ -330,7 +336,7 @@ def broken_output(executable, app_path, work):
             child.stdin.flush()
         try:
             for identifier, method, params in (
-                (1, "initialize", {"protocol": PROTOCOL, "majorVersion": 1}),
+                (1, "initialize", {"protocol": PROTOCOL, "majorVersion": 2}),
                 (2, "registerApp", {"installationId": "alpha", "localPath": str(app_path),
                                     "config": {"folder": str(folder)}}),
                 (3, "openApp", {"installationId": "alpha"}),

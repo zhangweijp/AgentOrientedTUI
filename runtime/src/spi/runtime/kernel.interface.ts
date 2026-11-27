@@ -9,9 +9,9 @@ import type { UpdateSignal } from '../core/signals.js';
 import type { AppCloseHandle, DesktopCloseHandle, RuntimeCloseHandle } from './close.interface.js';
 import type { AppInteractionOptions } from './app-interaction.interface.js';
 import type { ActiveTurn as CoreTurn, AppInteractionPolicy, AppInvocation, AppPreviewResult, CancellationSignal,
-    InteractionIssue, InvokeResult as CoreInvokeResult, PrepareObservationResult,
+    InteractionIssue, InvokeResult as CoreInvokeResult, PrepareObservationResult, ObservationOptions,
     ReceiptAccess as CoreReceiptAccess, ReceiptQuery, TurnSelection } from '@aotui/core';
-import type { AppWindowTarget, AppWindows, ViewCloseResult, ViewWindowTarget } from './windows.js';
+import type { AppWindowTarget, AppWindows, ViewWindowTarget } from './windows.js';
 
 type PendingAppMetadata = Readonly<{ name: string; description?: string; whatItIs?: string; whenToUse?: string }>;
 export type RegisterPendingAppOptions = AppInteractionOptions & {
@@ -38,14 +38,14 @@ export interface OpenAppOptions { readonly policy?: AppInteractionPolicy }
 export interface RunningApp {
     readonly appId: AppID;
     readonly instanceId: string;
-    observe(): Promise<PrepareObservationResult>;
+    observe(options?: ObservationOptions): Promise<PrepareObservationResult>;
     preview(): Promise<AppPreviewResult>;
     readReceipt(query: ReceiptQuery, timeoutMs?: number): Promise<ReceiptAccess>;
     beginClose(): AppCloseHandle;
 }
 
 export type CandidateScope = {
-    observe(app: Pick<RunningApp, 'observe'>): Promise<PrepareObservationResult>;
+    observe(app: Pick<RunningApp, 'observe'>, options?: ObservationOptions): Promise<PrepareObservationResult>;
     discard(): readonly InteractionIssue[];
 } & (typeof Symbol extends { readonly dispose: infer Key extends symbol }
     ? { [K in Key]: () => void }
@@ -59,13 +59,32 @@ export interface ReceiptLocator extends ReceiptQuery {
     readonly appId: AppID;
     readonly instanceId: string;
 }
-export type ReceiptAccess = CoreReceiptAccess & Readonly<{ locator?: ReceiptLocator }>;
-export type InvokeResult = CoreInvokeResult & Readonly<{ locator?: ReceiptLocator }>;
+export type ReceiptAccess = (Omit<Extract<CoreReceiptAccess, {kind:'receipt'}>, 'locator'> & Readonly<{locator: ReceiptLocator}>) |
+    (Omit<Extract<CoreReceiptAccess, {kind:'unavailable'}>, 'locator'> & Readonly<{locator?: ReceiptLocator}>);
+export type InvokeResult = ReceiptAccess | Extract<CoreInvokeResult, {kind:'refused'}>;
+export interface CloseViewRequest { readonly turn: ActiveTurn; readonly target: ViewWindowTarget; readonly invocationId: string; }
+export interface CloseViewOptions { readonly timeoutMs?: number; readonly signal?: CancellationSignal; }
 export interface ActiveTurn extends Omit<CoreTurn, 'invoke'> {
     invoke(appId: string, request: AppInvocation, timeoutMs?: number, signal?: CancellationSignal): Promise<InvokeResult>;
 }
 export type AdoptTurnResult = Readonly<{ status: 'adopted'; turn: ActiveTurn; cleanupIssues: readonly InteractionIssue[] }> |
     Readonly<{ status: 'rejected'; issue: InteractionIssue }>;
+
+export interface AppRunFacts {
+    readonly phase: 'starting' | 'opened' | 'closing';
+    readonly execution: Readonly<{
+        resource: 'not-created' | 'owned' | 'retiring' | 'exited';
+        channel: 'not-established' | 'open' | 'ended';
+        issue?: InteractionIssue;
+    }>;
+    readonly projection: Readonly<{
+        health: 'unready' | 'ready' | 'degraded' | 'stopped';
+        issue?: InteractionIssue;
+    }>;
+    readonly availability: Readonly<{ status: 'ready' } | { status: 'unavailable'; issue: InteractionIssue }>;
+    readonly toolsEnabled: boolean;
+    readonly resourcesReleased: boolean;
+}
 
 export interface AppDiscoveryInfo {
     readonly installationId: string;
@@ -74,6 +93,7 @@ export interface AppDiscoveryInfo {
     readonly appInstanceId?: string;
     readonly name: string;
     readonly status: 'pending' | 'running' | 'closed';
+    readonly run?: AppRunFacts;
     readonly description?: string;
     readonly whatItIs?: string;
     readonly whenToUse?: string;
@@ -85,6 +105,7 @@ export interface IDesktop {
     adoptTurn(input: TurnSelection): AdoptTurnResult;
     readReceipt(locator: ReceiptLocator, timeoutMs?: number): Promise<ReceiptAccess>;
     beginClose(): DesktopCloseHandle;
+    beginCloseApp(appId: string, expectedInstanceId: string): AppCloseHandle;
     readonly id: DesktopID;
     /** True from close admission onward, including after resources have been released. */
     readonly isClosing: boolean;
@@ -124,8 +145,8 @@ export interface IDesktop {
     // System Commands (App)
     openApp(installationId: string, options?: OpenAppOptions): Promise<RunningApp>;
     getAppWindows(appId: AppID, expectedInstanceId: string): AppWindows | undefined;
-    revokeWindowAccess(turn: ActiveTurn, target: AppWindowTarget | ViewWindowTarget): void;
-    closeView(target: ViewWindowTarget, turn?: ActiveTurn): Promise<ViewCloseResult>;
+    revokeWindowAccess(turn: ActiveTurn, target: AppWindowTarget | ViewWindowTarget, channel?: 'body' | 'close' | 'all'): void;
+    closeView(request: CloseViewRequest, options?: CloseViewOptions): Promise<InvokeResult>;
 
     output: {
         subscribe(listener: (signal: UpdateSignal) => void): void;

@@ -18,9 +18,9 @@ const desktop = await runtime.createDesktop();
 const marked = new Marked({ gfm: true });
 const facts = { mode, dataDirectory, requests: provider.requests, calls: [], passed: false };
 
-const change = (id, operation) => modelCall(id, STOCK_APP + '-change', { operation });
-const apply = (id, view, value = '$ref.' + STOCK_APP + '.left_1.value') => modelCall(id, STOCK_APP + '-apply', { view_id: view, value });
-const ping = id => modelCall(id, PLAIN_APP + '-ping', {});
+const change = (id, operation) => modelCall(id, STOCK_APP + '-control-change', { operation });
+const apply = (id, view, value = '$ref.' + STOCK_APP + '.left_1.value') => modelCall(id, STOCK_APP + '-item-apply', { view_id: view, value });
+const ping = id => modelCall(id, PLAIN_APP + '-healthy-ping', {});
 const toolNames = request => request.tools.map(tool => tool.function.name);
 
 function page(request, app, id) {
@@ -117,12 +117,9 @@ function independentHost(apps) {
                         markup: view.content.value, refs: observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId) }),
                 })));
                 const tools = observed.flatMap(({ observation }) => observation.tools.map(tool => {
-                    const name = buildPublicToolName(observation.source.appId, tool.name);
+                    const name = buildPublicToolName(observation.source.appId, tool.viewType, tool.name);
                     routes.set(name, { appId: observation.source.appId, observationId: observation.observationId, toolId: tool.id });
-                    return { type: 'function', function: { name, description: tool.description, parameters: projectNativeToolSchema(tool, observation.source,
-                        observation.views.filter(view => view.type === tool.viewType && (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id)))
-                            .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                        observed.flatMap(({ observation }) => observation.refs.map(ref => ({ source: observation.source, ref })))) } };
+                    return { type: 'function', function: { name, description: tool.description, parameters: projectNativeToolSchema(tool) } };
                 }));
                 tools.push({ type: 'function', function: { name: 'system-close_app', description: 'Close the selected application.',
                     parameters: { type: 'object', properties: { app_id: { type: 'string' } }, required: ['app_id'], additionalProperties: false } } });
@@ -248,8 +245,8 @@ async function scenario(host, inventory, inventoryPath, plainPath) {
     assert.deepEqual(itemViews(newer), itemViews(first));
     assert.deepEqual(readOnly.tools.find(tool => tool.name === 'apply').eligibleViewIds, ['right_1']);
     for (const id of ['left_1', 'right_1']) assert.equal(page(selected.wire, STOCK_APP, id).xml, page(initial, STOCK_APP, id).xml);
-    assert.equal(toolNames(selected.wire).filter(name => name === STOCK_APP + '-apply').length, 1);
-    const schema = selected.wire.tools.find(tool => tool.function.name === STOCK_APP + '-apply').function.parameters;
+    assert.equal(toolNames(selected.wire).filter(name => name === STOCK_APP + '-item-apply').length, 1);
+    const schema = selected.wire.tools.find(tool => tool.function.name === STOCK_APP + '-item-apply').function.parameters;
     assert.equal(schema.properties.view_id.type, 'string');
     assert.equal(Object.hasOwn(schema.properties.view_id, 'enum'), false);
     assert.ok(schema.required.includes('view_id'));
@@ -273,7 +270,7 @@ async function scenario(host, inventory, inventoryPath, plainPath) {
         message.content.split('\n', 1)[0].includes(` app_id="${STOCK_APP}"`)), false);
     assert.ok(toolNames(degraded.wire).every(name => !name.startsWith(STOCK_APP + '-')));
     assert.ok(toolNames(degraded.wire).includes('system-close_app'));
-    assert.ok(toolNames(degraded.wire).includes(PLAIN_APP + '-ping'));
+    assert.ok(toolNames(degraded.wire).includes(PLAIN_APP + '-healthy-ping'));
     assert.deepEqual({ ...degraded.results[0].result }, { peer: 'healthy' });
     const notice = degraded.wire.messages.find(message => typeof message.content === 'string' && message.content.startsWith('<desktop>')).content;
     assert.match(notice, /SNAPSHOT_INVALID.*Inventory data.*\$\.views\[4\]\.content/);
@@ -283,7 +280,7 @@ async function scenario(host, inventory, inventoryPath, plainPath) {
     const cells = tableCells(page(restored.wire, STOCK_APP, 'stock').body);
     assert.deepEqual(cells.rows, STOCK.map((row, index) => index === 2 ? [row[0], '4'] : row));
     assert.equal(page(restored.wire, STOCK_APP, 'files_1').xml, filePage.xml);
-    assert.ok(toolNames(restored.wire).includes(STOCK_APP + '-apply'));
+    assert.ok(toolNames(restored.wire).includes(STOCK_APP + '-item-apply'));
 
     facts.calls = [selected, faulty, degraded].flatMap(turn => turn.results);
     facts.fault = { issue, diagnosis, notice, repaired: cells };

@@ -7,7 +7,7 @@ import { validatePreparedSnapshot } from './validate-snapshot.js';
 const fixtureJsonSchema = { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }, { type: 'object' }, { type: 'array', items: {} }] };
 
 
-const appId = 'editor', instanceId = 'run-1', viewId = 'file_a', viewInstanceId = 'mount-1';
+const appId = 'editor', instanceId = 'run-1', viewId = 'file_a', viewInstanceId = 'm:1';
 const viewType = 'FileDetail';
 const typeId = JSON.stringify([appId, viewType, 'edit_file']);
 const refId = JSON.stringify([appId, viewType, 'read_ref']);
@@ -17,11 +17,11 @@ const snapshotValue = compileToolParameters({ type: 'object', properties: { file
 if (!ordinary.ok || !snapshotValue.ok) throw new Error('Snapshot fixtures must compile');
 
 function draft() {
-    return {
-        schemaVersion: 8 as const, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
-        views: [{ toolBindings:[{toolId:typeId,activationId:"activation-1"},{toolId:refId,activationId:"activation-2"}], id: viewId, viewInstanceId, type: viewType, name: 'file-a', region: 'dynamic' as const,
+    return { healthySince: 1,
+        schemaVersion: 9 as const, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
+        views: [{ toolBindings:[{toolId:typeId,activationId:"a:1"},{toolId:refId,activationId:"a:2"}], id: viewId, viewInstanceId, type: viewType, name: 'file-a', region: 'dynamic' as const,
             content: { format: 'markdown-v1' as const, value: '# Current file' } }],
-        refs: { [refKey(viewId, viewInstanceId, 'file')]: { valueSchema: { type: 'object' }, scope: 'protected', id: 'file', ownerViewId: viewId,
+        refs: { [refKey(viewId, viewInstanceId, 'file')]: { continuity: [1,1,0] as const,  valueSchema: { type: 'object' }, scope: 'protected', id: 'file', ownerViewId: viewId,
             ownerViewInstanceId: viewInstanceId, refType: 'File', target: { kind: 'snapshot-value' as const, payload: { path: 'a.txt' } } } },
         tools: {
             [typeId]: { multiplicity: 'multiple', id: typeId, name: 'edit_file', viewType,  description: 'Edit an opened FileView',
@@ -58,7 +58,7 @@ describe('Published Snapshot', () => {
         expect(validatePreparedSnapshot(stale)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('refs') } });
 
         const duplicate = draft();
-        duplicate.views[0]!.toolBindings[1]!.activationId = 'activation-1';
+        duplicate.views[0]!.toolBindings[1]!.activationId = 'a:1';
         expect(validatePreparedSnapshot(duplicate)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('toolBindings') } });
     });
 
@@ -77,8 +77,8 @@ describe('Published Snapshot', () => {
         if (result.status === 'rejected') throw new Error(JSON.stringify(result.issue));
         expect(result.status).toBe('published');
         if (result.status !== 'published') return;
-        expect(result.snapshot.schemaVersion).toBe(8);
-        expect(result.snapshot.id).toContain('aotui-app-snapshot:v8:');
+        expect(result.snapshot.schemaVersion).toBe(9);
+        expect(result.snapshot.id).toContain('aotui-app-snapshot:v9:');
         expect(core.committer.accept({ ...draft(), schemaVersion: 6 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
         expect(result.snapshot.tools[typeId]).toMatchObject({ id: typeId, viewType });
         expect(core.committer.accept({ ...draft(), schemaVersion: 4 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
@@ -97,7 +97,7 @@ describe('Published Snapshot', () => {
         expect(equal.status).toBe('unchanged');
         const changed = draft();
         changed.producerSeq = 3; changed.sourceEpoch = 3; changed.capturedAt = 3;
-        changed.views[0]!.toolBindings[0]!.activationId = 'activation-new';
+        changed.views[0]!.toolBindings[0]!.activationId = 'a:3';
         const next = core.committer.accept(changed);
         expect(next.status).toBe('published');
         if (next.status === 'published') {
@@ -132,8 +132,8 @@ describe('Published Snapshot', () => {
 
     it('allows two ViewTypes to use the same business action name', () => {
         const input = draft(), secondId = JSON.stringify([appId, 'Result', 'edit_file']);
-        input.views.push({ ...input.views[0]!, id: 'result', viewInstanceId: 'result-mount', type: 'Result',
-            toolBindings: [{ toolId: secondId, activationId: 'result-edit' }] });
+        input.views.push({ ...input.views[0]!, id: 'result', viewInstanceId: 'm:2', type: 'Result',
+            toolBindings: [{ toolId: secondId, activationId: 'a:3' }] });
         input.tools[secondId] = { ...input.tools[typeId]!, id: secondId, viewType: 'Result' };
         expect(validatePreparedSnapshot(input).ok).toBe(true);
     });
@@ -143,7 +143,7 @@ describe('Published Snapshot', () => {
         const withSchema = (valueSchema: unknown, payload: unknown) => {
             const input = draft();
             input.refs = {
-                [key]: { valueSchema: fixtureJsonSchema,
+                [key]: { continuity: [1,1,0] as const,  valueSchema: fixtureJsonSchema,
                     scope: 'protected', id: 'count', ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
                     refType: 'Number', target: { kind: 'snapshot-value', payload: payload as any },
                     ...(valueSchema === undefined ? {} : { valueSchema: valueSchema as any }),

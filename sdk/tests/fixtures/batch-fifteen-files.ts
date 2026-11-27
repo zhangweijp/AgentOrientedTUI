@@ -7,7 +7,7 @@ const Workspace = defineViewType<{ open(): ToolResult }>()({
     name: 'workspace', multiplicity: 'single', region: 'static',
     tools: { open_file: { description: 'Open the test file.', execute: ({ context }) => context.open() } },
 });
-const Editor = defineViewType<{ write(text: string): ToolResult; fail(): ToolResult }>()({
+const Editor = defineViewType<({ write(text: string): ToolResult; fail(): ToolResult }) & { close?: (() => ToolResult) | undefined }>()({ onClose: { enabled: context => !!context.close, execute: ({ context }) => context.close!() },
     name: 'editor', multiplicity: 'single', region: 'dynamic',
     tools: {
         append_and_fail_projection: {
@@ -31,47 +31,35 @@ const success = () => ({ success: true as const });
 const app: ReturnType<typeof createApp> = createApp({
     app_name: 'refresh_files',
     viewTypes: [Workspace, Editor],
-    initialize({ appId, launchConfig, prepareProjection, registerCleanup }) {
+    initialize({ appId, launchConfig, publish: commit, registerLifecycle }) {
         const folder = launchConfig?.folder;
         if (typeof folder !== 'string') throw new Error('Missing test file folder');
         const path = join(folder, appId + '.txt');
         const repair = appId + '.repair';
         let failed = existsSync(join(folder, appId + '.initial-fault'));
         let editor: ReturnType<typeof openEditor> | undefined;
-        const workspace = createView(Workspace, { render: () => ({
-            body: 'Test file workspace',
-            context: { open() { editor ??= openEditor(); publish(); return success(); } },
-        }) });
-        function publish() { prepareProjection({ views: editor ? [workspace, editor] : [workspace] }); }
+        const workspace = (() => { const handle = createView(Workspace); return { handle, frame: () => handle.frame({ body: 'Test file workspace', context: { open() { editor ??= openEditor(); publish(); return success(); } } }) }; })();
+        function publish() { return commit(() => (editor ? [workspace, editor] : [workspace]).map(page => page.frame())); }
         function publishFault() {
             failed = true;
-            try { publish(); }
-            catch (error) {
-                if (!(error instanceof Error) || !('code' in error) || error.code !== 'SNAPSHOT_SERIALIZATION_ERROR') throw error;
-                return error.code;
-            }
+            const published = publish();
+            if (!published.ok && published.issue.code === 'SNAPSHOT_SERIALIZATION_ERROR')
+                return published.issue.code;
             throw new Error('The invalid Ref unexpectedly committed');
         }
         function openEditor() {
-            return createView(Editor, {
-                onClose: () => { editor = undefined; publish(); return success(); },
-                render: () => {
+            return (() => { const handle = createView(Editor); const closeAction = () => { editor = undefined; publish(); return success(); }; return { handle, frame: () => {
                     const text = readFileSync(path, 'utf8');
                     // @ts-expect-error Exercise Runtime validation of a non-JSON Ref from a JavaScript App.
                     const content = ref('content', failed ? () => text : text, { schema: Type.String(), scope: 'protected' });
-                    return {
-                        body: 'File body\n\n' + text + '\n\n' + formatRef('File contents', content),
-                        refs: [content],
-                        context: {
+                    return handle.frame({ body: 'File body\n\n' + text + '\n\n' + formatRef('File contents', content), refs: [content], context: { ...({
                             write(next) {
                                 appendFileSync(path, next + '\n');
                                 return { success: true, data: { saved: true, projection: publishFault() } };
                             },
                             fail: () => ({ success: true, data: { projection: publishFault() } }),
-                        },
-                    };
-                },
-            });
+                        }), close: closeAction } });
+                } }; })();
         }
         editor = openEditor();
         if (failed) publishFault();
@@ -81,7 +69,7 @@ const app: ReturnType<typeof createApp> = createApp({
             failed = false;
             publish();
         });
-        registerCleanup({ close: () => watcher.close() });
+        registerLifecycle({ close: () => watcher.close() });
     },
 });
 export default app;

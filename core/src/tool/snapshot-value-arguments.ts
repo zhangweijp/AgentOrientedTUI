@@ -3,7 +3,7 @@ import type { ToolParameterContract } from './tool-parameters.js';
 import type { InvocationSource, Issue } from '../invocation/app-interaction-types.js';
 import type { RefConsumer, RefGrant } from '../invocation/observation-types.js';
 import { parseRefAddress } from './ref-parameters.js';
-import { REF_ADDRESS_PREFIX, decodeRefLiteral, isArrayElementPath, readRefPath, refConsumerAllowed, refPath, scopeAllows,
+import { REF_ADDRESS_PREFIX, decodeRefLiteral, isArrayElementPath, readRefPath, refConsumerAllowed, refPath, scopeAllows, refLane,
     type LocalRefUse, type RefAddress } from './ref-path.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
@@ -32,7 +32,7 @@ function schemaObject(value: JsonValue | undefined): JsonObject | undefined {
 
 /** Resolve only complete argument slots using the retained original observations. */
 export function prepareViewTypeParameters(
-    store: SnapshotStore, source: InvocationSource, contract: ToolParameterContract, input: JsonObject,
+    store: SnapshotStore, source: Pick<InvocationSource, 'appId' | 'instanceId' | 'snapshotId'> & { readonly receiver: Pick<InvocationSource['receiver'], 'viewId' | 'viewInstanceId'> }, contract: ToolParameterContract, input: JsonObject,
     visibleRefs: readonly RefGrant[], observationId: string,
     external?: (appId: string) => RefArgumentSource | { issue: Issue } | undefined,
 ) {
@@ -70,7 +70,9 @@ export function prepareViewTypeParameters(
             fail('REF_TYPE_MISMATCH', 'Choose a published Ref of type ' + expectedType + '.', slot);
         const selected = readRefPath(resolved.target.payload, path);
         if (!selected.found) fail('REF_TARGET_UNSUPPORTED', 'Ref path segment ' + (selected.segment + 1) + ' ' + selected.reason + '.', slot);
-        refSources.push(Object.freeze({ ...address, ...slot, address: value, scope, ...(refType === undefined ? {} : { refType }),
+        const since = resolved.ref.continuity[refLane(owner.viewInstanceId, receiver.viewInstanceId, appId === receiver.appId && origin.instanceId === receiver.instanceId)];
+        if (!since) fail('REF_NOT_VISIBLE', 'The original Ref is not granted to this receiver.', slot);
+        refSources.push(Object.freeze({ ...address, ...slot, since, address: value, scope, ...(refType === undefined ? {} : { refType }),
             instanceId: origin.instanceId, snapshotId: origin.snapshotId, observationId: origin.observationId,
             viewInstanceId: owner.viewInstanceId, value: selected.value }));
         return selected.value;

@@ -147,7 +147,7 @@ try {
     const replay = await watchUntil(() => provider.requests.find(request => request.label === 'replay saved Topic'));
     assert.equal(replay.body.messages.filter((message: { role: string; tool_call_id?: string }) =>
         message.role === 'tool' && message.tool_call_id === 'cross').length, 1);
-    assert.ok(!replay.body.tools.some((tool: { function: { name: string } }) => tool.function.name === TASKS + '-accept'));
+    assert.ok(!replay.body.tools.some((tool: { function: { name: string } }) => tool.function.name === TASKS + '-workspace-accept'));
     assert.equal((await journal(originalFolder, 'writes')).length, 5);
     facts.replay = { inputBytes: replay.inputBytes, writes: 5 };
 
@@ -157,7 +157,7 @@ try {
     for (const [label, call] of [
         ['IM opens catalog', system('im-catalog', 'open_app', { installation_id: CATALOG })],
         ['IM opens tasks', system('im-tasks', 'open_app', { installation_id: TASKS })],
-        ['IM runs program', codeCall('im-program', 'const result = await tools["console_tasks-accept"]({items:refs.console_catalog.list.todos,literal:"$IM"}); inspect(result.saved);')],
+        ['IM runs program', codeCall('im-program', 'const result = await tools["console_tasks-workspace-accept"]({items:refs.console_catalog.list.todos,literal:"$IM"}); inspect(result.saved);')],
     ] as const) {
         provider.replyNext({ label, calls: [call] });
         await host.sendIMMessage({ sessionKey: imKey, agentId: 'console', channel: 'local', chatType: 'direct',
@@ -183,8 +183,8 @@ try {
     const imFolder = folders.get(imKey)!;
     await writeFile(join(imFolder, 'park'), '');
     try {
-        const call = codeCall('im-cancelled', 'const x = tools["console_tasks-accept"]({items:[],literal:"park"}); ' +
-            'const y = tools["console_tasks-accept"]({items:[],literal:"must not start"}); await Promise.all([x,y]);');
+        const call = codeCall('im-cancelled', 'const x = tools["console_tasks-workspace-accept"]({items:[],literal:"park"}); ' +
+            'const y = tools["console_tasks-workspace-accept"]({items:[],literal:"must not start"}); await Promise.all([x,y]);');
         provider.replyNext({ label: 'IM cancels a program', calls: [call] });
         await host.sendIMMessage({ sessionKey: imKey, agentId: 'console', channel: 'local', chatType: 'direct',
             peerId: 'console-user', senderId: 'fixture', chatId: 'fixture', messageId: call.id, timestamp: Date.now(),

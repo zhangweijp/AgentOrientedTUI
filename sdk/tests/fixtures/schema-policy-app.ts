@@ -25,17 +25,15 @@ const Station = defineViewType<Context>()({ name: 'Station', region: 'dynamic', 
 } });
 
 export default createApp({ app_name: 'theatre', viewTypes: [Programme, Form, Station],
-    initialize({ prepareProjection }) {
+    initialize({ publish: commit }) {
         const mode = readFileSync(new URL('./schema-case.txt', import.meta.url), 'utf8');
         const context: Context = { mode, write(tool, input) {
             appendFileSync(new URL('./policy-effects.jsonl', import.meta.url), JSON.stringify({ tool, input }) + '\n');
             return { success: true, data: { ok: true } };
         } };
-        const programme = createView(Programme, { id: 'programme', render: () => ({ body: 'Tonight at 20:00', context,
-            refs: [ref('when', 'Tonight at 20:00', { scope: 'public', schema: Type.String() })] }) });
-        const forms = (mode === 'twins' ? ['form', 'annex'] : ['form']).map(id => createView(Form, { idPrefix: id,
-            render: () => ({ body: 'Reservation form', context, refs: [ref('ticket', 'Reservation input', { schema: Type.String(), scope: 'public' })] }) }));
-        const station = createView(Station, { id: 'station', render: () => ({ body: 'Rail station selection', context }) });
-        prepareProjection({ views: mode === 'window' || mode === 'twins' ? [programme, ...forms] : [station] });
+        const programme = (() => { const handle = createView(Programme, { id: 'programme' }); return { handle, frame: () => handle.frame({ body: 'Tonight at 20:00', context, refs: [ref('when', 'Tonight at 20:00', { scope: 'public', schema: Type.String() })] }) }; })();
+        const forms = (mode === 'twins' ? ['form', 'annex'] : ['form']).map(id => (() => { const handle = createView(Form, { idPrefix: id }); return { handle, frame: () => handle.frame({ body: 'Reservation form', context, refs: [ref('ticket', 'Reservation input', { schema: Type.String(), scope: 'public' })] }) }; })());
+        const station = (() => { const handle = createView(Station, { id: 'station' }); return { handle, frame: () => handle.frame({ body: 'Rail station selection', context }) }; })();
+        commit(() => (mode === 'window' || mode === 'twins' ? [programme, ...forms] : [station]).map(page => page.frame()));
     },
 });

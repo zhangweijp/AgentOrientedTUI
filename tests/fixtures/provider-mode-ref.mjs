@@ -11,7 +11,7 @@ import { localModel, providerConfig, providerIds, sourceContext, wireTools } fro
 
 const draftName = 'reference_draft';
 const fields = { count: 'set_count', mode: 'set_mode', exact: 'set_exact', to: 'set_recipients', text: 'set_text' };
-const name = field => draftName + '-' + fields[field];
+const name = field => draftName + '-draft-' + fields[field];
 const address = field => '$ref.contacts.list.' + field;
 const first = 'first@example.test', second = 'second@example.test', other = 'copy@example.test';
 const emails = [first, second, first];
@@ -21,12 +21,6 @@ const numeric = address('numbers');
 const score = address('score');
 const options = name => new URL('./dist/' + name + '.js', import.meta.url).href;
 const clone = object => JSON.parse(JSON.stringify(object));
-const stripField = (body, field) => {
-    const other = clone(body);
-    const tool = other.tools.map(entry => entry.function ?? entry).find(tool => tool.name === name(field));
-    delete (tool.parameters ?? tool.input_schema).properties[field];
-    return other;
-};
 
 function replaceFields(context, schemas, onlyField) {
     const tools = { ...context.tools };
@@ -55,19 +49,10 @@ async function observations({ draft, contacts }) {
     }
 }
 
-function schemasFor([draft, ...publishers], strategy) {
-    const { source, refs, views } = draft;
-    const receiver = views.find(view => view.type === 'draft');
-    const receiving = [{ viewId: receiver.id, viewInstanceId: receiver.viewInstanceId }];
-    const presented = [draft, ...publishers].flatMap(observation => observation.refs.map(ref => ({ source: observation.source, ref })));
-    const references = strategy === 1 ? presented : strategy === 2
-        ? presented.filter(ref => ref.source.appId === source.appId || ref.ref.consumers?.length)
-        : [{ source, ref: { ...refs.find(ref => ref.refId === 'mode'), valueSchema: { anyOf: [
-            { type: 'string' }, { type: 'integer' }, { type: 'array', items: { type: 'string' } },
-        ] } } }];
+function schemasFor([draft]) {
     return Object.fromEntries(Object.entries(fields).flatMap(([field, operation]) => {
         const tool = draft.tools.find(value => value.name === operation);
-        return tool ? [[field, projectNativeToolSchema(tool, source, receiving, references)]] : [];
+        return tool ? [[field, projectNativeToolSchema(tool)]] : [];
     }));
 }
 
@@ -108,10 +93,10 @@ async function setup(folder, { explicit = false, includeConst = true } = {}) {
 
 export async function isolatedReplay(folder) {
     const { without, withContacts, source, close } = await setup(folder, { includeConst: false });
-    const before = schemasFor(without, 1), after = schemasFor(withContacts, 1);
+    const before = schemasFor(without), after = schemasFor(withContacts);
     const facts = {};
     try {
-        assert.deepEqual(before.count.properties.count, { type: 'integer' });
+        assert.deepEqual(before, after);
         assert.deepEqual(after.count.properties.count.anyOf.map(branch => branch.type), ['integer', 'string']);
         for (const id of providerIds) {
             const policy = await createProviderToolSchemaPolicy(providerConfig(id, 'http://127.0.0.1:1/v1'));
@@ -132,8 +117,7 @@ export async function isolatedReplay(folder) {
                     const repeatedSwitch = await run.step('A reference replay');
                     assert.equal(first.raw, repeated.raw);
                     assert.equal(switched.raw, repeatedSwitch.raw);
-                    assert.deepEqual(stripField(first.body, 'count'), stripField(switched.body, 'count'));
-                    assert.notDeepEqual(first.body.tools, switched.body.tools);
+                    assert.deepEqual(first.body, switched.body);
                     if (id === 'anthropic') assert.ok(first.body.messages.flatMap(message => message.content)
                         .some(part => part.cache_control?.type === 'ephemeral'));
                     facts[id] = run.requests;
@@ -146,8 +130,8 @@ export async function isolatedReplay(folder) {
 
 export async function refStrategy(folder, strategy, explicit = false) {
     const { without, withContacts, source, readReceipt, close } = await setup(folder, { explicit });
-    const empty = schemasFor(without, strategy);
-    const selected = schemasFor(withContacts, strategy);
+    const empty = schemasFor(without);
+    const selected = schemasFor(withContacts);
     let projection = selected;
     const run = await localModel('openai', [sourceContext(source.name, async policy => {
         const { fitModelBudget, ...context } = await source.getContext(policy);
@@ -188,9 +172,8 @@ export async function refStrategy(folder, strategy, explicit = false) {
             const tool = wireTools(request.body).find(tool => tool.name === name(field));
             assert.deepEqual(tool.schema.properties[field], clone(schema(field)));
         }
-        const supportsCross = strategy !== 2 || explicit;
-        assert.equal(Check(schema('count'), score), supportsCross);
-        assert.equal(Check(schema('to'), whole), supportsCross);
+        assert.equal(Check(schema('count'), score), true);
+        assert.equal(Check(schema('to'), whole), true);
         assert.equal(Check(schema('to'), [other, whole + '[1]']), true);
         for (const field of ['mode', 'exact']) {
             assert.equal(Check(schema(field), localMode), true);
@@ -201,29 +184,11 @@ export async function refStrategy(folder, strategy, explicit = false) {
         assert.equal(Check(schema('exact'), 'accurate'), false);
 
         const facts = {};
-        if (!supportsCross) {
-            await run.step('Inspect public emails before transcribing', [
-                modelCall('inspect-emails', 'system-inspect_ref', { mode: 'value', address: whole }),
-            ]);
-            const inspected = run.results.get('inspect-emails');
-            assert.equal(inspected.outcomeStatus, 'succeeded');
-            assert.deepEqual(inspected.result.value, emails);
-            facts.whole = { path: 'inspect then transcribe', extraTools: 1, inspected,
-                edit: await expectWrite('transcribed emails', 'to', inspected.result.value) };
-            await run.step('Inspect public score before transcribing', [
-                modelCall('inspect-score', 'system-inspect_ref', { mode: 'value', address: score }),
-            ]);
-            const seen = run.results.get('inspect-score').result.value;
-            assert.equal(seen, 7);
-            facts.integer = { path: 'inspect then transcribe', extraTools: 1, edit: await expectWrite('transcribed score', 'count', seen) };
-        } else {
-            facts.whole = { path: 'one native address', extraTools: 0, edit: await expectWrite('send whole address', 'to', whole, emails) };
-            facts.integer = { path: 'one native address', extraTools: 0, edit: await expectWrite('send integer address', 'count', score, 7) };
-        }
+        facts.whole = { path: 'one native address', extraTools: 0, edit: await expectWrite('send whole address', 'to', whole, emails) };
+        facts.integer = { path: 'one native address', extraTools: 0, edit: await expectWrite('send integer address', 'count', score, 7) };
         facts.mixed = await expectWrite('send mixed single items', 'to', [other, whole + '[1]'], [other, second]);
-        assert.equal(Check(schema('to'), numeric), supportsCross);
-        if (supportsCross) facts.wrongArray = await expectReject('wrong array address', 'to', numeric, 'REF_VALUE_UNSUPPORTED');
-        else facts.wrongArray = { firstAddressAllowedBySchema: false, runtimeDispatched: false, writes: 0 };
+        assert.equal(Check(schema('to'), numeric), true);
+        facts.wrongArray = await expectReject('wrong array address', 'to', numeric, 'REF_VALUE_UNSUPPORTED');
         facts.mode = {
             literal: await expectWrite('literal accurate', 'mode', 'accurate'),
             address: await expectWrite('protected mode', 'mode', localMode, 'fast'),
@@ -258,9 +223,9 @@ export async function refStrategy(folder, strategy, explicit = false) {
         const after = await run.step('new request with the sources withdrawn');
         assert.ok(!after.body.tools.some(entry => entry.function.name.startsWith('contacts-')));
         assert.deepEqual(wireTools(after.body).find(tool => tool.name === name('count')).schema.properties.count, clone(empty.count.properties.count));
-        assert.equal(Check(empty.count.properties.count, score), strategy === 3);
-        facts.closedSource = strategy === 3 ? await expectReject('static permits the unavailable address at the wire',
-            'count', score, 'REF_NOT_VISIBLE') : { firstAddressAllowedBySchema: false, runtimeDispatched: false };
+        assert.equal(Check(empty.count.properties.count, score), true);
+        assert.deepEqual(selected, empty);
+        facts.closedSource = await expectReject('static permits the unavailable address at the wire', 'count', score, 'REF_NOT_VISIBLE');
         facts.literalAfterClose = await expectWrite('write literal count after close', 'count', 8);
 
         const preflight = {};

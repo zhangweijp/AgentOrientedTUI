@@ -19,9 +19,9 @@ export const projectCompleteViews = ({ source }: { source: Pick<ObservationFrame
     toolIds: Object.keys(source.tools),
 });
 
-export function observedViews(source: Pick<ObservationFrame, 'views'>): readonly ObservedView[] {
-    return source.views.map(({ id, viewInstanceId, type, name, region, content, canClose }) =>
-        Object.freeze({ id, viewInstanceId, type, name, region, content, ...(canClose ? { canClose } : {}) }));
+export function observedViews(source: Pick<ObservationFrame, 'views'>, closeViews?: ReadonlySet<string>): readonly ObservedView[] {
+    return source.views.map(({ id, viewInstanceId, type, name, region, content, closeActivationId }) =>
+        Object.freeze({ id, viewInstanceId, type, name, region, content, ...(closeActivationId && (!closeViews || closeViews.has(viewInstanceId)) ? { canClose: true as const } : {}) }));
 }
 
 export class RegistryFailure {
@@ -89,7 +89,8 @@ export function hostedObservationCapacityIssue(draft: PreparedAppSnapshotDraft,
     const source: ObservationSource = { appId, instanceId, snapshotId: snapshotId(appId, instanceId, revision), revision };
     try {
         checkViewCount(draft, limits);
-        const grant = boundedObservationJson<ObservationGrant>(projectCompleteViews({ source: draft }), limits.metadata,
+        const grant = boundedObservationJson<ObservationGrant>({ ...projectCompleteViews({ source: draft }),
+            closeViews: draft.views.filter(view => view.closeActivationId).map(view => ({viewId:view.id,viewInstanceId:view.viewInstanceId})) }, limits.metadata,
             'OBSERVATION_CAPACITY', '$.metadata').value;
         if (grant.refs.length > limits.maxRefs) failRegistry('OBSERVATION_CAPACITY', '$.refs');
         if (grant.toolIds.length > limits.maxTools) failRegistry('OBSERVATION_CAPACITY', '$.tools');

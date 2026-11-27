@@ -15,13 +15,11 @@ export const DESKTOP_TOOL_NAMES = Object.freeze({
 const reservedNames = new Set<string>(Object.values(DESKTOP_TOOL_NAMES));
 
 /** Validate and join the fields used in a native Tool alias. */
-export function buildPublicToolName(appName: string, ...parts: [toolName: string] | [viewType: string, toolName: string]): string {
+export function buildPublicToolName(appName: string, viewType: string, toolName: string): string {
     const invalid = (path: string, message: string): never => {
         throw Object.assign(new TypeError(`AOTUI_TOOL_NAME_INVALID: ${message}`), { code: 'AOTUI_TOOL_NAME_INVALID', path });
     };
-    const fields: Array<[field: string, value: string]> = [['appName', appName]];
-    if (parts.length === 2) fields.push(['viewType', parts[0]]);
-    fields.push(['toolName', parts.length === 2 ? parts[1] : parts[0]]);
+    const fields = [['appName', appName], ['viewType', viewType], ['toolName', toolName]] as const;
     for (const [field, part] of fields) {
         if (typeof part !== 'string' || !part.length) {
             invalid(field, `${field} must be a non-empty string. Use ASCII letters, digits, and underscores.`);
@@ -35,39 +33,39 @@ export function buildPublicToolName(appName: string, ...parts: [toolName: string
     return name;
 }
 
-type ToolNames = Readonly<{ status: 'ready'; tools: ReadonlyMap<string, ObservedTool> }> |
-    Readonly<{ status: 'rejected'; issue: InteractionIssue }>;
+type ToolNameIssue = InteractionIssue & { readonly toolId?: string };
+type ToolNames = Readonly<{ status: 'ready'; tools: ReadonlyMap<string, ObservedTool>; excluded: readonly (ToolNameIssue & { readonly toolId: string })[] }> |
+    Readonly<{ status: 'rejected'; issue: ToolNameIssue }>;
 
-/** Name the complete observations before selecting individual receiving Views. */
+/** Name each actual App namespace; a contradictory namespace never gets a winner. */
 export function projectNativeToolNames(observations: readonly Pick<Observation, 'source' | 'tools'>[]): readonly ToolNames[] {
-    const ordered = observations.map((observation, index) => ({ observation, index }));
-    ordered.sort(({ observation: a }, { observation: b }) => a.source.appId < b.source.appId ? -1 : a.source.appId > b.source.appId ? 1 : 0);
-    const assigned = new Set<string>();
-    const projected: ToolNames[] = new Array(observations.length);
-    for (const { observation: { source: { appId }, tools }, index } of ordered) {
-        try {
-            const counts = new Map<string, number>();
-            const named = new Map<string, ObservedTool>();
-            for (const { name } of tools) counts.set(name, (counts.get(name) ?? 0) + 1);
-            for (const tool of tools) {
-                const qualify = (counts.get(tool.name) ?? 0) > 1 || reservedNames.has(`${appId}-${tool.name}`);
-                const name = qualify ? buildPublicToolName(appId, tool.viewType, tool.name) : buildPublicToolName(appId, tool.name);
-                if (named.has(name)) throw Object.assign(new Error(
-                    `Public Tool alias ${JSON.stringify(name)} is declared more than once by this App. Rename its ViewType or Tool.`),
-                { code: 'AOTUI_TOOL_NAME_COLLISION' });
-                named.set(name, tool);
+    const namespaces = new Map<string, number>();
+    for (const { source: { appId } } of observations) namespaces.set(appId, (namespaces.get(appId) ?? 0) + 1);
+    const collision = (message: string, toolId?: string): ToolNames => ({ status: 'rejected',
+        issue: { code: 'AOTUI_TOOL_NAME_COLLISION', path: 'publicToolName', message, ...(toolId === undefined ? {} : { toolId }) } });
+    return observations.map(({ source: { appId }, tools }) => {
+        if (namespaces.get(appId)! > 1) return collision('More than one observation claims the same App namespace.', tools[0]?.id);
+        const named = new Map<string, ObservedTool>();
+        const identities = new Set<string>();
+        const excluded: (ToolNameIssue & { readonly toolId: string })[] = [];
+        for (const tool of tools) {
+            if (identities.has(tool.id)) return collision('One original Tool identity claims more than one route.', tool.id);
+            identities.add(tool.id);
+            let name: string;
+            try { name = buildPublicToolName(appId, tool.viewType, tool.name); }
+            catch (cause) {
+                if (!(cause instanceof Error) || !('code' in cause) || typeof cause.code !== 'string') throw cause;
+                const issue = { code: cause.code, toolId: tool.id,
+                    message: cause.message.replace(/^AOTUI_TOOL_NAME_INVALID:\s*/, ''),
+                    ...('path' in cause && typeof cause.path === 'string' ? { path: cause.path } : {}) };
+                if (issue.path === 'appName') return { status: 'rejected', issue };
+                excluded.push(issue);
+                continue;
             }
-            const conflict = [...named.keys()].find(name => assigned.has(name));
-            if (conflict) throw Object.assign(new Error(
-                `Public Tool alias ${JSON.stringify(conflict)} collides with another App. Rename this App, ViewType, or Tool.`),
-            { code: 'AOTUI_TOOL_NAME_COLLISION' });
-            for (const name of named.keys()) assigned.add(name);
-            projected[index] = { status: 'ready', tools: named };
-        } catch (cause) {
-            if (!(cause instanceof Error) || !('code' in cause) || typeof cause.code !== 'string') throw cause;
-            projected[index] = { status: 'rejected', issue: { code: cause.code, message: cause.message.replace(/^AOTUI_TOOL_NAME_INVALID:\s*/, ''),
-                ...('path' in cause && typeof cause.path === 'string' ? { path: cause.path } : {}) } };
+            if (named.has(name) || reservedNames.has(name))
+                return collision('Public Tool name ' + JSON.stringify(name) + ' has more than one route.', tool.id);
+            named.set(name, tool);
         }
-    }
-    return projected;
+        return { status: 'ready', tools: named, excluded };
+    });
 }

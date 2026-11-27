@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { invokeViewTool } from './tool-invocation.js';
-import { compileToolParameters } from '@aotui/core';
+import { compileToolParameters, type ToolRoute, type ViewToolReceiver, type ViewToolInvocationTerminal } from '@aotui/core';
+import type { ViewToolInvokeResponse } from '../spi/worker-protocol/messages.js';
 import { createViewOwnedTools, viewToolReceiver } from '@aotui/core/producer';
 
 function setup() {
@@ -25,8 +26,10 @@ function setup() {
   const context = { appId: 'app', instanceId: 'run', toolsEnabled: true,
     validateBinding: (t: any, execution: any) => registry.validateTypeToolBinding(t, execution),
     isRefViewLive: (_id: string, mount: string) => mount === receiver.viewInstanceId,
-    refScope: (_id: string, _mount: string, _refId: string): import('@aotui/core').RefScope | undefined => 'private',
-    invokeBinding: (t: any, execution: any, args: any) => registry.invokeTypeTool(t, execution, args) };
+    refDescriptor: (_id: string, _mount: string, _refId: string): { scope: import('@aotui/core').RefScope; continuity: readonly [number, number, number] } | undefined => ({ scope: 'private', continuity: [1, 0, 0] }),
+    invokeBinding: async (t: ToolRoute, execution: ViewToolReceiver, args: Readonly<Record<string, unknown>>,
+        capture: (terminal: ViewToolInvocationTerminal) => ViewToolInvokeResponse | null) =>
+        capture(await registry.invokeTypeTool(t, execution, args)) };
   return { registry, handler, message, context, rebind: mount };
 }
 
@@ -54,13 +57,14 @@ describe('Worker invocation with business parameters', () => {
     expect(await invokeViewTool(m, c)).toMatchObject({ terminal: { phase: 'not-entered' } });
     expect(x.handler).not.toHaveBeenCalled();
   });
-  it.each(['private-owner', 'stale-source', 'withdrawn-ref', 'missing-slot', 'duplicate-record'] as const)(
+  it.each(['private-owner', 'stale-source', 'withdrawn-ref', 'stale-witness', 'missing-slot', 'duplicate-record'] as const)(
     'checks the local publication immediately before executing an already resolved value: %s', async mode => {
       const x = setup(), record = { param: 'e', refId: 'selected', viewId: x.message.receiver.viewId,
-        viewInstanceId: x.message.receiver.viewInstanceId };
+        viewInstanceId: x.message.receiver.viewInstanceId, since: 1 };
       const m = { ...x.message, localRefs: [record] };
       if (mode === 'stale-source') record.viewInstanceId = 'closed';
-      if (mode === 'withdrawn-ref') x.context.refScope = () => undefined;
+      if (mode === 'withdrawn-ref') x.context.refDescriptor = () => undefined;
+      if (mode === 'stale-witness') record.since = 2;
       if (mode === 'missing-slot') record.param = 'missing';
       if (mode === 'duplicate-record') m.localRefs.push({ ...record });
       const result = await invokeViewTool(m, x.context);
@@ -69,7 +73,7 @@ describe('Worker invocation with business parameters', () => {
     });
   it('rechecks live Registry identity immediately at trusted helper entry', async () => {
     const x = setup(), original = x.context.invokeBinding;
-    x.context.invokeBinding = (t, execution, args) => { x.rebind(); return original(t, execution, args); };
+    x.context.invokeBinding = (t, execution, args, capture) => { x.rebind(); return original(t, execution, args, capture); };
     expect(await invokeViewTool(x.message, x.context)).toMatchObject({ terminal: { phase: 'not-entered' } });
     expect(x.handler).not.toHaveBeenCalled();
   });

@@ -15,10 +15,10 @@ function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => nu
         bindings: [{ name: 'read', enabled: true, execute: () => ({ success: true }) }] }]);
     frame.accept();
     const view = frame.instances[0]!, tool = frame.tools[0]!;
-    r.acceptPrepared({ schemaVersion: 8, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    r.acceptPrepared({ healthySince: 1,  schemaVersion: 9, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View',
             region: 'dynamic', content: { format: 'markdown-v1', value: 'value' } }],
-        refs: {}, tools: { [tool.id]: tool } });
+        refs: {}, tools: { [tool.id]: tool } }, 'authoritative', registry.viewTypes());
     expect(core.store.readLatest('a').status).toBe('ready');
     const entered = defer<void>(), gate = defer<void>(); let handlers = 0, completed = 0;
     const binding: ExecutionBinding = { identity: {},

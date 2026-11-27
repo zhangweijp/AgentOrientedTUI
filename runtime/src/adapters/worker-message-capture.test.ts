@@ -4,7 +4,7 @@ import { captureToolInvocationTerminal, exact, invocationObject, text } from './
 
 describe('bounded Worker message capture', () => {
     it('captures a detached frozen lifecycle acknowledgement within its own bounds', () => {
-        const ack = { protocol: 'app-lifecycle-v2', instanceId: 'i' };
+        const ack = { protocol: 'app-lifecycle-v3', instanceId: 'i' };
         let reads = 0;
         const unsafe = { ...ack, get instanceId() { reads++; return ack.instanceId; } };
         expect(captureAppLifecycleAck(unsafe, ack.instanceId)).toBeNull();

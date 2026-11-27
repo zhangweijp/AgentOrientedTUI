@@ -85,7 +85,7 @@ def model_endpoint():
 def stage_numeric_ref(folder):
     copyfile(Path(__file__).with_name("stdio-number-ref.mjs"), folder / "numeric.mjs")
     (folder / "aoapp.json").write_text(json.dumps({"app_name": "contract", "version": "0.1.0",
-        "toolAuthoringProtocol": "view-type-tools-v8", "appLifecycleSupport": "app-lifecycle-v2",
+        "toolAuthoringProtocol": "view-type-tools-v9", "appLifecycleSupport": "app-lifecycle-v3",
         "entry": {"main": "./numeric.mjs"}}), encoding="utf-8")
 
 
@@ -103,17 +103,14 @@ def verify_numeric_ref(example, executable, consumer):
                 app["name"] = "contract"
                 prepared = example.prepare_turn(client, app)
                 address = f"$ref.{app['appId']}.page.label"
-                echo = f"{app['appId']}-echo"
+                echo = f"{app['appId']}-page-echo"
 
                 def choose(body):
                     assert any(address in message["content"] for message in body["messages"])
                     tool = next(item["function"] for item in body["tools"] if item["function"]["name"] == echo)
                     parameter = tool["parameters"]["properties"]["value"]
-                    if compatible:
-                        assert [branch["type"] for branch in parameter["anyOf"]] == ["integer", "string"]
-                        assert "$ref." in parameter["anyOf"][1]["description"]
-                    else:
-                        assert parameter == {"type": "integer"}
+                    assert [branch["type"] for branch in parameter["anyOf"]] == ["integer", "string"]
+                    assert "$ref." in parameter["description"] and parameter["anyOf"][1]["pattern"].startswith(r"^\$ref\.")
                     return [(echo, installation_id, {"value": address if compatible else 7})]
 
                 decision, = ask(installation_id, choose, prepared)
@@ -161,7 +158,7 @@ def verify_client_stream(example, executable, consumer):
             (old_factory / "app.mjs").write_text("""
 import { writeFileSync } from 'node:fs';
 export default { app_name: 'stdio_files', toolAuthoringProtocol: 'view-type-tools-obsolete',
-    appLifecycleSupport: 'app-lifecycle-v2', initialize({ launchConfig }) {
+    appLifecycleSupport: 'app-lifecycle-v3', initialize({ launchConfig }) {
         writeFileSync(launchConfig.marker, 'unexpected initialization');
     } };
 """, encoding="utf-8")
@@ -196,7 +193,7 @@ export default { app_name: 'stdio_files', toolAuthoringProtocol: 'view-type-tool
             adopted = example.prepare_turn(client, app)
             assert any("Background result" in message["content"] for message in adopted[2])
             a = next(view for view in adopted[1]["views"] if view["name"] == "A.txt")
-            slow = client.send("invokeNative", turn=adopted[0], name=f"{app['appId']}-edit",
+            slow = client.send("invokeNative", turn=adopted[0], name=f"{app['appId']}-File-edit",
                                invocationId="python-stream", input={"view_id": a["id"], "text": "First", "wait": True})
             wait_file(folder / "edit-entered")
             try:
@@ -246,7 +243,7 @@ def verify_command_host(example, executable, consumer):
             client.call("registerApp", installationId=key, name="rejected_files",
                         command=[sys.executable, "-B", "-u", str(wrapper), str(program)], config={"folder": temp})
         bad_version = rejected(client, "PROTOCOL_UNSUPPORTED", "openApp", installationId="bad-version")
-        assert "aotui-app major 1" in bad_version["message"] and "83" in bad_version["message"] and bad_version["path"] == "$.major"
+        assert "aotui-app major 2" in bad_version["message"] and "83" in bad_version["message"] and bad_version["path"] == "$.major"
         bad_capability = rejected(client, "CAPABILITY_REQUIRED", "openApp", installationId="bad-capability")
         assert "external-extra" in bad_capability["message"] and bad_capability["path"] == "$.requires"
         assert all(item["status"] != "running" for item in client.call("listApps"))
@@ -259,12 +256,12 @@ def verify_command_host(example, executable, consumer):
                     command=[sys.executable, "-B", "-u", str(wrapper), str(program), "", "literal & text"], config={"folder": temp})
         app = client.call("openApp", installationId="process")
         base = example.prepare_turn(client, app)
-        tool = f"{app['appId']}-open_file"
+        tool = f"{app['appId']}-directory-open_file"
         example.invoke(client, app, base, tool, "command-open-a", name="A.txt")
         example.invoke(client, app, base, tool, "command-open-b", name="B.txt")
         prepared = example.prepare_turn(client, app)
         b = next(view for view in prepared[1]["views"] if view["name"] == "B.txt")
-        edit = f"{app['appId']}-edit"
+        edit = f"{app['appId']}-file-edit"
         assert [tool["name"] for tool in prepared[3] if tool["name"] == edit] == [edit]
         assert any("B.txt" in page["content"] and "Bravo" in page["content"] for page in prepared[2])
         updated = example.invoke(client, app, prepared, edit, "command-edit-b", view_id=b["id"], text="Bravo from Python")
@@ -273,7 +270,7 @@ def verify_command_host(example, executable, consumer):
         assert client.call("readDesktopReceipt", **updated["locator"])["receipt"] == updated["receipt"]
         closed = client.call("closeApp", app=app["app"])
         probe = Path(__file__).with_name("external-app-behavior.py")
-        vectors = program.with_name("app-protocol-v1-vectors.json")
+        vectors = program.with_name("app-protocol-v2-vectors.json")
         client.call("registerApp", installationId="process-notify", name="process_notify",
                     command=[sys.executable, "-B", "-u", str(probe), str(program), str(vectors), "optional-attention"],
                     config={"folder": temp})
@@ -302,20 +299,20 @@ def verify_bridge(example, executable, app_path, folder):
     raw = subprocess.run([executable], input='\n'.join([
         "{",
         '{"id":"uninitialized","method":"desktop"}',
-        '{"id":"hello","method":"initialize","params":{"protocol":"aotui-stdio","majorVersion":1}}',
+        '{"id":"hello","method":"initialize","params":{"protocol":"aotui-stdio","majorVersion":2}}',
         '{"id":"bad-method","method":"unrecognized"}',
     ]) + "\n", capture_output=True, encoding="utf-8", timeout=15, check=True)
     replies = {reply["id"]: reply for reply in map(json.loads, raw.stdout.splitlines())}
     malformed, unknown = replies[None], replies["bad-method"]
     assert malformed["error"]["code"] == "INVALID_JSON"
     assert replies["uninitialized"]["error"]["code"] == "PROTOCOL_UNSUPPORTED"
-    assert replies["hello"]["result"] == {"protocol": "aotui-stdio", "majorVersion": 1, "capabilities": []}
+    assert replies["hello"]["result"] == {"protocol": "aotui-stdio", "majorVersion": 2, "capabilities": []}
     assert unknown["error"]["code"] == "METHOD_NOT_FOUND"
 
     with example.RuntimeClient(executable) as client, model_endpoint() as (ask, requests):
         app = open_app(client)
         app["name"] = "turn_files"
-        open_file, edit, set_writable = (f"{app['appId']}-{name}" for name in ("open_file", "edit", "set_writable"))
+        open_file, edit, set_writable = (f"{app['appId']}-{name}" for name in ("Directory-open_file", "File-edit", "Directory-set_writable"))
 
         def invoke(prepared, decision):
             return invoke_native(client, prepared, decision)
@@ -366,13 +363,15 @@ def verify_bridge(example, executable, app_path, folder):
         client.call("revokeWindowAccess", **mount, turn=second[0])
         assert client.call("inspectRef", mode="value", turn=second[0], address=address)["status"] == "rejected"
         folded = invoke(second, {**decision, "id": "folded"})
-        assert folded["receipt"]["executionPhase"] == "not-dispatched"
-        assert client.call("closeView", **mount, turn=second[0])["status"] == "closed"
+        assert_pre_dispatch(folded)
+        assert_closed(client.call("closeView", turn=second[0], invocationId="close-a",
+                                 target={"appId": app["appId"], "instanceId": app["instanceId"],
+                                         "viewId": mount["viewId"], "viewInstanceId": mount["viewInstanceId"]}))
         assert invoke(second, ask("reopen same filename", lambda _: [(open_file, "reopen-a", {"name": "a.txt"})], second)[0]
                       )["receipt"]["outcome"]["status"] == "succeeded"
         old_page = invoke(second, ask("old mount", choose_edit("a.txt", "old-a", "No write"), second)[0])
-        assert old_page["receipt"]["executionPhase"] == "not-dispatched"
-        assert old_page["receipt"]["outcome"]["code"] == "VIEW_INSTANCE_REVOKED"
+        assert_pre_dispatch(old_page)
+        assert rejection_code(old_page) == "VIEW_INSTANCE_REVOKED"
 
         third = example.prepare_turn(client, app)
         assert next(view for view in third[1]["views"] if view["name"] == "a.txt")["viewInstanceId"] != mount["viewInstanceId"]
@@ -382,8 +381,8 @@ def verify_bridge(example, executable, app_path, folder):
         for decision in ask("toggle edit", lambda _: toggle, third):
             assert invoke(third, decision)["receipt"]["outcome"]["status"] == "succeeded"
         old_activation = invoke(third, ask("old activation", choose_edit("b.txt", "old-edit-b", "No write"), third)[0])
-        assert old_activation["receipt"]["executionPhase"] == "not-dispatched"
-        assert old_activation["receipt"]["outcome"]["code"] == "TOOL_SOURCE_STALE"
+        assert_pre_dispatch(old_activation)
+        assert rejection_code(old_activation) == "TOOL_SOURCE_STALE"
 
         fourth = example.prepare_turn(client, app)
         fault = folder / ".fail-file-view"
@@ -418,10 +417,30 @@ def verify_bridge(example, executable, app_path, folder):
         running = open_app(client)
         assert client.call("preview", app=running["app"])["status"] == "previewed"
     return {"malformed": malformed, "unknown": unknown, "stale": with_old_handle,
-            "conflict": conflict["receipt"], "folded": folded["receipt"], "shutdown": shutdown, "eofExit": 0,
+            "conflict": conflict["receipt"], "folded": folded, "shutdown": shutdown, "eofExit": 0,
             "actualRequests": requests, "editB": edited, "firstDiskResult": both_files, "writes": writes,
             "oldMount": old_page, "oldActivation": old_activation,
             "projectionFailure": {"operation": written, "nextObservation": failed, "recovered": recovered[2]}}
+
+
+def assert_pre_dispatch(result):
+    if result["kind"] == "refused":
+        assert "locator" not in result, result
+    else:
+        assert result["kind"] == "receipt" and result["receipt"]["executionPhase"] == "not-dispatched", result
+        assert result["receipt"]["outcome"]["status"] == "rejected", result
+
+
+def rejection_code(result):
+    assert_pre_dispatch(result)
+    return result["code"] if result["kind"] == "refused" else result["receipt"]["outcome"]["code"]
+
+
+def assert_closed(result):
+    assert result["kind"] == "receipt", result
+    assert result["receipt"]["operation"]["kind"] == "closeView", result
+    assert result["receipt"]["outcome"]["status"] == "succeeded", result
+    assert result.get("locator"), result
 
 
 def invoke_native(client, prepared, decision):
@@ -459,7 +478,7 @@ def verify_windows(example, executable, app_path, folder):
                     config={"folder": str(folder), "traceProjection": True})
         app = client.call("openApp", installationId="files")
         app["name"] = "turn_files"
-        open_file, edit = (f"{app['appId']}-{name}" for name in ("open_file", "edit"))
+        open_file, edit = (f"{app['appId']}-{name}" for name in ("Directory-open_file", "File-edit"))
         root = example.prepare_turn(client, app)
         for decision in ask("open files before folding", lambda _: [
             (open_file, "open-a", {"name": "a.txt"}), (open_file, "open-b", {"name": "b.txt"})], root):
@@ -498,7 +517,7 @@ def verify_windows(example, executable, app_path, folder):
 
         def apply(prepared, decision):
             return example.apply_window_tool(client, app, prepared, decision["function"]["name"],
-                                             **json.loads(decision["function"]["arguments"]))
+                                             invocation_id=decision["id"], **json.loads(decision["function"]["arguments"]))
 
         decisions = capture("both opened", opened, (True, True, "ready", "ready", 1),
                             lambda _: [window("collapse_view", a_id, note="Keep <A> & resume")])
@@ -556,8 +575,12 @@ def verify_windows(example, executable, app_path, folder):
         closing = ask("close still-folded B", lambda _: [window("close_view", b_id)], restored_app)[0]
         assert "Collapsed" in next(msg["content"] for msg in restored_app[2] if f'view_id="{b_id}"' in msg["content"])
         closed = apply(restored_app, closing)
-        assert closed["status"] == "closed"
-        assert all(view["viewId"] != b_id for view in client.call("getAppWindows", app=app["app"])["views"])
+        assert_closed(closed)
+        assert client.call("readDesktopReceipt", **closed["locator"])["receipt"] == closed["receipt"]
+        # A successful business callback is not proof that the Receiver has
+        # already sampled removal. Observe again before checking the inventory.
+        sampled = example.prepare_turn(client, app)
+        assert all(view["id"] != b_id for view in sampled[1]["views"])
         writes = [json.loads(line) for line in (folder / "edits.jsonl").read_text().splitlines()]
         assert writes == [{"name": "b.txt", "text": "B edited while A folded"}]
         shutdown = client.call("shutdown")
@@ -589,7 +612,7 @@ def verify_hint_and_replan(example, executable, app_path, folder, projector):
         client.call("registerApp", installationId="files", localPath=str(app_path),
                     config={"folder": str(folder), "traceProjection": True})
         app = client.call("openApp", installationId="files")
-        open_file, edit = (f"{app['appId']}-{name}" for name in ("open_file", "edit"))
+        open_file, edit = (f"{app['appId']}-{name}" for name in ("Directory-open_file", "File-edit"))
         root = example.prepare_turn(client, app)
         for decision in ask("open both pages for the hint trial", lambda _: [
             (open_file, "open-a", {"name": "a.txt"}), (open_file, "open-b", {"name": "b.txt"})], root):
@@ -617,21 +640,22 @@ def verify_hint_and_replan(example, executable, app_path, folder, projector):
         forbidden, = ask("try the hinted A against the same shared edit", lambda _: [
             model_args(edit, "do-not-write-a", view_id=a_id, expected=original_a, text="Forbidden")], hint)
         denied_a = invoke_native(client, hint, forbidden)
-        assert denied_a["receipt"]["executionPhase"] == "not-dispatched"
-        assert denied_a["receipt"]["outcome"]["code"] == "TOOL_UNAVAILABLE"
+        assert_pre_dispatch(denied_a)
+        assert rejection_code(denied_a) == "TOOL_UNAVAILABLE"
 
         def close_b(turn, mount):
-            return client.call("closeView", app=app["app"], turn=turn[0], viewId=mount["id"],
-                               viewInstanceId=mount["viewInstanceId"])
+            return client.call("closeView", turn=turn[0], invocationId="close-" + mount["viewInstanceId"],
+                               target={"appId": app["appId"], "instanceId": app["instanceId"],
+                                       "viewId": mount["id"], "viewInstanceId": mount["viewInstanceId"]})
 
-        assert close_b(hint, b)["status"] == "closed"
+        assert_closed(close_b(hint, b))
         reopen, old_b = ask("reopen B and try the old receiving page", lambda _: [
             (open_file, "reopen-b", {"name": "b.txt"}),
             model_args(edit, "do-not-write-old-b", view_id=b_id, expected=new_b, text="Forbidden")], hint)
         assert invoke_native(client, hint, reopen)["receipt"]["outcome"]["status"] == "succeeded"
         denied_b = invoke_native(client, hint, old_b)
-        assert denied_b["receipt"]["executionPhase"] == "not-dispatched"
-        assert denied_b["receipt"]["outcome"]["code"] == "VIEW_INSTANCE_REVOKED"
+        assert_pre_dispatch(denied_b)
+        assert rejection_code(denied_b) == "VIEW_INSTANCE_REVOKED"
         active = example.prepare_turn(client, app)
         new_mount_b = next(view for view in active[1]["views"] if view["name"] == "b.txt")
         assert new_mount_b["viewInstanceId"] != b["viewInstanceId"]
@@ -655,10 +679,15 @@ def verify_hint_and_replan(example, executable, app_path, folder, projector):
                 default_tool = next(tool for tool in trial["tools"] if tool["name"] == control)
                 strict_tool = next(tool for tool in strict_trial["tools"] if tool["name"] == control)
                 assert default_tool["schema"]["required"] == required
-                assert strict_tool["schema"]["required"] == [*required, "note"]
+                assert strict_tool["schema"] == default_tool["schema"]
             initial_size = wire_size(label, assembled_turn(trial, {"turn": None}, observation))
             assert trial["issues"] == [] and new_mount_b["id"] in trial["desktop"]
-            assert close_b(active, new_mount_b)["status"] == "closed"
+            assert_closed(close_b(active, new_mount_b))
+            # Preview refreshes the Receiver without allocating another candidate
+            # or replacing the original adopted Turn.
+            sampled = client.call("preview", app=app["app"])
+            assert sampled["status"] == "previewed", sampled
+            assert all(view["id"] != new_mount_b["id"] for view in sampled["views"])
             changed = client.call("adoptTurn", scopeId=scope_id, presentation=trial["presentation"])
             assert changed["status"] == "rejected" and changed["issue"]["code"] == "OBSERVATION_WINDOW_CHANGED", changed
             assert client.current_turn == active[0] and len(requests) == before
@@ -706,7 +735,7 @@ def verify_hint_and_replan(example, executable, app_path, folder, projector):
             assert premature_sends == 0
             off_scope, = ask(label, choose_a_only, final_turn)
             refused = invoke_native(client, final_turn, off_scope)
-            assert refused["receipt"]["executionPhase"] == "not-dispatched", refused
+            assert_pre_dispatch(refused)
 
         writes = [json.loads(line) for line in (folder / "edits.jsonl").read_text().splitlines()]
         disk = {name: path.read_bytes().decode() for name, path in paths.items()}
@@ -734,7 +763,7 @@ def verify_app_replan(example, executable, app_path, folder, other_app):
         second = client.call("openApp", installationId="other-app")
         assert len({first["appId"], second["appId"]}) == 2
         root = example.prepare_turn(client, first)
-        example.invoke(client, first, root, f"{first['appId']}-open_file", "open-file-in-a", name="a.txt")
+        example.invoke(client, first, root, f"{first['appId']}-Directory-open_file", "open-file-in-a", name="a.txt")
         label = "send the measured one-App request"
         with example.candidate_scope(client) as scope_id:
             a, b = [client.call("observe", app=app["app"], scopeId=scope_id) for app in (first, second)]
@@ -749,7 +778,7 @@ def verify_app_replan(example, executable, app_path, folder, other_app):
                                 capabilities=capabilities)
             assert len(trial["apps"]) == 2 and trial["issues"] == []
             assert any(view["appId"] == second["appId"] for view in trial["views"])
-            assert any(tool["name"] == f"{second['appId']}-echo" for tool in trial["tools"])
+            assert any(tool["name"] == f"{second['appId']}-page-echo" for tool in trial["tools"])
             trial_input = model_body(label, assembled_turn(trial, {"turn": None}, a["observation"]))
             trial_bytes = len(json.dumps(trial_input).encode())
 
@@ -770,7 +799,7 @@ def verify_app_replan(example, executable, app_path, folder, other_app):
                 "status": "ready", "value": "Original app A",
             }
 
-            edit = f"{first['appId']}-edit"
+            edit = f"{first['appId']}-File-edit"
 
             def choose_a(body):
                 assert body == final_input
@@ -821,7 +850,7 @@ def compare(python_turn, product, folder):
     product_business = {tool["function"]["name"]: tool["function"]["parameters"] for tool in wire["tools"]
                         if tool["function"]["name"].startswith("turn_files-")}
     assert business == product_business
-    assert business["turn_files-edit"]["properties"]["view_id"]["type"] == "string"
+    assert business["turn_files-File-edit"]["properties"]["view_id"]["type"] == "string"
     assert (folder / "a.txt").read_text(encoding="utf-8") == "External"
     assert python_turn["files"] == product["files"] == {"a.txt": "Alpha", "b.txt": "Bravo updated"}
     phase = python_turn["receipt"]["executionPhase"]

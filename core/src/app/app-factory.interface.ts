@@ -1,13 +1,13 @@
 import { APP_LIFECYCLE_PROTOCOL } from './app-lifecycle.interface.js';
 /** App module contract verified by Worker Runtime. */
 
-import type { AppInstance, RuntimeContext } from './app-instance.interface.js';
+import type { RuntimeContext } from './app-instance.interface.js';
 
-export const VIEW_TYPE_TOOL_PROTOCOL = 'view-type-tools-v8' as const;
+export const VIEW_TYPE_TOOL_PROTOCOL = 'view-type-tools-v9' as const;
 
 /** Static App definition loaded from the manifest entry. */
 export interface TUIAppFactory {
-    initialize(context: RuntimeContext): AppInstance | Promise<AppInstance>;
+    initialize(context: RuntimeContext): void | Promise<void>;
     readonly app_name: string;
     readonly toolAuthoringProtocol: typeof VIEW_TYPE_TOOL_PROTOCOL;
     readonly appLifecycleSupport: typeof APP_LIFECYCLE_PROTOCOL;
@@ -24,7 +24,7 @@ export function isTUIAppFactory(value: unknown): value is TUIAppFactory {
 
 /** Check the factory export and retain the reason for Worker startup diagnostics. */
 export function readAppFactory(value: unknown): TUIAppFactory |
-    'APP_INVALID_EXPORT' | 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' {
+    'APP_INVALID_EXPORT' | 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' | 'APP_LIFECYCLE_UNSUPPORTED' {
     if (typeof value !== 'object' || value === null) return 'APP_INVALID_EXPORT';
     try {
         if (Array.isArray(value)) return 'APP_INVALID_EXPORT';
@@ -32,10 +32,11 @@ export function readAppFactory(value: unknown): TUIAppFactory |
         const initialize = Object.getOwnPropertyDescriptor(value, 'initialize');
         const appLifecycleSupport = Object.getOwnPropertyDescriptor(value, 'appLifecycleSupport');
         if (!appName || !('value' in appName) || typeof appName.value !== 'string' || appName.value.length === 0 ||
-            !initialize || !('value' in initialize) || typeof initialize.value !== 'function' ||
-            !appLifecycleSupport || !('value' in appLifecycleSupport) || appLifecycleSupport.value !== APP_LIFECYCLE_PROTOCOL) {
+            !initialize || !('value' in initialize) || typeof initialize.value !== 'function') {
             return 'APP_INVALID_EXPORT';
         }
+        if (!appLifecycleSupport || !('value' in appLifecycleSupport) || appLifecycleSupport.value !== APP_LIFECYCLE_PROTOCOL)
+            return 'APP_LIFECYCLE_UNSUPPORTED';
         return matchesAuthoringProtocol(Object.getOwnPropertyDescriptor(value, 'toolAuthoringProtocol'))
             ? value as TUIAppFactory : 'APP_AUTHORING_PROTOCOL_UNSUPPORTED';
     } catch {

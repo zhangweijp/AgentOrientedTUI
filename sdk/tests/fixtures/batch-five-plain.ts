@@ -12,15 +12,12 @@ const Healthy = defineViewType<{ ping(): void }>()({ name: 'healthy', multiplici
     } },
 } });
 
-export default createApp({ app_name: PLAIN_APP, viewTypes: [Raw, Healthy], initialize({ launchConfig, prepareProjection }) {
+export default createApp({ app_name: PLAIN_APP, viewTypes: [Raw, Healthy], initialize({ launchConfig, publish: commit }) {
     const folder = launchConfig?.folder;
     if (typeof folder !== 'string') throw new Error('Missing test directory');
     const entries = Object.entries({ ...RAW_VIEWS, diagram: '```mermaid\n' + DIAGRAM + '\n```\n' });
-    prepareProjection({ views: [
-        ...entries.map(([idPrefix, body]) => createView(Raw, {
-            idPrefix, region: idPrefix === 'split_raw' ? 'static' : 'dynamic', render: () => ({ body }),
-        })),
-        createView(Healthy, { render: () => ({ body: 'Independent healthy workspace',
-            context: { ping: () => appendFileSync(join(folder, 'pings.jsonl'), '{"peer":"healthy"}\n') } }) }),
-    ] });
+    commit(() => ([
+        ...entries.map(([idPrefix, body]) => (() => { const handle = createView(Raw, { idPrefix, region: idPrefix === 'split_raw' ? 'static' : 'dynamic' }); return { handle, frame: () => handle.frame({ body }) }; })()),
+        (() => { const handle = createView(Healthy); return { handle, frame: () => handle.frame({ body: 'Independent healthy workspace', context: { ping: () => appendFileSync(join(folder, 'pings.jsonl'), '{"peer":"healthy"}\n') } }) }; })(),
+    ]).map(page => page.frame()));
 } });

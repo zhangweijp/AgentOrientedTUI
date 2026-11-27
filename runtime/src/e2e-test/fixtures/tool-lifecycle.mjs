@@ -41,7 +41,7 @@ const CounterType = defineViewType()({ multiplicity: 'multiple', name:'Counter',
 } });
 export default createApp({
     app_name: 'tool_lifecycle', viewTypes: [CounterType],
-    async initialize({ appId, launchConfig, registerCleanup, prepareProjection, signal }) {
+    async initialize({ appId, launchConfig, registerLifecycle, publish: commit, signal }) {
         if (launchConfig.holdInitialization) {
             parentPort.postMessage({ type: 'TEST_INITIALIZING' });
             await new Promise(resolve => {
@@ -60,29 +60,23 @@ export default createApp({
                 await mkdir(stateDir, { recursive: true });
                 await writeFile(join(stateDir, `${appId}-counter.json`), JSON.stringify(value), 'utf8');
             },
-            resource: open(launchConfig.testFile, 'a'),
+            resource: undefined,
             handlerRelease: undefined, cleanupRelease: undefined, rejectClose: false,
         };
         let view = { generation: 1, enabled: true, binding: 1 };
-        const makePage = id => createView(CounterType, {
-            idPrefix: id, region: 'dynamic',
-            render: () => ({
-                body: Counter({ owner, id, generation: id === 'counter' ? view.generation : 1, enabled: view.enabled }),
-                context: { id, owner, view, refresh },
-            }),
-        });
+        const makePage = id => (() => { const handle = createView(CounterType, { idPrefix: id, region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: Counter({ owner, id, generation: id === 'counter' ? view.generation : 1, enabled: view.enabled }), context: { id, owner, view, refresh } }) }; })();
         let first = makePage('counter');
         const second = makePage('counter2');
-        const refresh = () => prepareProjection({ views: [first, second] });
+        const refresh = () => commit(() => ([first, second]).map(page => page.frame()));
 
-        registerCleanup({ stop() {
+        registerLifecycle({ stop() {
             owner.live = false;
             parentPort.postMessage({ type: 'TEST_STOPPED', value: owner.value });
         }, async close() {
             parentPort.postMessage({ type: 'TEST_CLEANUP_ENTERED' });
             await new Promise(resolve => { owner.cleanupRelease = resolve; });
             const resource = await owner.resource;
-            await resource.close();
+            await resource?.close();
             parentPort.off('message', listener);
             parentPort.postMessage({ type: 'TEST_RESOURCE_CLOSED' });
             if (owner.rejectClose) throw Error('controlled cleanup failure');
@@ -104,6 +98,7 @@ export default createApp({
             parentPort.postMessage({ type: 'TEST_ACK', tag: message.tag, value: owner.value, entries: owner.entries });
         };
         parentPort.on('message', listener);
+        owner.resource = open(launchConfig.testFile, 'a');
         if (!signal.aborted) refresh();
     },
 });

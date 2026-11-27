@@ -20,10 +20,10 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     const plan = registry.prepareFrame([{idPrefix:'v',type:'Detail',owner:{},bindings:[{name:'read',enabled:true,execute:()=>({success:true})}]}]);
     plan.accept();
     const [view] = plan.instances, [tool] = plan.tools;
-    const committed = core.committer.accept({ schemaVersion: 8, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
+    const committed = core.committer.accept({ healthySince: 1,  schemaVersion: 9, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
         views: [{ toolBindings: view!.toolBindings, id: view!.viewId, viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', region: 'dynamic', content: { format: 'markdown-v1', value: 'value' } }], refs: {},
         tools: { [tool.id]: tool } });
-    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 8) throw Error('Fixture source');
+    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 9) throw Error('Fixture source');
     const grant = (source: AppSnapshot) => ({refs:[],toolIds:Object.keys(source.tools)});
     const controls = {
         project: (context: Parameters<AppInteractionPolicy['project']>[0]): ReturnType<AppInteractionPolicy['project']> => grant(context.source),
@@ -40,7 +40,7 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
         authorize: (context: InvocationContext) => { calls.authorize++; return controls.authorize(context); },
         canReadReceipt: (metadata: ReceiptMetadata, signal: CancellationSignal) => { calls.read++; return controls.read(metadata, signal); },
     }, execution: { resolve: () => binding } };
-    const authority = createAppInteraction(core.store, { namespace, now, ...input });
+    const authority = createAppInteraction(core.store, { namespace, now, ...input, limits:{maxPendingInvocations:1} });
     const client = authority;
     async function observe(target = client) { const got = await target.observe(); if (got.status !== 'observed') throw Error(got.issue.code);
         expect(target.adoptObservation(got.observation.observationId)).toEqual({ status: 'adopted' });
@@ -85,13 +85,13 @@ it.each(['allow', 'deny', 'reject'] as const)('C04 held authorization %s retains
     expect(f.authority.inspect().activeInvocations).toBe(1);
     expect(f.calls).toMatchObject({ authorize: 1, handler: 0 });
     if (outcome === 'reject') gate.reject(Error('authorize')); else gate.resolve(outcome === 'allow');
-    expect(await work).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });
+    expect(await work).toMatchObject({ kind: 'unavailable', code: 'APP_STOPPED', executionPhase:'not-dispatched', locator:receiptQuery(request) });
     await f.zero(); expect(f.calls.handler).toBe(0);
 });
 it('C04 synchronous authorization throw with reentrant close completes after finally', async () => {
     const f = fixture(), request = await f.observe();
     f.controls.authorize = () => { f.authority.close(); throw Error('sync authorization'); };
-    expect(await f.client.invoke(request)).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' }); await f.zero(); expect(f.calls.handler).toBe(0);
+    expect(await f.client.invoke(request)).toMatchObject({ kind: 'unavailable', code: 'APP_STOPPED', executionPhase:'not-dispatched', locator:receiptQuery(request) }); await f.zero(); expect(f.calls.handler).toBe(0);
 });
 
 const outcomes = ['success', 'business', 'throw', 'unknown'] as const;
@@ -212,7 +212,7 @@ it('reads multiple authorized receipts after adoption and prunes retired calls a
         const next = await f.observe();
         expect(await f.client.invoke(next)).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
         expect(await f.client.readReceipt(receiptQuery(settled))).toMatchObject({ kind: 'receipt' });
-        expect(await f.client.invoke({ ...settled, input: { extra: true } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
+        expect(await f.client.invoke({ ...settled, input: { extra: true } })).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         f.controls.read = () => false;
         expect(await f.client.readReceipt(receiptQuery(settled))).toMatchObject({ kind: 'unavailable', code: 'RECEIPT_PERMISSION_DENIED' });
         f.controls.read = () => true;

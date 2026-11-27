@@ -1,17 +1,18 @@
 import { APP_LIFECYCLE_PROTOCOL, type JsonValue, type SnapshotIssue } from '@aotui/core';
 import { captureAppCleanupReport } from './app-lifecycle-protocol.js';
-import { captureToolInvocationTerminal, invocationObject, text } from './worker-message-capture.js';
+import { captureExecutionTerminal, invocationObject, text } from './worker-message-capture.js';
+import type { TransportEvents } from './execution-transport.js';
+import { runtimeProtocolError } from './initialization-error.js';
 import type {
     AppExecutionEvent, AppExecutionIssue, AppExecutionLaunch, AppExecutionProjection, AppExecutionRequest,
 } from '../spi/runtime/execution-backend.js';
 
 const protocol = 'aotui-app';
-const major = 1;
+const major = 2;
 const supported: readonly string[] = ['attention'];
 type Packet = Readonly<Record<string, JsonValue>>;
 
 const invalid = (message: string, path: string): AppExecutionIssue => ({ code: 'APP_PROTOCOL_INVALID', message, path });
-const invalidFrame = (message: string, path: string): SnapshotIssue => ({ code: 'SNAPSHOT_INVALID', message, path });
 const names = (value: JsonValue | undefined): value is readonly string[] => Array.isArray(value) &&
     value.length <= 64 && value.every(item => text(item) && item.length <= 128) && new Set(value).size === value.length;
 
@@ -22,19 +23,28 @@ function readIssue(value: JsonValue | undefined): AppExecutionIssue | undefined 
 
 /** Translate the public JSON-Lines App protocol without exposing Worker messages or Core keys. */
 export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: object) => void,
-    emit: (event: AppExecutionEvent) => void) {
+    emit: TransportEvents) {
     const pending = new Map<string, AppExecutionRequest['kind']>();
     let greeting: string | undefined;
     let capabilities: readonly string[] = [];
-    let initialized = false;
+    let initializeAttempted = false;
+    let startupSealed = false;
     let opened = false;
-    let revision = 0;
-    let latest: AppExecutionProjection | undefined;
-    let fault: SnapshotIssue | undefined;
+    let stopped = false;
 
     function fail(id: string, issue: AppExecutionIssue) {
         pending.delete(id);
         emit({ kind: 'reply', id, status: 'failed', issue });
+    }
+
+    function sealStartup(): 'not-dispatched' | 'cleanup-required' {
+        startupSealed = true;
+        if (!initializeAttempted) {
+            if (greeting !== undefined) pending.delete(greeting);
+            greeting = undefined;
+            return 'not-dispatched';
+        }
+        return 'cleanup-required';
     }
 
     function send(request: AppExecutionRequest) {
@@ -42,15 +52,17 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
         pending.set(id, kind);
         try {
             if (kind === 'initialize') {
+                if (startupSealed) throw new Error('Startup is sealed');
                 greeting = id;
                 write({ type: 'hello', protocol, major, capabilities: supported, requires: [] });
             } else if (kind === 'invoke' || kind === 'closeView') {
                 write({ type: kind, id, appId: launch.appId, instanceId: launch.instanceId, ...details });
             } else {
-                write({ type: kind, id });
+                if (kind === 'stop' || kind === 'close') stopped = true;
+                write({ type: kind, id, ...details });
             }
         } catch (error) {
-            pending.delete(id);
+            // The write may have been accepted before it threw. Keep the id/kind.
             throw error;
         }
     }
@@ -61,10 +73,10 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
             return;
         }
         if (packet.protocol !== protocol || packet.major !== major) {
-            fail(id, { code: 'PROTOCOL_UNSUPPORTED', message: `This Runtime supports ${protocol} major ${major}. App offered ${
+            fail(id, runtimeProtocolError({ code: 'PROTOCOL_UNSUPPORTED', message: `This Runtime supports ${protocol} major ${major}. App offered ${
                 text(packet.protocol) ? packet.protocol.slice(0, 128) : '<invalid identity>'} major ${
                 typeof packet.major === 'number' ? packet.major : '<invalid version>'}.`,
-                path: packet.protocol === protocol ? '$.major' : '$.protocol' });
+                path: packet.protocol === protocol ? '$.major' : '$.protocol' }));
             return;
         }
         const offered = packet.capabilities === undefined ? [] : packet.capabilities;
@@ -75,44 +87,30 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
         }
         const missing = required.find(name => !supported.includes(name));
         if (missing) {
-            fail(id, { code: 'CAPABILITY_REQUIRED', message: `App requires unsupported capability ${missing}.`, path: '$.requires' });
+            fail(id, runtimeProtocolError({ code: 'CAPABILITY_REQUIRED', message: `App requires unsupported capability ${missing}.`, path: '$.requires' }));
             return;
         }
         capabilities = supported.filter(name => offered.includes(name));
         const { appId, instanceId, desktopId, name, config, toolsEnabled } = launch;
-        write({ type: 'initialize', id, appId, instanceId, desktopId, name, config: config ?? {}, toolsEnabled, capabilities });
-    }
-
-    function prepare(frame: AppExecutionProjection): SnapshotIssue | undefined {
-        if (![frame.views, frame.refs, frame.tools].every(entries => Array.isArray(entries) && entries.every(invocationObject)))
-            return invalidFrame('Publish complete views, refs and tools arrays.', '$.frame');
-        try { return launch.checkProjection(frame); }
-        catch { return invalidFrame('The App projection is invalid.', '$.frame'); }
+        if (startupSealed) return;
+        // Even a thrown write does not prove the App did not acquire resources.
+        initializeAttempted = true;
+        try { write({ type: 'initialize', id, appId, instanceId, desktopId, name, ...(config === undefined ? {} : { config }), toolsEnabled, capabilities }); }
+        catch (error) {
+            emit({ kind: 'waitFailed', id, error: error instanceof Error ? error : new Error('Initialize delivery failed') });
+        }
     }
 
     function publish(id: string, packet: Packet) {
-        const body = invocationObject(packet.frame) ? packet.frame : {};
-        const frame = { revision: revision + 1, views: body.views, refs: body.refs, tools: body.tools } as unknown as AppExecutionProjection;
-        const issue = packet.opening !== undefined && typeof packet.opening !== 'boolean'
-            ? invalidFrame('opening must be a boolean.', '$.opening') : prepare(frame);
-        if (issue?.code === 'OBSERVATION_CAPACITY' && packet.opening === true && latest && !fault) {
-            const mounted = new Set(latest.views.map(view => view.viewInstanceId));
-            if (frame.views.some(view => !mounted.has(view.viewInstanceId))) {
-                write({ type: 'publishResult', id, status: 'rejected', issue });
-                return;
-            }
-        }
-        revision = frame.revision;
-        const recovered = !!fault && !issue;
-        fault = issue;
-        if (issue) {
-            write({ type: 'publishResult', id, status: 'failed', issue });
-            if (opened) emit({ kind: 'projectionFailed', revision, issue });
-        } else {
-            latest = frame;
-            write({ type: 'publishResult', id, status: 'prepared' });
-            if (opened) emit({ kind: 'update', reason: recovered ? 'projection_recovered' : 'view_updated' });
-        }
+        if (packet.mode !== 'authoritative' && packet.mode !== 'candidate') throw new Error('Invalid publication mode');
+        // viewTypes is transported once alongside the complete raw frame.
+        const frame = (invocationObject(packet.frame) && Object.hasOwn(packet, 'viewTypes')
+            ? { ...packet.frame, viewTypes: packet.viewTypes } : packet.frame) as unknown as AppExecutionProjection;
+        const sampled = text(packet.requestId) && ['open', 'observe'].includes(pending.get(packet.requestId) ?? '')
+            ? packet.requestId : undefined;
+        const result = launch.acceptProjection(frame, packet.mode, sampled);
+        if (packet.mode === 'candidate' || result.status === 'rejected') write({ type: 'publishResult', id, ...result });
+        if (opened && !stopped && result.status === 'accepted') emit({ kind: 'update', reason: 'view_updated' });
     }
 
     function reply(id: string, packet: Packet) {
@@ -120,9 +118,8 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
         if (!request) return;
         if (request === 'invoke' || request === 'closeView') {
             if (packet.status !== 'tool') return;
-            const terminal = captureToolInvocationTerminal({ type: 'VIEW_TOOL_INVOKE_RESPONSE', requestId: id, success: true,
-                appId: packet.appId, instanceId: packet.instanceId, terminal: packet.terminal },
-                { requestId: id, appId: launch.appId, instanceId: launch.instanceId });
+            if (packet.appId !== launch.appId || packet.instanceId !== launch.instanceId) return;
+            const terminal = captureExecutionTerminal(packet.terminal);
             if (terminal) {
                 pending.delete(id);
                 emit({ kind: 'reply', id, status: 'tool', terminal });
@@ -130,27 +127,24 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
             return;
         }
         if (packet.status === 'failed') {
-            fail(id, readIssue(packet.issue) ?? invalid('The App gave no valid issue for this reply.', '$.issue'));
+            const issue = readIssue(packet.issue) ?? invalid('The App gave no valid issue for this reply.', '$.issue');
+            const cleanup = invocationObject(packet.cleanup) && captureAppCleanupReport({ ...packet.cleanup,
+                protocol: APP_LIFECYCLE_PROTOCOL, instanceId: launch.instanceId }, launch.instanceId);
+            pending.delete(id);
+            emit({ kind: 'reply', id, status: 'failed', issue,
+                ...(cleanup ? { cleanup: { state: cleanup.state, issues: cleanup.issues } } : {}) });
             return;
         }
         if (request === 'initialize' && packet.status === 'ready') {
             pending.delete(id);
-            initialized = true;
             emit({ kind: 'reply', id, status: 'ready' });
             return;
         }
         if (packet.status !== 'done' || request === 'initialize') return;
         if (request === 'open' || request === 'observe') {
-            const issue = fault ?? (!latest ? invalidFrame('The App has not published an initial projection.', '$.frame') : undefined);
-            if (request === 'open' && issue) { fail(id, issue); return; }
             pending.delete(id);
-            const correlation = request === 'observe' ? { id } : {};
-            if (issue) emit({ kind: 'projectionFailed', ...correlation, revision, issue });
-            else emit({ kind: 'projection', ...correlation, frame: latest! });
-            if (request === 'open') {
-                opened = true;
-                emit({ kind: 'reply', id, status: 'done' });
-            }
+            if (request === 'open') opened = true;
+            emit({ kind: 'reply', id, status: 'done', publication: packet.publication as unknown as import('@aotui/core/host').SnapshotDraftEnvelope });
             return;
         }
         const cleanup = invocationObject(packet.cleanup) && captureAppCleanupReport({ ...packet.cleanup,
@@ -162,7 +156,6 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
         }
         if (request === 'close') {
             opened = false;
-            initialized = false;
         }
         pending.delete(id);
         emit({ kind: 'reply', id, status: 'done', cleanup: { state: cleanup.state, issues: cleanup.issues } });
@@ -174,8 +167,21 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
             const id = greeting;
             greeting = undefined;
             negotiate(id, value);
-        } else if (value.type === 'publish' && initialized && text(value.id)) {
+        } else if (value.type === 'hello' && startupSealed) {
+            return;
+        } else if (value.type === 'publish' && initializeAttempted && text(value.id)) {
             publish(value.id, value);
+        } else if (value.type === 'projectionFailed' && initializeAttempted && !stopped) {
+            const issue = readIssue(value.issue);
+            if (!issue || !Number.isSafeInteger(value.producerSeq) || !Number.isSafeInteger(value.sourceEpoch)) throw new Error('Invalid fault publication');
+            emit({ kind: 'projectionFailed', ...(text(value.requestId) && ['open', 'observe'].includes(pending.get(value.requestId) ?? '') ? { id: value.requestId } : {}), producerSeq: value.producerSeq as number, sourceEpoch: value.sourceEpoch as number, issue: issue as SnapshotIssue });
+        } else if (value.type === 'projectionCurrent' && text(value.id)) {
+            const kind = pending.get(value.id);
+            if (kind === 'observe' || kind === 'open') {
+                if (kind === 'observe') pending.delete(value.id);
+                emit({ kind: 'projectionCurrent', id: value.id,
+                    publication: value.publication as unknown as import('@aotui/core/host').SnapshotDraftEnvelope });
+            }
         } else if (value.type === 'reply' && text(value.id)) {
             reply(value.id, value);
         } else if (value.type === 'attention' && opened && capabilities.includes('attention')) {
@@ -183,5 +189,5 @@ export function externalAppProtocol(launch: AppExecutionLaunch, write: (packet: 
         }
     }
 
-    return { send, receive };
+    return { send, receive, sealStartup, get cleanupRequired() { return initializeAttempted; } };
 }

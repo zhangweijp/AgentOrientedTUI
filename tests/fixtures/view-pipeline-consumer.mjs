@@ -38,7 +38,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     }
     async function call(context, type, tool, input, fileId = 'file_a_1') {
       const args = type === 'Guide' ? input : { view_id: fileId, ...input };
-      const result = await context.executeTool(`pipeline-${tool}`, args, `pipeline-${facts.calls.length}`);
+      const result = await context.executeTool(`pipeline-${type}-${tool}`, args, `pipeline-${facts.calls.length}`);
       facts.calls.push({ type, tool, input, result });
       return result;
     }
@@ -92,7 +92,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
         { toolBindings: [], id: guideView.viewId, viewInstanceId: guideView.viewInstanceId, type: guideView.viewType, region: 'static', name: 'guide', content: { format: 'markdown-v1', value: '\nRead the current file.\n' } },
         { toolBindings: [], id: fileView.viewId, viewInstanceId: fileView.viewInstanceId, type: fileView.viewType, region: 'dynamic', name: 'A > B & "C"\nnext', content: { format: 'markdown-v1', value: expectedBody } },
     ], tools: frame.tools, refs: [], accept: frame.accept }));
-    assert.equal(prepared.status, 'prepared');
+    assert.equal(prepared.ok, true);
     const published = projection.publishTo(core.committer);
     assert.equal(published.status, 'published');
     const authority = createAppInteraction(core.store, { namespace: 'plain-pipeline', now: Date.now, appId: 'pipeline', instanceId: 'plain-run',
@@ -137,12 +137,12 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     assert.equal((await call(current, 'Guide', 'close', {})).outcomeStatus, 'succeeded');
     current = await observe();
     assert.equal(message(current, 'file_a_3'), undefined);
-    assert.equal(current.tools['pipeline-inspect'], undefined);
+    assert.equal(current.tools['pipeline-FileDetail-inspect'], undefined);
     assert.equal((await call(current, 'Guide', 'open', {})).outcomeStatus, 'succeeded');
     current = await observe();
-    assert.ok(current.tools['pipeline-inspect']);
+    assert.ok(current.tools['pipeline-FileDetail-inspect']);
     assert.equal((await call(initial, 'FileDetail', 'inspect', { file: '$ref.pipeline.file_a_1.current' })).outcomeStatus, 'rejected');
-    assert.equal((await current.executeTool('pipeline-inspect', { view_id: 'file_a_4', file: '$ref.pipeline.file_a_4.current' }, `pipeline-${facts.calls.length}`)).result.matches, true);
+    assert.equal((await current.executeTool('pipeline-FileDetail-inspect', { view_id: 'file_a_4', file: '$ref.pipeline.file_a_4.current' }, `pipeline-${facts.calls.length}`)).result.matches, true);
     facts.messages = { initial: initialFile, guide, updated: message(current, 'file_a_4') };
   } finally {
     for (const context of held) await context.release();

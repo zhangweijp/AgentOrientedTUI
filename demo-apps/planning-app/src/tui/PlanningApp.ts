@@ -10,20 +10,19 @@ import { RootType, PlanListType, PlanDetailType, planningViewTypes } from './pla
 export default createApp({
     ...pkg.aotui,
     viewTypes: planningViewTypes,
-    async initialize({ desktopId, launchConfig, prepareProjection, prepareOpeningProjection, registerCleanup, signal }) {
+    async initialize({ desktopId, launchConfig, publish: commit, registerLifecycle, signal }) {
         const dbPath = typeof launchConfig?.planningDbPath === 'string' && launchConfig.planningDbPath || undefined;
         planningService.configure(dbPath);
-        registerCleanup({ close: () => planningService.close() });
+        registerLifecycle({ close: () => planningService.close() });
 
         let plans: Plan[] = [];
         let activePlanId: string | null = null;
-        let candidateId: string | undefined;
-        let detail: ViewHandle | undefined;
-        const activePlan = () => plans.find(plan => plan.id === (candidateId ?? activePlanId)) ?? null;
+        let detail: ViewHandle<typeof PlanDetailType> | undefined;
+        const activePlan = () => plans.find(plan => plan.id === activePlanId) ?? null;
 
         function publish(warning = 'Planning changes were saved. The new pages could not be prepared.'): { projectionWarning?: string } {
-            try { prepareProjection({ views: detail ? [root, list, detail] : [root, list] }); }
-            catch { return { projectionWarning: warning }; }
+            const result = commit(() => frames(activePlanId, detail));
+            if (!result.ok) return { projectionWarning: warning };
             return {};
         }
 
@@ -33,19 +32,11 @@ export default createApp({
         }
 
         function showSelection(id: string): void {
-            const next = detail ?? createDetail();
-            const views = [root, list, next];
-            candidateId = id;
-            try {
-                if (next !== detail) {
-                    const result = prepareOpeningProjection({ views });
-                    if (result.status === 'rejected') {
-                        throw Object.assign(new Error('The selected Plan Detail does not fit. Shorten the plan before opening it.'), { code: result.issue.code });
-                    }
-                } else prepareProjection({ views });
-                detail = next;
-                activePlanId = id;
-            } finally { candidateId = undefined; }
+            const next = detail ?? createView(PlanDetailType, { id: 'plan_detail' });
+            const result = commit(() => frames(id, next), { mode: 'candidate' });
+            if (!result.ok) throw Object.assign(new Error('The selected Plan Detail does not fit. Shorten the plan before opening it.'), { code: result.issue.code });
+            detail = next;
+            activePlanId = id;
         }
 
         async function selectPlan(id: string | null): Promise<void> {
@@ -314,33 +305,21 @@ export default createApp({
             return refreshCompletedPlans();
         };
 
-        const root = createView(RootType, { id: 'root', name: 'Root', render: () => ({ body: rootBody }) });
-        const list = createView(PlanListType, {
-            id: 'plan_list',
-            render: () => {
-                const plan = activePlan();
-                return {
-                    ...planListContent(plans, plan),
-                    name: plan ? 'Plan List (Active Plan Open)' : 'Plan List',
-                    context: { plans, activePlan: plan, createPlan, updatePlan, deletePlan, openPlan, closePlan },
-                };
-            },
-        });
-
-        function createDetail(): ViewHandle {
-            return createView(PlanDetailType, {
-                id: 'plan_detail',
-                render: () => {
-                    const plan = activePlan()!;
-                    return {
-                        ...planDetailContent(plan), name: 'Plan: ' + plan.title,
-                        context: { activePlan: plan, addPhase, deletePhase, completePhase, addTask, updateTask, deleteTask, completeTask },
-                    };
-                },
-            });
+        const root = createView(RootType, { id: 'root' });
+        const list = createView(PlanListType, { id: 'plan_list' });
+        function frames(id: string | null, selected?: ViewHandle<typeof PlanDetailType>) {
+            const plan = plans.find(plan => plan.id === id) ?? null;
+            return [root.frame({ name: 'Root', body: rootBody }), list.frame({
+                ...planListContent(plans, plan),
+                name: plan ? 'Plan List (Active Plan Open)' : 'Plan List',
+                context: { plans, activePlan: plan, createPlan, updatePlan, deletePlan, openPlan, closePlan },
+            }), ...(selected && plan ? [selected.frame({
+                ...planDetailContent(plan), name: 'Plan: ' + plan.title, bindingKey: plan.id,
+                context: { activePlan: plan, addPhase, deletePhase, completePhase, addTask, updateTask, deleteTask, completeTask },
+            })] : [])];
         }
 
-        prepareProjection({ views: [root, list] });
+        publish();
         try {
             await planningService.init(dbPath);
             const [loaded, previous] = await Promise.all([

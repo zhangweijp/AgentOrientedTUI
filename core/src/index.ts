@@ -5,7 +5,7 @@ export {
     type TUIAppFactory,
 } from './app/app-factory.interface.js';
 export { APP_LIFECYCLE_PROTOCOL, type AppLifecycleCallbacks, type AppLifecyclePort } from './app/app-lifecycle.interface.js';
-export type { AppInstance, RuntimeContext } from './app/app-instance.interface.js';
+export type { RuntimeContext } from './app/app-instance.interface.js';
 export type { AppContext } from './app/app-kernel.interface.js';
 export type { AppLaunchConfig } from './app/app-config.interface.js';
 export type { AppID, DesktopID } from './app/identity.js';
@@ -16,7 +16,7 @@ export {
 } from './snapshot/types.js';
 export type {
     AppIdentityRead, AppIdentityReader, AppSnapshot, CommitResult, HoldResult, JsonValue, PreparedAppSnapshotDraft,
-    PreparedSnapshotFailure, RefDescriptor, RefLookup, RefScope, RefSelector, RefTarget, SnapshotCommitter, SnapshotCore,
+    PreparedSnapshotFailure, RefDescriptor, RefLookup, RefContinuity, RefScope, RefSelector, RefTarget, SnapshotCommitter, SnapshotCore,
     SnapshotHold, SnapshotIssue, SnapshotIssueCode, SnapshotLifecycle, SnapshotLimits, SnapshotLookup, SnapshotRead,
     SnapshotStore, SnapshotStoreOptions, SnapshotStoreStats, ToolDescriptor, ToolRoute, ViewContent,
     ViewSnapshot, ViewToolBinding, ViewToolReceiver,
@@ -39,17 +39,17 @@ export type {
     ObservationJsonLimits, ProjectionLimits,
     ProjectionLimitOverrides, ViewIdentity, RefIdentity, ObservationSource,
     ObservationWindowSelection, ObservedView, ObservedTool, ObservedRef,
-    RefConsumer, RefGrant, Observation, ObservationGrant, ObservationIssueCode,
+    RefConsumer, RefGrant, Observation, ObservationOptions, ObservationGrant, ObservationIssueCode,
     ObservationIssue, ObservationRegistryStats,
 } from './invocation/observation-types.js';
 export type {
-    AppInteraction, AppInteractionPolicy, AppInteractionSource, AppInvocation, AppPreviewResult, BusinessDetails,
+    AppInteraction, AppInteractionPolicy, AppInteractionSource, AppInvocation, CloseInvocation, InvocationRequest, InvocationOperation, ReceiptOperation, ViewCloseReceiver, AppPreviewResult, BusinessDetails,
     CancellationSignal, ExecutionBinding, ExecutionFact, ExecutionPhase, PublicRefValue, ReadPublicRefsResult,
     ExecutionResolver, InstanceInteraction, InteractionLimitOverrides, InteractionLimits, InteractionStats,
     InvocationContext, InvocationJsonLimits, InvocationOutcome, InvocationReceipt, InvocationSource, InvokeResult, Issue as InteractionIssue,
     ObserveResult, ReceiptAccess, ReceiptMetadata, ReceiptQuery,
     ActiveTurn, AdoptTurnResult, ObservationCandidate, PrepareObservationResult, InspectRefMode, InspectRefResult, TurnSelection,
 } from './invocation/app-interaction-types.js';
-export type { AppFrameRef, AppFrameView, AppProjectionFrame, OpeningProjectionResult, PreparedProjection,
-    ProjectionCommitResult, ProjectionOptions, ProjectionSource } from './projection/coordinator.js';
+export type { AppFrameRef, AppFrameView, AppProjectionFrame, PublishMode,
+    PublishResult, ProjectionOptions, ProjectionSource } from './projection/coordinator.js';
 export type { AppFrameBinding, AppViewTypeDefinition, ViewInstance, ViewOwnedToolLimits, ViewOwnedToolsStats } from './tool/view-owned-tools.js';

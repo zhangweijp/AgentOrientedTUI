@@ -6,7 +6,7 @@ import { ManagedApp } from './managed-app.js';
 import { WorkerCapacity } from './worker-capacity.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { AppWindows, ViewCloseResult, ViewWindowTarget } from '../../spi/runtime/windows.js';
+import type { AppWindows } from '../../spi/runtime/windows.js';
 import type { AppInteractionPolicy } from '@aotui/core';
 import { appInstallFields, captureInstallationOptions, capturePolicy, type CapturedAppInteractionOptions } from './interaction-config.js';
 import { resolveAppModule } from './manifest.js';
@@ -179,7 +179,7 @@ export class AppManager {
                 installationId: meta.installationId, backend: meta.backend, command: meta.command,
                 ...(meta.config === undefined ? {} : { config: meta.config }),
                 runtimeConfig: this.options.runtimeConfig, workerCapacity: this.workerCapacity,
-                toolsEnabled: meta.toolsEnabled, projectionLimits: meta.projectionLimits, policy },
+                toolsEnabled: meta.toolsEnabled, projectionLimits: meta.projectionLimits, interactionLimits: meta.interactionLimits, policy },
             () => {
                 if (this.workers.get(id) !== app) return;
                 const wasRunning = meta.status === 'running';
@@ -190,14 +190,16 @@ export class AppManager {
                 if (this.workers.get(id) !== app) return;
                 this.workers.delete(id);
                 this.releaseRun(meta, id);
+                this.desktop.emitSignal({ reason: 'app_runtime_changed', appId: id, instanceId: app.appInstanceId });
             });
             worker = app;
             this.workers.set(id, app);
             const emit = (reason: UpdateSignal['reason']) => {
-                if (this.accepting && this.workers.get(id) === app)
+                if ((this.accepting || reason === 'app_runtime_changed') && this.workers.get(id) === app)
                     this.desktop.emitSignal({ reason, appId: id, instanceId: app.appInstanceId });
             };
             app.onUpdate = emit;
+            emit('app_runtime_changed');
             await app.start();
             this.current(meta, app);
             if (app.isClosing) throw closeError('APP_MANAGER_CLOSED');
@@ -233,7 +235,7 @@ export class AppManager {
         return { installationId, name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
             status: 'pending', modulePath: options.modulePath, command: options.command, backend,
             config: options.config,
-            toolsEnabled: options.toolsEnabled, projectionLimits: options.projectionLimits };
+            toolsEnabled: options.toolsEnabled, projectionLimits: options.projectionLimits, interactionLimits: options.interactionLimits };
     }
     registerPendingApp(options: PendingOptions): string {
         this.assertActive();
@@ -269,20 +271,13 @@ export class AppManager {
     getAppWindows(id: AppID, expectedInstanceId: string): AppWindows | undefined {
         return this.accepting ? this.windowOwner(id, expectedInstanceId)?.getWindows() : undefined;
     }
-    async closeView(target: ViewWindowTarget, confirmTurn?: () => void): Promise<ViewCloseResult> {
-        this.assertActive();
-        const owner = this.windowOwner(target.appId, target.instanceId);
-        if (!owner) throw closeError('APP_INSTANCE_CHANGED');
-        return owner.closeView(target, confirmTurn);
-    }
     listApps(): readonly AppDiscoveryInfo[] {
-        return [...this.installedApps.values()].filter(app =>
-            app.status === 'running' || this.appTasks.get(app.installationId)?.kind !== 'install').map(app => {
+        return [...this.installedApps.values()].map(app => {
             const { installationId, appId, name, status, description, whatItIs, whenToUse } = app;
             const worker = appId ? this.workers.get(appId) : undefined;
             const appInstanceId = worker?.appInstanceId;
             return { installationId, status, name, description, whatItIs, whenToUse,
-                ...(appId && appInstanceId && status === 'running' ? { appId, appInstanceId } : {}) };
+                ...(appId && appInstanceId && worker ? { appId, appInstanceId, run: worker.readRunFacts() } : {}) };
         });
     }
     getManagedApp(id: AppID): ManagedApp | undefined { return this.workers.get(id); }

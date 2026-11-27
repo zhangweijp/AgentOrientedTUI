@@ -64,38 +64,38 @@ export async function exercisePolicyWindows(turn, source, captured, manifest, tw
     const admissions = captured.events.length, writes = (await effects(manifest)).length;
     const collapse = (id, view_id, note) => modelCall(id, 'system-collapse_view', { app_id: 'theatre', view_id, note });
     const expand = (id, view_id) => modelCall(id, 'system-expand_view', { app_id: 'theatre', view_id });
-    const read = modelCall('read-programme', 'theatre-read_program', {});
+    const read = modelCall('read-programme', 'theatre-Programme-read_program', {});
     const fold = [collapse('fold-form', 'form_1', 'Get tickets later')];
     const called = await turn('policy-fold', fold);
-    assert.ok(!functions(called.body)['theatre-pick'] && functions(called.body)['healthy-confirm']);
+    assert.ok(!functions(called.body)['theatre-Form-pick'] && functions(called.body)['healthy-Ready-confirm']);
     assert.deepEqual(captured.events.slice(admissions).map(item => item.appId), ['healthy']);
     assert.equal(savedParts(called.message, fold)[0].output.value.success, true);
     if (twins) {
         const start = captured.events.length;
-        const more = [modelCall('healthy-while-annex-open', 'healthy-confirm', { text: 'Annex still open' }), collapse('fold-annex', 'annex_1', 'Later')];
+        const more = [modelCall('healthy-while-annex-open', 'healthy-Ready-confirm', { text: 'Annex still open' }), collapse('fold-annex', 'annex_1', 'Later')];
         const active = await turn('policy-annex-open', more);
-        assert.ok(text(active.body).includes('cannot encode theatre-pick'));
+        assert.ok(text(active.body).includes('cannot encode theatre-Form-pick'));
         assert.ok(views(active.body).every(view => !view.includes('app_id="theatre"')));
-        assert.ok(!functions(active.body)['theatre-read_program']);
+        assert.ok(!functions(active.body)['theatre-Programme-read_program']);
         assert.equal(savedParts(active.message, more)[0].output.value.confirmed, true);
         assert.equal(savedParts(active.message, more)[1].output.value.success, true);
         assert.deepEqual(captured.events.slice(start).map(item => item.appId), ['healthy']);
     }
     const allowed = await turn('policy-readable', [read]);
     const tools = functions(allowed.body), content = views(allowed.body);
-    assert.ok(tools['theatre-read_program'] && !tools['theatre-pick']);
+    assert.ok(tools['theatre-Programme-read_program'] && !tools['theatre-Form-pick']);
     assert.ok(content.some(view => view.includes('view_id="form_1"') && view.includes('Get tickets later')));
     assert.ok(content.some(view => view.includes('view_id="programme"') && view.includes('Tonight at 20:00')));
     assert.ok(!content.some(view => view.includes(ticket)));
     assertStrictConsole(allowed.body);
-    assert.ok(!consoleBindings(allowed.body).includes('"theatre-pick"'));
+    assert.ok(!consoleBindings(allowed.body).includes('"theatre-Form-pick"'));
     assert.equal(savedParts(allowed.message, [read])[0].output.value.ok, true);
     const attempt = [expand('try-unencodable-window', 'form_1')];
     const refused = await turn('policy-expand-form', attempt);
     const denied = savedParts(refused.message, attempt)[0].output.value;
     assert.equal(denied.code, 'MODEL_TOOL_SCHEMA_UNSUPPORTED');
-    assert.ok(denied.message.includes('theatre-pick') && denied.message.includes('prefixItems'));
-    const defaults = [program('with-default', 'inspect(refs.theatre.programme.when); await tools["theatre-read_program"]({});'),
+    assert.ok(denied.message.includes('theatre-Form-pick') && denied.message.includes('prefixItems'));
+    const defaults = [program('with-default', 'inspect(refs.theatre.programme.when); await tools["theatre-Programme-read_program"]({});'),
         program('with-empty', 'inspect(Object.keys(refs).length)', [])];
     const input = await turn('policy-console-inputs', defaults);
     assert.ok(views(input.body).some(view => view.includes('view_id="form_1"') && view.includes('Get tickets later')));
@@ -105,7 +105,7 @@ export async function exercisePolicyWindows(turn, source, captured, manifest, tw
     assert.equal(keep.subcalls[0].phase, 'entered-returned');
     assert.deepEqual(empty.output, ['0']);
     const revoked = [collapse('fold-programme', 'programme', 'Wait for the show'),
-        program('default-revoked', 'await tools["theatre-read_program"]({});'),
+        program('default-revoked', 'await tools["theatre-Programme-read_program"]({});'),
         program('explicit-revoked', 'inspect(refs.theatre.programme.when)', [programme]),
         program('empty-still-valid', 'inspect(Object.keys(refs).length)', [])];
     const revocation = await turn('policy-revoked', revoked);
@@ -120,7 +120,7 @@ export async function exercisePolicyWindows(turn, source, captured, manifest, tw
     assert.equal(savedParts(expanded.message, resume)[0].output.value.success, true);
     const latest = await turn('policy-restored', []);
     assert.ok(views(latest.body).some(view => view.includes('Tonight at 20:00')));
-    assert.ok(functions(latest.body)['theatre-read_program']);
+    assert.ok(functions(latest.body)['theatre-Programme-read_program']);
     for (const call of [...defaults, ...revoked])
         assert.equal(latest.body.messages.filter(part => part.role === 'tool' && part.tool_call_id === call.id).length, 1);
     const local = await source.getContext();
@@ -129,10 +129,10 @@ export async function exercisePolicyWindows(turn, source, captured, manifest, tw
         const unfolded = await local.executeTool('system-expand_view', { app_id: 'theatre', view_id: 'form_1' }, 'host-expand-form');
         assert.equal(unfolded.outcomeStatus, 'succeeded');
     } finally { await local.release(); }
-    const alone = [modelCall('healthy-after-unfold', 'healthy-confirm', { text: 'The form was expanded outside the request' })];
+    const alone = [modelCall('healthy-after-unfold', 'healthy-Ready-confirm', { text: 'The form was expanded outside the request' })];
     const start = captured.events.length;
     const reopened = await turn('policy-host-unfold', alone);
-    assert.ok(text(reopened.body).includes('cannot encode theatre-pick'));
+    assert.ok(text(reopened.body).includes('cannot encode theatre-Form-pick'));
     assert.ok(views(reopened.body).every(view => !view.includes('app_id="theatre"')));
     assert.deepEqual(captured.events.slice(start).map(item => item.appId), ['healthy']);
     assert.equal(savedParts(reopened.message, alone)[0].output.value.confirmed, true);
@@ -144,13 +144,13 @@ export async function exercisePolicyWindows(turn, source, captured, manifest, tw
 export async function exerciseStationBudget(turn, mode, manifest, healthy, captured, strict = true) {
     const before = captured.events.length, start = (await effects(manifest)).length, healthyStart = (await healthyLog(healthy)).length;
     const works = mode === 'at' || !strict;
-    const calls = [modelCall('healthy-route', 'healthy-confirm', { text: mode })];
-    if (works) calls.push(...(mode === 'at' ? [modelCall('at-boundary', 'theatre-at_limit', { station: 'S0999' }),
-        modelCall('split-boundary', 'theatre-split_at_limit', { from: 'S0499', to: 'S0499' })]
-        : [modelCall('ordinary-pick', 'theatre-over_limit', { station: 'S1000' })]));
+    const calls = [modelCall('healthy-route', 'healthy-Ready-confirm', { text: mode })];
+    if (works) calls.push(...(mode === 'at' ? [modelCall('at-boundary', 'theatre-Station-at_limit', { station: 'S0999' }),
+        modelCall('split-boundary', 'theatre-Station-split_at_limit', { from: 'S0499', to: 'S0499' })]
+        : [modelCall('ordinary-pick', 'theatre-Station-over_limit', { station: 'S1000' })]));
     const received = await turn(`stations-${mode}-${strict ? 'strict' : 'ordinary'}`, calls);
     const tools = functions(received.body);
-    assert.ok(tools['system-open_app'] && tools['system-close_app'] && tools['healthy-confirm']);
+    assert.ok(tools['system-open_app'] && tools['system-close_app'] && tools['healthy-Ready-confirm']);
     const admitted = captured.events.slice(before).map(event => event.appId).sort();
     assert.deepEqual(admitted, works ? ['healthy', 'theatre'] : ['healthy']);
     const counts = Object.entries(tools).filter(([name]) => name.startsWith('theatre-')).map(([, tool]) =>

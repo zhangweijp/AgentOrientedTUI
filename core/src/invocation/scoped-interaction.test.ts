@@ -4,7 +4,9 @@ import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { AppSnapshot, JsonValue, PreparedAppSnapshotDraft, SnapshotStoreOptions, ToolDescriptor } from '../snapshot/types.js';
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
-import { createAppInteraction, DEFAULT_INTERACTION_LIMITS as HARD } from './app-interaction.js';
+import { createAppInteraction } from './app-interaction.js';
+import { normalizeInteractionLimits, RECEIPT_BYTES } from './interaction-limits.js';
+import * as wire from '../snapshot/json.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionLimitOverrides, InvocationContext, ReceiptMetadata, ReceiptQuery, InstanceInteraction, AppInvocation } from './app-interaction-types.js';
 import type { Observation, ObservationGrant, ProjectionLimitOverrides } from './observation-types.js';
 import { compileToolParameters } from '../tool/tool-parameters.js';
@@ -26,7 +28,7 @@ it('a receipt query deadline tracks the actual permission callback until it ends
         const signal = f.seen.readSignal;
         await vi.advanceTimersByTimeAsync(100);
         expect(await first).toEqual({
-            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT', locator: receiptQuery(request),
             message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
         });
         expect(signal?.aborted).toBe(true);
@@ -58,7 +60,7 @@ it.each([9, 10])('only the initial admission deadline governs authorization endi
         await vi.advanceTimersByTimeAsync(5);
         for (const response of await Promise.all([duplicate, reading])) {
             expect(response).toEqual({
-                kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+                kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT', locator: query,
                 message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
             });
         }
@@ -71,7 +73,7 @@ it.each([9, 10])('only the initial admission deadline governs authorization endi
         const first = await initial;
         if (completedAt === 10) {
             expect(first).toEqual({
-                kind: 'unavailable', code: 'INVOCATION_DEADLINE_EXCEEDED',
+                kind: 'unavailable', code: 'INVOCATION_DEADLINE_EXCEEDED', locator: query, executionPhase:'not-dispatched',
                 message: expect.stringContaining('before dispatch'),
             });
             expect(f.seen.authorize?.signal.aborted).toBe(true);
@@ -109,7 +111,7 @@ it('checks the receipt permission deadline even when its callback settles before
         f.setTime(10);
         gate.resolve(true);
         expect(await reading).toEqual({
-            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT', locator: receiptQuery(request),
             message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
         });
         expect(f.authority.inspect().activeReads).toBe(0);
@@ -260,6 +262,7 @@ function receipt(value: Awaited<ReturnType<InstanceInteraction['invoke']>>) {
 function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverrides; observationLimits?: ProjectionLimitOverrides;
     store?: Omit<SnapshotStoreOptions, 'appId' | 'instanceId'>; payload?: JsonValue; refType?: string; schema?: JsonValue; namespace?: string } = {}) {
     let time = 0, sequence = 0, clockThrows = false, clockMessageReads = 0;
+    const birth = new Map<string,number>();
     const now = () => { if (clockThrows) throw { get message() { clockMessageReads++; return 'secret-clock'; } }; return time; };
     const core = createSnapshotCore({ ...context, now, ...options.store });
     const tools = createViewOwnedTools('app', 'run');
@@ -284,19 +287,21 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     function rebindTool() { prepare(false); }
     function remountAll() { pages = [{idPrefix:'v',type:'File',owner:{}}]; }
     function refs(value: JsonValue = options.payload ?? { version: 'S1' }) {
-        return Object.fromEntries(owners.flatMap(owner => (owner.viewId === 'v_1' ? ['visible', 'hidden'] : ['visible_v1', 'hidden_v1']).map(id => [refKey(owner.viewId, owner.viewInstanceId, id), { valueSchema: fixtureJsonSchema, scope: 'protected',
+        return Object.fromEntries(owners.flatMap(owner => (owner.viewId === 'v_1' ? ['visible', 'hidden'] : ['visible_v1', 'hidden_v1']).map(id => [refKey(owner.viewId, owner.viewInstanceId, id), { continuity: [birth.get(owner.viewInstanceId) ?? sequence,birth.get(owner.viewInstanceId) ?? sequence,0] as const, valueSchema: fixtureJsonSchema, scope: 'protected',
             id, ownerViewId: owner.viewId, ownerViewInstanceId: owner.viewInstanceId, refType: options.refType ?? 'File',
             target: { kind: 'snapshot-value' as const, payload: value },
         }])));
     }
     function publish(patch: Partial<PreparedAppSnapshotDraft> = {}): AppSnapshot {
         const available = prepare();
-        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 8, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+        const seq = ++sequence;
+        for (const v of owners) if (!birth.has(v.viewInstanceId)) birth.set(v.viewInstanceId,seq);
+        const result = core.committer.accept({ healthySince: 1,  schemaVersion: 9, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, region: 'dynamic',
                 content: { format: 'markdown-v1', value: 'content-secret-' + v.viewId } })), refs: refs(),
             tools: Object.fromEntries(available.map(t => [t.id, t])), ...patch });
         expect(['published', 'unchanged']).toContain(result.status);
-        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 8) throw new Error('Expected a published Snapshot fixture'); return result.snapshot;
+        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 9) throw new Error('Expected a published Snapshot fixture'); return result.snapshot;
     }
     const source = publish();
     const calls = { project: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0 };
@@ -323,7 +328,7 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
         canReadReceipt: (metadata: ReceiptMetadata, signal: CancellationSignal) => { calls.read++; seen.metadata = metadata; seen.readSignal = signal; return controls.read(metadata, signal) as never; },
     }, execution: { resolve: () => { calls.resolve++; return current; } } };
     const authority = createAppInteraction(store, { ...input, namespace: options.namespace ?? 'instance-test', now,
-        limits: options.limits, observationLimits: options.observationLimits });
+        limits: { maxPendingInvocations: 1, ...options.limits }, observationLimits: options.observationLimits });
     function open() { return authority; }
     async function observe(client: InstanceInteraction) {
         const viewed = await client.observe(); expect(viewed.status).toBe('observed');
@@ -374,7 +379,7 @@ describe('B2-T01/T02: real instance publication and trusted assembly', () => {
         expect(f.calls.handler).toBe(1);
         expect(await b.invoke(f.request(observed))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(g.calls.handler).toBe(0);
-        expect(Object.keys(f.seen.metadata!).sort()).toEqual(['appId', 'instanceId', 'invocationId', 'observationId', 'source', 'toolId']); f.zero(); g.zero();
+        expect(Object.keys(f.seen.metadata!).sort()).toEqual(['appId', 'instanceId', 'invocationId', 'observationId', 'operation', 'source']); f.zero(); g.zero();
     });
     it.each(['actor', 'mode', 'source', 'effects', 'tasks'])('refuses caller-selected %s before any business callback', async key => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), before = { ...f.calls };
@@ -422,7 +427,7 @@ describe('B2-T11: cancellation and actual settlement', () => {
         if (stage === 'execute') expect(f.seen.execute!.signal.aborted).toBe(true);
         if (stage === 'read') expect(f.seen.readSignal!.aborted).toBe(true);
         gate.resolve(stage === 'execute' ? success() : true);
-        expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE'); expect(f.core.store.inspect().activeHolds).toBe(0); f.zero();
+        expect(code(await pending)).toBe(stage === 'authorize' ? 'APP_STOPPED' : 'APP_INTERACTION_UNAVAILABLE'); await f.authority.whenClosed(); expect(f.core.store.inspect().activeHolds).toBe(0); f.zero();
     });
     it('releases an observation while retaining the source of actual dispatched work', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client),
@@ -509,7 +514,7 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         expect(f.calls.authorize).toBe(1); expect(f.calls.handler).toBe(1);
         expect(receipt(await client.invoke(request))).toEqual(result); expect(f.calls.handler).toBe(1);
         f.rebindTool(); f.publish();
-        expect(receipt(await client.invoke(f.request(observed.observation, 'disabled'))).outcome.status).toBe('rejected');
+        expect(await client.invoke(f.request(observed.observation, 'disabled'))).toMatchObject({kind:'refused',code:'TOOL_SOURCE_STALE'});
         expect(f.calls.handler).toBe(1); f.zero();
     });
     it('keeps an original source through long authorization without expiring ownership or bypassing current permission', async () => {
@@ -629,7 +634,7 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         const before = f.authority.inspect();
         const calls = { ...f.calls };
         expect(receipt(await client.readReceipt(receiptQuery(request)))).toEqual(original);
-        expect(f.seen.metadata).toMatchObject({ appId: 'app', instanceId: 'run', toolId: request.toolId, source: original.source });
+        expect(f.seen.metadata).toMatchObject({ appId: 'app', instanceId: 'run', operation: {kind:'tool',toolId:request.toolId,viewId:request.viewId}, source: original.source });
         expect(f.authority.inspect()).toEqual(before);
         expect(f.calls).toEqual({ ...calls, read: calls.read + 1 });
         expect(await client.invoke({ ...request, invocationId: 'new-call-with-released-ref' }))
@@ -637,7 +642,7 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         f.zero();
     });
     it('expires content at the exact deadline but retains complete fingerprint responsibility', async () => {
-        const f = fixture({ limits: { receiptTtlMs: 10, maxReceiptsPerObservation: 1 } }), client = f.open(), observation = await f.observe(client), request = f.request(observation);
+        const f = fixture({ limits: { receiptTtlMs: 10, maxEntriesPerScope: 1 } }), client = f.open(), observation = await f.observe(client), request = f.request(observation);
         const first = receipt(await client.invoke(request)); expect(first.expiresAt).toBe(10); const before = f.authority.inspect();
         f.setTime(9); expect(receipt(await client.readReceipt(receiptQuery(request)))).toEqual(first); f.setTime(10);
         expect(code(await client.invoke(f.request(observation)))).toBe('RESULT_EXPIRED'); expect(code(await client.invoke(request))).toBe('RESULT_EXPIRED');
@@ -720,7 +725,7 @@ describe('B2-T01/T11 additional revocation and completion faults', () => {
     it('keeps settled reading separate from temporary degraded source availability', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
         receipt(await client.invoke(f.request(observation)));
-        expect(f.core.committer.accept({ schemaVersion: 8, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
+        expect(f.core.committer.accept({ healthySince: 1,  schemaVersion: 9, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
             views: f.source.views, refs: { malformed: null }, tools: f.source.tools }).status).toBe('rejected');
         expect(f.core.store.readLatest('app').status).toBe('degraded');
         receipt(await client.invoke(f.request(observation))); expect((await client.observe()).status).toBe('rejected'); f.zero();
@@ -752,7 +757,7 @@ describe('Receipt admission and Snapshot ownership', () => {
         expect(code(await client.invoke(f.request(observation)))).toBe('RECEIPT_READ_CAPACITY');
         expect(f.calls.handler).toBe(1); expect(f.authority.inspect().receiptEntries).toBe(1); gate.resolve(true); receipt(await pending); f.zero();
     });
-    it.each(['maxReceiptsPerObservation', 'maxReceipts'] as const)('enforces %s without evicting an original result', async field => {
+    it.each(['maxEntriesPerScope', 'maxEntries'] as const)('enforces %s without evicting an original result', async field => {
         const f = fixture({ limits: { [field]: 2 } }), client = f.open(), current = await f.observe(client);
         const one = f.request(current, 'one');
         receipt(await client.invoke(one)); receipt(await client.invoke(f.request(current, 'two')));
@@ -804,84 +809,48 @@ describe('Receipt admission and Snapshot ownership', () => {
         expect(await client.invoke(f.request(observation, 'amp', { text: '\u0000'.repeat(24000) }))).toMatchObject({ kind: 'refused', code: 'INVOCATION_INVALID' });
         expect(f.calls.handler).toBe(0); expect(f.authority.inspect().receiptEntries).toBe(0); f.zero();
     });
-    it('preserves dedup even when a lowered receipt profile cannot represent a fixed rejection', async () => {
-        const f = fixture({ limits: { receipt: { maxCanonicalBytes: 1 }, maxReceiptsPerObservation: 1 } }), client = f.open(), observation = await f.observe(client);
-        const raw = { ...f.request(observation), toolId: 'unknown' };
-        expect(code(await client.invoke(raw))).toBe('RESULT_UNAVAILABLE'); expect(code(await client.invoke(raw))).toBe('RESULT_UNAVAILABLE');
-        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0 });
-        expect(await client.invoke(f.request(observation, 'another'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' }); expect(f.calls.handler).toBe(0); f.zero();
+    it('rejects every retired profile and historical capacity key at its own path', () => {
+        for (const key of ['request','rawInput','metadata','fact','receipt','maxReceipts','maxReceiptsPerObservation']) {
+            expect(() => normalizeInteractionLimits({ [key]: {} })).toThrow(expect.objectContaining({path:'options.interactionLimits.'+key}));
+        }
     });
-    it.each(Object.entries(HARD).flatMap(([key, value]) => typeof value === 'number' ? [[key, value, undefined] as const]
-        : Object.entries(value).map(([field, n]) => [key, n, field] as const)))('does not raise or disable the signed %s / %s / %s budget', (key, hard, field) => {
-        const f = fixture();
-        for (const value of [0, -1, NaN, 1.5, (hard as number) + 1]) expect(() => createAppInteraction(f.store, { ...f.input, namespace: 'bad', now: f.now,
-            limits: { [key]: field === undefined ? value : { [field]: value } } })).toThrow('Invalid App interaction configuration'); f.zero();
+    it.each(Object.entries({ maxPendingInvocations:64, maxReads:64, maxEntriesPerScope:128, maxEntries:128,
+        maxReceiptContents:128, maxReceiptBytes:128*RECEIPT_BYTES, receiptTtlMs:600000 }))('does not raise or disable the hard %s budget', (key, hard) => {
+        for (const value of [0, -1, NaN, 1.5, hard + 1])
+            expect(() => normalizeInteractionLimits({[key]:value})).toThrow(expect.objectContaining({path:'options.interactionLimits.'+key}));
     });
 });
 
-describe('Invocation JSON depth, node and encoded-byte limits', () => {
-    type Field = 'maxDepth' | 'maxNodes' | 'maxCanonicalBytes';
-    const fields: Field[] = ['maxDepth', 'maxNodes', 'maxCanonicalBytes'];
-    const sample = { deep: [{ leaf: '汉字\u0000'.repeat(5) }] };
-    function measure(value: unknown, field: Field): number {
-        if (field === 'maxCanonicalBytes') return utf8Size(canonicalJson(copyJson(value, { maxDepth: 100, maxNodes: 200000, maxApproxBytes: 8 * 1024 * 1024 })));
-        let low = 0, high = 100000;
-        while (low < high) {
-            const middle = Math.floor((low + high) / 2);
-            try { copyJson(value, { maxDepth: 100, maxNodes: 200000, maxApproxBytes: 8 * 1024 * 1024, [field]: middle }); high = middle; }
-            catch { low = middle + 1; }
-        }
-        return low;
-    }
-    it.each(fields)('bounds complete request %s at N-1/N/N+1 before admission', async field => {
-        const probe = fixture(), p = probe.open(), po = await probe.observe(p), n = measure(probe.request(po, 'profile', sample), field); probe.zero();
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { request: { [field]: n + delta } } }), client = f.open(), observed = await f.observe(client), result = await client.invoke(f.request(observed, 'profile', sample));
-            if (delta < 0) { expect(result).toMatchObject({ kind: 'refused', code: 'INVOCATION_INVALID' }); expect(f.authority.inspect().receiptEntries).toBe(0); }
-            else expect(receipt(result).outcome.status).toBe('succeeded'); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
-        }
+describe('Fixed Invocation JSON depth, node and encoded-byte limits', () => {
+    it('uses all fixed envelope profiles in the real invocation rather than Host overrides', async () => {
+        const copies=vi.spyOn(wire,'copyWireJson'),checks=vi.spyOn(wire,'checkWireJson');
+        const f=fixture(), client=f.open(), o=await f.observe(client);
+        try {
+            const got=receipt(await client.invoke(f.request(o,'fixed',{text:'汉字\u0000'})));
+            expect(got.outcome.status).toBe('succeeded');
+            const profiles=copies.mock.calls.map(([,limits])=>limits);
+            for(const [maxDepth,maxNodes,maxCanonicalBytes] of [[33,10005,136*1024],[8,256,32*1024],[52,32032,520*1024],[54,33000,RECEIPT_BYTES]])
+                expect(profiles).toContainEqual({maxDepth,maxNodes,maxCanonicalBytes});
+            expect(checks.mock.calls.map(([,limits])=>limits)).toContainEqual(expect.objectContaining({maxCanonicalBytes:128*1024}));
+        } finally {f.zero();}
     });
-    it.each(fields)('bounds ordinary input %s before authorization', async field => {
-        const n = measure(sample, field);
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { rawInput: { [field]: n + delta } } }), client = f.open(), observed = await f.observe(client);
-            const result = receipt(await client.invoke(f.request(observed, 'profile', sample)));
-            expect(result.outcome.status).toBe(delta < 0 ? 'rejected' : 'succeeded');
-            if (delta < 0) expect(result.outcome).toMatchObject({ code: 'ACTION_INPUT_INVALID' });
-            expect(f.calls.authorize).toBe(delta < 0 ? 0 : 1); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
-        }
+    it.each([['depth',35],['nodes',10006],['bytes',140*1024]] as const)('rejects an oversized %s request before any entry',async(field,n)=>{
+        const f=fixture(), client=f.open(), o=await f.observe(client);
+        const value:JsonValue=field==='depth'?Array.from({length:n}).reduce<JsonValue>(v=>[v],null):field==='nodes'?Array(n).fill(null):'x'.repeat(n);
+        try{
+            expect(await client.invoke(f.request(o,'oversize',{value}))).toMatchObject({kind:'refused',code:'INVOCATION_INVALID'});
+            expect(f.calls.handler).toBe(0);expect(f.calls.authorize).toBe(0);expect(f.authority.inspect().receiptEntries).toBe(0);
+        }finally{f.zero();}
     });
-    it.each(fields)('bounds filled receipt metadata %s before authorizing a call', async field => {
-        const probe = fixture(), p = probe.open(), po = await probe.observe(p), raw = probe.request(po, 'profile'), got = receipt(await p.invoke(raw));
-        const metadata = { ...context, invocationId: raw.invocationId, observationId: raw.observationId, toolId: raw.toolId, source: got.source };
-        const n = measure(metadata, field); probe.zero();
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { metadata: { [field]: n + delta } } }), client = f.open(), observation = await f.observe(client), result = receipt(await client.invoke(f.request(observation, 'profile')));
-            expect(result.outcome.status).toBe(delta < 0 ? 'rejected' : 'succeeded');
-            expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
-        }
+    it.each([['depth',55],['nodes',33001],['bytes',530*1024]] as const)('keeps an unrepresentable execution fact (%s) distinct from a business rejection',async(field,n)=>{
+        const f=fixture(),client=f.open(),o=await f.observe(client);
+        const value:JsonValue=field==='depth'?Array.from({length:n}).reduce<JsonValue>(v=>[v],null):field==='nodes'?Array(n).fill(null):'x'.repeat(n);
+        f.controls.execute=()=>success(value);
+        try{
+            expect(receipt(await client.invoke(f.request(o,'oversize-fact')))).toMatchObject({executionPhase:'unknown',outcome:{status:'unknown'}});
+            expect(f.calls.handler).toBe(1);
+        }finally{f.zero();}
     });
-    it.each(fields)('bounds entered execution fact %s and classifies failed capture as unknown', async field => {
-        const n = measure(success(sample), field);
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { fact: { [field]: n + delta } } }), client = f.open(), observation = await f.observe(client);
-            f.controls.execute = () => success(sample); const result = receipt(await client.invoke(f.request(observation)));
-            expect(result.outcome.status).toBe(delta < 0 ? 'unknown' : 'succeeded'); expect(result.executionPhase).toBe(delta < 0 ? 'unknown' : 'entered-returned');
-            expect(f.calls.handler).toBe(1); f.zero();
-        }
-    });
-    it.each(fields)('bounds complete receipt %s without retaining an oversized special result', async field => {
-        const probe = fixture(), p = probe.open(), po = await probe.observe(p); probe.controls.execute = () => success(sample);
-        const base = receipt(await p.invoke(probe.request(po))), n = measure(base, field); probe.zero();
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { receipt: { [field]: n + delta } } }), client = f.open(), observation = await f.observe(client);
-            f.controls.execute = () => success(sample); const request = f.request(observation), result = await client.invoke(request);
-            if (delta < 0) { expect(code(result)).toBe('RESULT_UNAVAILABLE'); expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0 });
-                expect(code(await client.invoke(request))).toBe('RESULT_UNAVAILABLE'); }
-            else expect(receipt(result).outcome.status).toBe('succeeded'); expect(f.calls.handler).toBe(1); f.zero();
-        }
-    });
-
 });
 
 describe('B2-Q01: stopped and successor instance authority', () => {
@@ -909,8 +878,8 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         expect(f.authority.inspect().activeInvocations + f.authority.inspect().activeReads).toBeGreaterThan(0);
         expect((await client.observe()).status).toBe('rejected');
         gate.resolve(stage === 'execute' ? success() : true);
-        expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE');
-        expect(f.calls.handler).toBe(stage === 'authorize' ? 0 : 1); f.zero();
+        expect(code(await pending)).toBe(stage === 'authorize' ? 'APP_STOPPED' : 'APP_INTERACTION_UNAVAILABLE');
+        client.close(); await f.authority.whenClosed(); expect(f.calls.handler).toBe(stage === 'authorize' ? 0 : 1); f.zero();
     });
     it('revalidates stop after an already suspended reading policy returns true', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
@@ -935,8 +904,8 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         next.defineViewTypes([{ name: "File", multiplicity: 'multiple', tools: [{ name:'run', description:'Synthetic tool', inputSchema:{type:'object',properties:{}} }] }]);
         const plan = next.prepareFrame([{idPrefix:'v',type:'File',owner:{},bindings:[{name:'run',enabled:true,execute:()=>({success:true})}]}]);
         const mounted = plan.instances[0]!, tool = plan.tools[0]!;
-        expect(successor.committer.accept({
-            schemaVersion: 8, appId: 'app', instanceId: 'run-2', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+        expect(successor.committer.accept({ healthySince: 1,
+            schemaVersion: 9, appId: 'app', instanceId: 'run-2', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
             views: [{ toolBindings: mounted.toolBindings, id: mounted.viewId, viewInstanceId: mounted.viewInstanceId,
                 type: 'File', name: 'new', region: 'dynamic', content: { format: 'markdown-v1', value: 'new' } }],
             refs: {}, tools: { [tool.id]: tool },
@@ -961,5 +930,24 @@ it('refuses an interaction bound to a different or stopped App instance', async 
     wrong.close();
     f.core.lifecycle.stop();
     expect(code(await f.authority.observe())).toBe('APP_INTERACTION_UNAVAILABLE');
+    f.zero();
+});
+
+
+it('B1 rejects an authorization waiter when the Receiver recovers identical content before dispatch', async () => {
+    const f = fixture(), client = f.open(), observed = await f.observe(client);
+    const gate = deferred<unknown>(), entered = deferred<void>();
+    f.controls.authorize = () => { entered.resolve(); return gate.promise; };
+    const pending = client.invoke(f.request(observed, 'old-period'));
+    await entered.promise;
+    f.core.lifecycle.invalidatePublication({ code: 'SNAPSHOT_UNAVAILABLE', message: 'Receiver fault' });
+    expect(f.publish()).toMatchObject({ revision: 2, admissionSinceRevision: 2 });
+    gate.resolve(true);
+    expect(receipt(await pending)).toMatchObject({ executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'TOOL_SOURCE_STALE' } });
+    expect(f.calls.handler).toBe(0);
+    f.controls.authorize = () => true;
+    const next = await f.observe(client);
+    expect(receipt(await client.invoke(f.request(next, 'new-period'))).outcome.status).toBe('succeeded');
+    expect(f.calls.handler).toBe(1);
     f.zero();
 });

@@ -28,8 +28,7 @@ function deferred<T>() {
 }
 
 function applicationSource(initiallyOpen: boolean, faultTools = false): string {
-    return `
-        import { parentPort } from 'node:worker_threads';
+    return `import { parentPort } from 'node:worker_threads';
         import Type from 'typebox';
         import { createApp, createView, defineViewType, ref, formatRef } from '@aotui/sdk';
 
@@ -67,24 +66,20 @@ function applicationSource(initiallyOpen: boolean, faultTools = false): string {
         } });
 
         export default createApp({ viewTypes: [WorkspaceType], app_name: 'publication_fixture',
-            initialize({ prepareProjection, requestAttention, registerCleanup }) {
+            initialize({ publish: publishAuthorFrame, requestAttention, registerLifecycle }) {
                 let state = {
                     open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
                     toolEnabled: true, extraToolEnabled: false, invalidRef: false, invalidLayout: false,
                 };
-                const makePage = () => createView(WorkspaceType, {
-                    idPrefix: 'workspace', region: 'dynamic', name: 'Workspace',
-                    render() {
+                const makePage = () => (() => { const handle = createView(WorkspaceType, { idPrefix: 'workspace', region: 'dynamic' }); const displayName = 'Workspace'; return { handle, frame: () => {
                         if (state.invalidLayout) throw Error('The fixture page could not render');
                         const selection = ref('selection', state.invalidRef
                             ? { value: () => 'not cloneable' } : { value: state.refValue },
                             { schema: { type: 'object' }, scope: 'protected' });
-                        return { refs: [selection], body: state.text + ' ' + formatRef('Selection', selection),
-                            context: { state, setState } };
-                    },
-                });
+                        return handle.frame({ name: displayName, refs: [selection], body: state.text + ' ' + formatRef('Selection', selection), context: { state, setState } });
+                    } }; })();
                 let page = state.open ? makePage() : undefined;
-                function publish() { return prepareProjection({ views: page ? [page] : [] }); }
+                function publish() { return publishAuthorFrame(() => (page ? [page] : []).map(page => page.frame())); }
                 function setState(update) {
                     state = update(state);
                     if (state.open) page ??= makePage();
@@ -114,7 +109,7 @@ function applicationSource(initiallyOpen: boolean, faultTools = false): string {
                     }
                 };
                 parentPort.on('message', onCommand);
-                registerCleanup({ stop() { parentPort.off('message', onCommand); } });
+                registerLifecycle({ stop() { parentPort.off('message', onCommand); } });
                 publish();
             },
         });
@@ -179,7 +174,7 @@ async function start(name: string, options: Record<string, unknown> = {}) {
         desktopId: 'desktop' as any,
         appModulePath: appModules.get(name)!,
 
-        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
+        config: { AOTUI_DATA_DIR: temporaryDirectory },
         ...options,
     }, { worker });
     const captures: Capture[] = [];
@@ -296,7 +291,8 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         await x.host.open();
         expect(latestSnapshot(x.host).views).toEqual([]);
         expect(latestSnapshot(x.host)).toMatchObject({ revision: 1, views: [] });
-        expect(x.updates).toEqual([]);
+        expect(x.updates.length).toBeGreaterThan(0);
+        expect(x.updates.every(reason=>reason==='app_runtime_changed')).toBe(true);
 
         const opened = await change(x, 'open');
         expect(opened.type).toBe('SNAPSHOT_PREPARED');
@@ -341,7 +337,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         expect(viewCount(x.host)).toBe(0);
         expect(latestSnapshot(x.host)).toMatchObject({ views: [], refs: {}, tools: {} });
         expect(x.updates.at(-1)).toBe('view_updated');
-        expect(x.messages.filter(message => message.type === 'SNAPSHOT_PREPARED' && !message.requestId)).toHaveLength(1);
+        expect(x.messages.filter(message => message.type === 'SNAPSHOT_PREPARED' && !message.requestId)).toHaveLength(0);
     });
 
     it('sends a separate attention request after a background change without sending the frame', async () => {
@@ -374,13 +370,11 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         expect(x.updates.at(-1)).toBe('projection_failed');
 
         const replay = await fault.invoke('reject-old-binding-after-degradation');
-        expect(replay).toMatchObject({ kind: 'receipt', receipt: {
-            executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
-        } });
+        expect(replay).toMatchObject({kind:'refused',code:'SNAPSHOT_UNREADY'});expect(replay).not.toHaveProperty('locator');
 
         expect(await change(x, 'recover-ref')).toMatchObject({ type: 'SNAPSHOT_PREPARED' });
         expect(latestSnapshot(x.host).id).not.toBe(before);
-        expect(x.updates.at(-1)).toBe('projection_recovered');
+        expect(x.updates.filter(reason=>reason!=='app_runtime_changed').at(-1)).toBe('projection_recovered');
 
         const stats = await createToolCaller(x.host, 'stats', { query: 'business counter' });
         expect(await stats.invoke('confirm-business-effect-count')).toMatchObject({ kind: 'receipt', receipt: {

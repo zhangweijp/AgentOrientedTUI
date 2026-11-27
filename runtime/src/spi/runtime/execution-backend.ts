@@ -1,20 +1,24 @@
 import type {
-    AppID, AppLaunchConfig, DesktopID, JsonValue, LocalRefUse, ProjectionLimits, RefScope, SnapshotIssue,
+    AppID, AppLaunchConfig, DesktopID, JsonValue, LocalRefUse, ProjectionLimits, RefScope, RefContinuity, SnapshotIssue,
     ViewMultiplicity, ViewRegion, ViewToolInvocationTerminal, ViewToolReceiver,
 } from '@aotui/core';
+import type { SnapshotDraftEnvelope } from "@aotui/core/host";
 import type { AppCleanupReport } from './app-lifecycle.interface.js';
 
 /** A complete frame produced by one App execution. View and activation identities are local to it. */
 export interface AppExecutionProjection {
-    /** Advance on a new committed frame. Re-reading the same frame keeps its revision. */
-    readonly revision: number;
+    readonly sourceEpoch: number;
+    readonly producerSeq: number;
+    readonly healthySince: number;
+    /** Required on the first accepted frame only, including empty declarations. */
+    readonly viewTypes?: readonly Readonly<{ name: string; multiplicity: ViewMultiplicity }>[];
     readonly views: readonly Readonly<{
         id: string; type: string; name: string; region: ViewRegion; body: string;
-        viewInstanceId: string; canClose?: true;
+        viewInstanceId: string; closeActivationId?: string;
         tools: readonly Readonly<{ name: string; activationId: string }>[];
     }>[];
     readonly refs: readonly Readonly<{
-        viewId: string; viewInstanceId: string; id: string; scope: RefScope;
+        viewId: string; viewInstanceId: string; id: string; scope: RefScope; continuity: RefContinuity;
         refType?: string; array?: true; valueSchema: JsonValue; value: JsonValue;
     }>[];
     readonly tools: readonly Readonly<{
@@ -34,30 +38,36 @@ export interface AppExecutionLaunch {
     readonly projectionLimits: ProjectionLimits;
     readonly toolsEnabled: boolean;
     readonly timeoutMs: number;
-    /** Check a proposed complete frame against this installation's fixed limits. */
-    checkProjection(frame: AppExecutionProjection): SnapshotIssue | undefined;
+    /** The single Receiver actually accepts/rejects; no preflight success implies publication. */
+    acceptProjection(frame: AppExecutionProjection, mode: "authoritative" | "candidate", requestId?: string): AppExecutionAcceptance;
 }
 
+export type AppExecutionAcceptance =
+    | Readonly<{ status: 'accepted'; publication: SnapshotDraftEnvelope }>
+    | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
+
 export type AppExecutionRequest = Readonly<{ id: string }> & (
-    | Readonly<{ kind: 'initialize' | 'open' | 'observe' | 'stop' | 'close' }>
+    | Readonly<{ kind: 'initialize' | 'open' | 'stop' | 'close' }>
+    | Readonly<{ kind: 'observe'; known?: SnapshotDraftEnvelope }>
     | Readonly<{
         kind: 'invoke'; tool: Readonly<{ viewType: string; name: string }>; receiver: ViewToolReceiver;
         input: Readonly<Record<string, JsonValue>>; localRefs: readonly LocalRefUse[];
     }>
-    | Readonly<{ kind: 'closeView'; viewId: string; viewInstanceId: string }>
+    | Readonly<{ kind: 'closeView'; viewId: string; viewInstanceId: string; closeActivationId: string }>
 );
 
 export type AppExecutionIssue = Readonly<{ code: string; message: string; path?: string }>;
-type AppExecutionCleanup = Pick<AppCleanupReport, 'issues'> & Readonly<{ state: 'stopped' | 'completed' | 'failed' }>;
+type AppExecutionCleanup = Pick<AppCleanupReport, 'issues'> & Readonly<{ state: AppCleanupReport['state'] }>;
 export type AppExecutionEvent =
     | (Readonly<{ kind: 'reply'; id: string }> & (
         | Readonly<{ status: 'ready' }>
-        | Readonly<{ status: 'done'; cleanup?: AppExecutionCleanup }>
-        | Readonly<{ status: 'failed'; issue: AppExecutionIssue }>
+        | Readonly<{ status: 'done'; cleanup?: AppExecutionCleanup; publication?: SnapshotDraftEnvelope }>
+        | Readonly<{ status: 'failed'; issue: AppExecutionIssue; cleanup?: AppExecutionCleanup }>
         | Readonly<{ status: 'tool'; terminal: ViewToolInvocationTerminal | Readonly<{ phase: 'finished-unknown' }> }>
     ))
+    | Readonly<{ kind: 'projectionCurrent'; id: string; publication: SnapshotDraftEnvelope }>
     | Readonly<{ kind: 'projection'; id?: string; frame: AppExecutionProjection }>
-    | Readonly<{ kind: 'projectionFailed'; id?: string; revision: number; issue: SnapshotIssue }>
+    | Readonly<{ kind: 'projectionFailed'; id?: string; producerSeq: number; sourceEpoch: number; issue: SnapshotIssue }>
     | Readonly<{ kind: 'update'; reason: 'view_updated' | 'projection_recovered' | 'attention_requested' }>
     /** All complete receipts precede channelEnded. An execution may remain live after this event. */
     | Readonly<{ kind: 'channelEnded'; issue?: AppExecutionIssue }>

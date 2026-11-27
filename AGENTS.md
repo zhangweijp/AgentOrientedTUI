@@ -28,7 +28,7 @@
 - App 负责开页和关页。成功观察覆盖该来源的全部已打开页面，容量不足时拒绝开新页。按已定设计，Host 保存折叠状态和 Agent 的备注，Runtime 立即撤销该页在本轮的业务调用及 Ref 资格。折叠页仍可展开，支持独立关闭的页仍可关闭。展开后要等下一轮采用才能恢复资格。因预算只显示提示的页面仍然打开，可以折叠或按原规则关闭。只有本轮展示正文并被采用的页面可接收业务调用和提供 Ref；预算允许后，下一轮采用正文即可恢复。
 - Projection 是应用当前状态的投影。由 AOTUI 产出的 Messages 既表达外部事实，也是 Agent 对这些事实的记忆；Agent 只能通过应用提供的有限操作改变这部分记忆。App 更新业务状态，框架再投影已提交的 View、Ref 和工具能力；不提供对任意对话或其他来源记忆的 CRUD。
 - 同一逻辑 View 在当前投影中只保留最新有效快照。用户对话、操作收据和审计历史有各自用途，不因此删除。
-- View 元数据与正文分开，由唯一呈现边界包装并正确转义。正文不自行携带框架外壳，不用正则猜测或拆除 `<view>`。
+- View 元数据与正文分开，由唯一呈现边界包装并正确转义。合法 Markdown 原文保持不变；不可表示的 XML 字符在实际呈现字段定位并拒绝原计划，不改 Core 业务 JSON。正文不自行携带框架外壳，不用正则猜测或拆除 `<view>`。
 - 应用只管理自己的投影；不能改写用户指令或其他来源的上下文。
 
 ### ViewType、页面实例与 Tool
@@ -37,7 +37,7 @@
 - ViewType 声明 `multiplicity`。单实例默认以类型名作为 `view_id`，挂载时可显式指定 `id`。多实例默认使用类型名加编号，例如 `file_detail_1`、`file_detail_2`，编号从 1 开始。
 - 多实例页面的最终 `view_id` 由框架分配，作者可提供 `idPrefix`。分配编号时跳过同一 App 实例中已占用的 ID，提交前仍校验整组页面的 ID 唯一。页面更新或重排时沿用原 ID，关闭后重开会获得新的内部 `viewInstanceId`。App 若要在收据中附上路由 ID，用 `readViewId(handle)` 从最近健康提交读取该挂载的 ID。
 - Tool 定义按 **App + ViewType** 共享；每个 View 实例拥有自己的 `context`、状态和局部行为。同类型的多个页面共享一组 Tool Schema，不共享同一个执行上下文。
-- 名称、说明、业务参数 Schema 和实现声明在一处，供类型推导、注册、校验与工具目录复用。当前作者入口为 `defineViewType`，页面提供实例 `context`。
+- 名称、说明、业务参数 Schema 和实现声明在一处，供类型推导、注册、校验与工具目录复用。当前作者入口为 `defineViewType`，页面提供实例 `context`。模型 Tool 固定采用 `appId-viewType-toolName`，名称及标准 Schema 不随挂载数量或 Ref 值变化。
 - 已确认的入口分工是由 Native Tool 与 `run_code` 各自呈现同一份业务契约，Runtime 统一校验本轮目标页、Ref 来源、授权和最终业务参数。入口格式的变化由对应适配器承接。
 - 多实例工具由框架向模型 Schema 加入必填的 `view_id`，单实例工具只接收业务参数。Runtime 校验本轮选中的页面，handler 接收业务参数与该页面的上下文。
 - 页面打开并满足实例启用条件时，对应业务工具才激活。最后一个匹配页面关闭后，该类型工具退出；其他同类型页面仍打开，不代表已关闭页面仍可接收调用。
@@ -57,7 +57,7 @@
 
 ### Observation、调用与操作收据
 
-- 一次 Observation 将兼容的已提交 View、Ref 与工具能力绑定为调用来源。Host 可用一个候选作用域准备并比较多个布局。每次改选都重新生成、测量实际请求，采用成功才发给模型。作用域结束时清理未采用候选并报告清理问题。
+- 一次 Observation 将兼容的已提交 View、Ref 与工具能力绑定为调用来源。Host 可用一个候选作用域准备并比较多个布局。普通 Tool 不能被最终模型请求表达时，先丢弃原未采用候选，每 App 最多一次用 `excludeToolIds` 收窄重准备；Core 完整校验原 grant 后减去 Tool ID。最终消息、Native/Console、Ref、关闭资格与采用同源。每次改选都重新生成、测量实际请求，采用成功才发给模型。作用域结束时清理未采用候选并报告清理问题。
 - Desktop 通过 `adoptTurn` 一次采用整轮的完整来源和页面名单。采用成功后，只有新名单内的来源具有本轮调用与 Ref 资格。即使沿用某个 App 的 Observation，也须通过新返回的 `ActiveTurn` 调用。采用失败时保留旧名单，已关闭的页继续失效。后台发布与诊断预览均不触发采用。
 - 有效 Observation 和已分发未终结的调用各自持有原快照。SnapshotStore 对同一份快照计量一次，观察和调用释放真实持有者。新数据按各自边界检查上限。
 - Runtime 固定原观察选中的实例和 Ref 来源；执行端保留页面当前状态、函数及服务。框架不分析、序列化或冻结任意业务闭包。
@@ -94,7 +94,7 @@
 ### SDK：作者合同
 
 - 从纯 TypeScript 的 `@aotui/sdk` 根入口导入 `createApp`、`createView` 和 `defineViewType`。App 声明稳定的 View 句柄，提交由当前业务状态生成的完整 Markdown、Ref 和工具绑定。给工厂传入 `app_name`，与 `package.json` 的 `aotui.app_name` 一致。`generate-aoapp` 从 `aotui` 读取 App 名及可选的 `whatItIs`、`whenToUse`，从包顶层读取标准的 `version`、`description`、`main` 和 `types`。
-- 使用 `prepareProjection` 准备一般更新，使用 `prepareOpeningProjection` 处理开页准入。上一份健康投影在开页容量拒绝后仍可用。App 负责业务状态，Host 负责观察采用。
+- 使用纯 Handle 的 `frame` 提供正文、实例 context 与 Ref，通过 `app.publish(builder)` 提交完整 Frame，使用 `{ mode: "candidate" }` 处理候选。检查结构化 PublishResult；候选失败保留上一份状态，权威失败降级后只能权威修复。App 负责业务状态，Host 负责观察采用。
 - 参数值域使用 JSON。SDK 支持直接声明 JSON Schema、可导出 draft-2020-12 的 Standard JSON Schema v1，以及可选的 TypeBox。Core 按 JSON Schema 2020-12 的受支持子集校验。Tool 参数根是对象，具名业务字段中的 `{}` 或 `Type.Unknown()` 接受有界 JSON。Ref 值 Schema 和 `refParam` 值结构需要有明确的根形状，并校验实际值。Provider 能否表达这一声明由 Host 选定的模式与适配器决定。
 - 当前公共 Schema 不支持 `pattern` 关键字；声明期给出明确诊断。App 普通业务参数可以名为 `pattern`，业务格式验证仍归 App，不因同名而禁用。
 - 公共文档、类型、示例和错误提示构成同一作者合同。评价 SDK 要看 Agent 能否只靠公开入口生成正确 App、修复成本与私有 API 依赖，而非仅看代码行数。
@@ -108,13 +108,13 @@
 - 按 App 隔离声明、命名和投影错误，保留健康 App 的工作能力；错误不能被静默丢弃或伪装成成功快照。
 - 关闭时停接新工作并撤销新调用资格，等待已受理的工作，执行 App 清理并收尾托管资源，最后确认 Worker 退出与资源释放。调用方的等待超时只结束这次等待。已派发工作到关闭宽限期结束仍无法确认结果时，记录为未知。App 报告自身清理结果，资源所有者确认实际释放，Desktop 和 Runtime 汇总子结果并报告自己负责的失败。
 - 运行实例、Desktop、Runtime 通过各自的 `beginClose()` 关闭。已结算的关闭若仍持有资源，可从原所有者或仍在关闭的上级重试释放，保留首次错误。冷重启由 Host 关闭后再打开，永久删除业务数据由 App 或 Host 单独处理。
-- 默认 Node Worker 托管可信 App 代码，提供执行线程和生命周期边界，不宣称文件系统、网络或权限沙箱。更强隔离由有明确需求的执行环境承担。
+- 默认 Node Worker 托管可信 App 代码，提供执行线程和生命周期边界，不宣称文件系统、网络或权限沙箱。固定命令 App 与可信自定义 backend 共用实际执行/接受/调用/释放机制。App 侧 `aotui-app` 与 Host 侧 `aotui-stdio` 分别使用 major 2；Node 私有 wire 不作为 Host 或作者 API。目录 run 和通知来自原 owner，channel end、物理退出和资源交还分别确认。更强隔离由有明确需求的执行环境承担。
 - 当前默认 `worker.maxWorkers = Number.POSITIVE_INFINITY`。这是 App Worker 数量默认不限，不是 LLM 上下文无限；显式有限配置仍按现有校验执行。
 - Worker 限额的完整策略留待讨论。保留真实计数、退出与清理，不新增配额平台、自动回收、队列或后台重试机制；暂停或切换话题不自动等于销毁 App。
 
 ### 持久化：由 App 自管业务状态
 
-- App 自行负责业务数据与会话状态的格式、原子落盘、同路径多实例并发保护、收据确认与迁移；关闭时通过 `registerCleanup({ close })` 等待已发出写入完成并如实暴露保存失败或未知结果。
+- App 自行负责业务数据与会话状态的格式、原子落盘、同路径多实例并发保护、收据确认与迁移；关闭时通过 `registerLifecycle({ close })` 等待已发出写入完成并如实暴露保存失败或未知结果。
 - Host 可通过普通 `launchConfig` 按需向 App 透传数据目录或路径配置；Runtime 透明透传，不打开、不加锁、不托管存储资源，也不恢复旧 Observation 或 Ref 的调用资格。
 - 删除内核存储代码不等于删除磁盘上用户已有业务文件；应用升级应保持既有业务库路径兼容（如 `planning-app` 沿用自身 `planning.sqlite`）。
 

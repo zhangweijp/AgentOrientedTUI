@@ -1,4 +1,4 @@
-import { committedState, fixtureHost } from './__tests__/worker-fixture.js';
+import { committedState, fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import { projectCompleteViews } from '@aotui/core/host';
 import { Worker } from 'node:worker_threads';
@@ -26,8 +26,7 @@ beforeAll(async () => {
     workerPath = join(directory, 'worker.mjs'); appPath = join(directory, 'app.mjs');
     await build({ entryPoints: [join(runtime, 'src/worker-runtime/index.ts')], outfile: workerPath,
         platform: 'node', format: 'esm', bundle: true, packages: 'external', logLevel: 'silent' });
-    await build({ stdin: { resolveDir: runtime, sourcefile: 'refresh-app.ts', loader: 'ts', contents: `
-        import { parentPort } from 'node:worker_threads';
+    await build({ stdin: { resolveDir: runtime, sourcefile: 'refresh-app.ts', loader: 'ts', contents: `import { parentPort } from 'node:worker_threads';
         import Type from 'typebox';
         import { createApp, createView, ref, formatRef, refParam, defineViewType } from '@aotui/sdk';
         const WorkspaceType = defineViewType()({ multiplicity: 'multiple', name: 'Workspace', tools: {
@@ -62,20 +61,17 @@ beforeAll(async () => {
 
         let calls = 0;
         export default createApp({ viewTypes: [WorkspaceType, FileType, OtherType], app_name: 'refresh_fixture',
-            initialize({ prepareProjection, registerCleanup }) {
+            initialize({ publish: publishAuthorFrame, registerLifecycle }) {
                 let state = { value: 0, invalid: false }, otherValue = 0, liveValue = 0;
-                const workspace = createView(WorkspaceType, { idPrefix: 'workspace', region: 'dynamic',
-                    render: () => ({ body: 'workspace:' + state.value, context: { set } }) });
-                const file = createView(FileType, { idPrefix: 'file', region: 'dynamic', render() {
+                const workspace = (() => { const handle = createView(WorkspaceType, { idPrefix: 'workspace', region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: 'workspace:' + state.value, context: { set } }) }; })();
+                const file = (() => { const handle = createView(FileType, { idPrefix: 'file', region: 'dynamic' }); return { handle, frame: () => {
                     const data = state.invalid ? { value: () => state.value } : { value: state.value };
                     const selected = ref('selected', data, { schema: { type: 'object' }, scope: 'protected', refType: 'Record' });
-                    return { body: 'file:' + state.value + ' ' + formatRef('Selection', selected),
-                        refs: [selected], context: state };
-                } });
-                const other = createView(OtherType, { idPrefix: 'other', region: 'dynamic',
-                    render: () => ({ body: 'other:' + otherValue }) });
+                    return handle.frame({ body: 'file:' + state.value + ' ' + formatRef('Selection', selected), refs: [selected], context: state });
+                } }; })();
+                const other = (() => { const handle = createView(OtherType, { idPrefix: 'other', region: 'dynamic' }); return { handle, frame: () => handle.frame({ body: 'other:' + otherValue }) }; })();
                 function publish() {
-                    try { prepareProjection({ views: state.value > 0 ? [workspace, file, other] : [workspace, other] }); }
+                    try { publishAuthorFrame(() => (state.value > 0 ? [workspace, file, other] : [workspace, other]).map(page => page.frame())); }
                     catch { /* Capture the Runtime diagnostic and preserve the result already returned by the fixture. */ }
                 }
                 function set(next) { state = next; liveValue = state.value; publish(); }
@@ -87,7 +83,7 @@ beforeAll(async () => {
                     if (message.command === 'redraw-other') { otherValue++; publish(); }
                 };
                 parentPort.on('message', receive);
-                registerCleanup({ stop() { parentPort.off('message', receive); } });
+                registerLifecycle({ stop() { parentPort.off('message', receive); } });
                 publish();
             },
         });
@@ -149,7 +145,7 @@ describe('real SDK Worker observation refresh', () => {
     it('observes a completed commit and compatible View, Ref and Tool without a prior notification or fixed sleep', async () => {
         const { host, turns } = await start(); const initial = await observe(turns);
         const messages: Array<{ type: string; requestId?: string }> = [];
-        host['worker']!.on('message', message => messages.push(message));
+        fixtureWorker(host)!.on('message', message => messages.push(message));
         const business = await invoke(initial, 'change', { value: 1 });
         expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
         const observing = observe(turns);
@@ -180,15 +176,18 @@ describe('real SDK Worker observation refresh', () => {
 
     it('reuses confirmed content when nothing changes', async () => {
         const { host, turns } = await start();
+        const startupNotices = vi.mocked(host.onUpdate!).mock.calls.slice();
+        expect(startupNotices.length).toBeGreaterThan(0);
+        expect(startupNotices.every(([reason])=>reason==='app_runtime_changed')).toBe(true);
         const first = await observe(turns), next = await observe(turns);
         expect(next.observation.source.snapshotId).toBe(first.observation.source.snapshotId);
-        expect(host.onUpdate).not.toHaveBeenCalled();
+        expect(vi.mocked(host.onUpdate!).mock.calls).toEqual(startupNotices);
     });
 
     it('answers raw requests without a valid known identity with a complete frame', async () => {
         const { host, turns } = await start();
         await observe(turns);
-        const worker = host['worker']!;
+        const worker = fixtureWorker(host)!;
         const known = host['snapshotReceiver'].currentPublication()!;
         for (const [index, invalid] of [undefined, { ...known, producerSeq: '2' }, { ...known, extra: true }].entries()) {
             const requestId = 'legacy-' + index;
@@ -211,7 +210,7 @@ describe('real SDK Worker observation refresh', () => {
         const initial = await observe(turns);
         await invoke(initial, 'change', { value: 1 });
         const first = await observe(turns);
-        const event = (name: string) => host['worker']!.postMessage({ type: 'TEST_COMMAND', command: name });
+        const event = (name: string) => fixtureWorker(host)!.postMessage({ type: 'TEST_COMMAND', command: name });
         const resultFor = (value: number) => ({ kind: 'receipt', receipt: {
             outcome: { status: 'succeeded', value: { data: { value } } },
         } });
@@ -244,11 +243,11 @@ describe('real SDK Worker observation refresh', () => {
             message: expect.stringContaining('Expected finite JSON data'),
         } });
         expect(committedState(host).status).toBe('degraded');
-        host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'redraw-other' });
+        fixtureWorker(host)!.postMessage({ type: 'TEST_COMMAND', command: 'redraw-other' });
         expect(await turns.prepare()).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
         const source = (host as any).snapshotReceiver.core.store.readLatest(host.appId);
         expect(source).toMatchObject({ status: 'degraded', lastGood: { id: initial.observation.source.snapshotId } });
-        host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
+        fixtureWorker(host)!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
         const recovered = await observe(turns);
         expect(await invoke(recovered, 'stats', {})).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
         expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });

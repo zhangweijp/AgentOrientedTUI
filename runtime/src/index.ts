@@ -38,10 +38,11 @@ export { defineRuntimeConfig, type RuntimeConfigInput } from './spi/config/index
 export type {
     AppInteractionPolicy,
     AppInvocation,
+    ReceiptOperation, InvocationOperation, ViewCloseReceiver, InteractionLimits, InteractionLimitOverrides,
     CancellationSignal,
     PublicRefValue,
     ReadPublicRefsResult,
-    ObservationCandidate,
+    ObservationCandidate, ObservationOptions,
     PrepareObservationResult,
     InspectRefMode, InspectRefResult,
     TurnSelection,
@@ -55,7 +56,9 @@ export type {
 export type { Observation, ObservationWindowSelection, ViewIdentity, ObservationGrant, ObservedTool, ObservedRef,
     RefConsumer, RefGrant } from '@aotui/core';
 export type { RefPath } from '@aotui/core';
-export type { AppWindows, AppWindowTarget, ViewWindow, ViewWindowTarget, ViewCloseResult } from './spi/runtime/windows.js';
+export type { AppWindows, AppWindowTarget, ViewWindow, ViewWindowTarget } from './spi/runtime/windows.js';
+
+export type { CloseViewRequest, CloseViewOptions } from './spi/runtime/kernel.interface.js';
 
 export { AOTUIError } from '@aotui/core';
 export { createDesktopId, createAppId } from './spi/core/id-factory.js';
@@ -71,13 +74,13 @@ export type {
     ToolResult,
 } from '@aotui/core';
 export type { UpdateSignal } from './spi/core/signals.js';
-export type { ActiveTurn, AdoptTurnResult, AppDiscoveryInfo, AppPolicyTarget, CandidateScope, CreateDesktopOptions, IDesktop,
+export type { ActiveTurn, AdoptTurnResult, AppDiscoveryInfo, AppRunFacts, AppPolicyTarget, CandidateScope, CreateDesktopOptions, IDesktop,
     IKernel, InvokeResult, OpenAppOptions, ReceiptAccess, ReceiptLocator, RunningApp, RunningAppResult,
     RegisterPendingAppOptions } from './spi/runtime/kernel.interface.js';
 export type { AppInteractionOptions } from './spi/runtime/app-interaction.interface.js';
 export type {
     AppExecutionBackend, AppExecutionEvent, AppExecutionHandle, AppExecutionIssue, AppExecutionLaunch,
-    AppExecutionProjection, AppExecutionRequest,
+    AppExecutionProjection, AppExecutionRequest, AppExecutionAcceptance,
 } from './spi/runtime/execution-backend.js';
 export type {
     AppCloseHandle,

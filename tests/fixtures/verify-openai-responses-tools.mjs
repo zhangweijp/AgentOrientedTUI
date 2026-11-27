@@ -204,16 +204,16 @@ for (const mode of requestedMode ? [requestedMode] : ['hosted', 'client']) {
         assert.equal(held.status, 'prepared');
         const heldObservation = held.candidate.observation;
         label = 'original-binding';
-        const heldTurn = desktop.adoptTurn({ apps: [{ candidate: held.candidate }] });
+        const heldTurn = desktop.adoptTurn({ apps: [{ candidate: held.candidate, windows:{activeViews:heldObservation.views.map(v=>({viewId:v.id,viewInstanceId:v.viewInstanceId})),closeViews:heldObservation.views.filter(v=>v.canClose).map(v=>({viewId:v.id,viewInstanceId:v.viewInstanceId}))} }] });
         assert.equal(heldTurn.status, 'adopted');
         const invokeOld = invocationId => heldTurn.turn.invoke(running.appId, {
             invocationId, observationId: heldObservation.observationId, toolId: heldObservation.tools.find(tool => tool.name === 'edit').id,
             viewId: initial.a.viewId, input: { expected: 'Alpha', text: 'Forbidden original binding' },
         });
-        assert.equal((await desktop.closeView(file(initial.a))).status, 'closed');
+        assert.equal((await desktop.closeView({target:file(initial.a),turn:heldTurn.turn,invocationId:'close-held-a-'+mode})).receipt.outcome.status, 'succeeded');
         const afterClose = await invokeOld('old_binding_closed_' + mode);
-        assert.equal(afterClose.receipt?.executionPhase, 'not-dispatched', JSON.stringify(afterClose));
-        assert.equal(afterClose.receipt.outcome.code, 'VIEW_INSTANCE_REVOKED');
+        assert.equal(afterClose.kind, 'refused', JSON.stringify(afterClose));
+        assert.equal(afterClose.code, 'VIEW_INSTANCE_REVOKED');
         const closedA = await rejectView('closed-a', 'call_closed_a_' + mode);
         assert.equal(closedA.delivery.error.code, 'TOOL_UNAVAILABLE');
         function checkLoadReplay(body) {
@@ -228,7 +228,12 @@ for (const mode of requestedMode ? [requestedMode] : ['hosted', 'client']) {
         }
         checkLoadReplay(closedA.request);
 
-        assert.equal((await desktop.closeView(file(initial.b))).status, 'closed');
+        const candidateB=await running.observe();
+        assert.equal(candidateB.status,'prepared');
+        const closeB=desktop.adoptTurn({apps:[{candidate:candidateB.candidate,windows:{activeViews:[],closeViews:[{viewId:initial.b.viewId,viewInstanceId:initial.b.viewInstanceId}]}}]});
+        assert.equal(closeB.status,'adopted');
+        try {assert.equal((await desktop.closeView({turn:closeB.turn,target:file(initial.b),invocationId:'close-b-'+mode})).receipt.outcome.status,'succeeded');}
+        finally {closeB.turn.release();candidateB.candidate.discard();}
         const historyPath = join(folder, 'saved-history.json');
         await writeFile(historyPath, JSON.stringify(history, null, 2));
         driver.dispose();

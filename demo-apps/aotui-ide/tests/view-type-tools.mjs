@@ -7,8 +7,8 @@ async function prepareTools(type, viewId, context) {
   const factory = createApp({
     app_name: 'ide_tool_fixture',
     viewTypes: [type],
-    initialize({ prepareProjection }) {
-      prepareProjection({ views: [createView(type, { ...(type.multiplicity === 'single' ? { id: viewId } : { idPrefix: viewId }), region: 'dynamic', render: () => ({ body: '', context }) })] });
+    initialize({ publish }) {
+      publish(() => [createView(type, { ...(type.multiplicity === 'single' ? { id: viewId } : { idPrefix: viewId }), region: 'dynamic' }).frame({body:'',context})]);
     },
   });
   await factory.initialize({
@@ -17,7 +17,7 @@ async function prepareTools(type, viewId, context) {
     signal: new AbortController().signal,
     publishFrame(build) {
       bindings = build().views[0].bindings;
-      return { status: 'prepared', sourceEpoch: 1 };
+      return { ok: true, epoch: 1, viewId: () => viewId };
     },
   });
   return Object.fromEntries(bindings.map(binding => [binding.name, binding]));

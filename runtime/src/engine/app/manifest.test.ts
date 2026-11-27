@@ -18,7 +18,7 @@ async function app(fields: Record<string, unknown> = {}) {
     await writeFile(modulePath, 'throw new Error("Discovery must not import the App.");');
     await writeFile(manifestPath, JSON.stringify({
         app_name: '3' + 'a'.repeat(50), version: '1.0.0', description: 'Declared description',
-        toolAuthoringProtocol: 'view-type-tools-v8', appLifecycleSupport: 'app-lifecycle-v2',
+        toolAuthoringProtocol: 'view-type-tools-v9', appLifecycleSupport: 'app-lifecycle-v3',
         entry: { main: './dist/entry.mjs' }, ...fields,
     }));
     return { modulePath, manifestPath };
@@ -50,7 +50,8 @@ it.each([
     [{ app_name: '' }, 'APP_MANIFEST_INVALID', 'app_name'],
     [{ entry: { main: './dist/missing.mjs' } }, 'APP_MANIFEST_INVALID', 'entry.main'],
     [{ toolAuthoringProtocol: 'old' }, 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', 'toolAuthoringProtocol'],
-    [{ appLifecycleSupport: 'old' }, 'APP_MANIFEST_INVALID', 'appLifecycleSupport'],
+    [{ appLifecycleSupport: 'old' }, 'APP_LIFECYCLE_UNSUPPORTED', 'appLifecycleSupport'],
+    [{ appLifecycleSupport: 'app-lifecycle-v2' }, 'APP_LIFECYCLE_UNSUPPORTED', 'appLifecycleSupport'],
 ] as const)('rejects invalid static fields (%s) with a located diagnostic', async (fields, code, field) => {
     const { manifestPath } = await app(fields);
     const error = await readAppManifest(directory).catch(reason => reason);

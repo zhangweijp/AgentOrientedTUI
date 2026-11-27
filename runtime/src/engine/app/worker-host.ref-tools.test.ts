@@ -1,4 +1,4 @@
-import { fixtureHost } from './__tests__/worker-fixture.js';
+import { fixtureHost, fixtureWorker } from './__tests__/worker-fixture.js';
 import { workerTurns } from '../../../tests/fixtures/semantic-worker-tools.js';
 import type { ActiveTurn, AppInvocation } from '@aotui/core';
 import { policyProbe } from '../../../tests/fixtures/policy-probe.js';
@@ -91,15 +91,15 @@ async function start(options: any = {}) {
     const post = worker.postMessage.bind(worker);worker.postMessage = (m: any) => { attempted.push(m);sent.push(m);post(m); };
     worker.stdout?.on('data', (b: any) => logs.push(String(b)));worker.stderr?.on('data', (b: any) => logs.push(String(b)));
     const authorization = policyProbe();
-    const host = fixtureHost(Host, { policy: authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile,
+    const host = fixtureHost(Host, { policy: authorization.policy, appId: 'app', desktopId: 'd', appModulePath: appFile, interactionLimits: {maxPendingInvocations:1},
         config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } }, { worker, timeoutMs: options.timeout ?? NORMAL_HOST_TIMEOUT_MS });
     worker.on('message', (m: any) => messages.push(m));
     const x: any = { authorization, host, worker, messages, rawMessages, sent, attempted, logs, transform(fn: any) { transform = fn; },
         entries: () => rawMessages.filter(m => m.type === 'REF_V2_HANDLER_ENTER'), handlerEntries: () => rawMessages.filter(m => m.type === 'REF_HANDLER_ENTRY'), guards: () => rawMessages.filter(m => m.type === 'REF_APP_GUARD'), posts: () => sent.filter(invokes), snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };
     closing.push(async () => {
-        const beforeCleanup = host.getResourceReport(), owned = host.worker === worker;
+        const beforeCleanup = host.getResourceReport(), owned = fixtureWorker(host) === worker && host.getResourceReport().worker === 'owned';
         host.terminate(); if (owned) await worker.terminate(); await host.waitForResourceRelease();
-        facts.push({ kind: 'actual Node Worker Ref invocation', caseId, workerFile, appModulePath: appFile,
+        facts.push({ kind: 'actual Node Worker Ref invocation', caseId, workerFile, appModulePath: appFile, interactionLimits: {maxPendingInvocations:1},
             instanceId: host.appInstanceId, rawMessages, deliveredMessages: messages, sent, attempted, scopes: x.scopes, logs, workerErrors,
             counts: { dispatches: x.posts().length, handlerEntries: x.handlerEntries().length, guards: x.guards().length, businessEntries: x.entries().length },
             beforeCleanup, cleanup: { method: 'low-level Host/Worker termination', settled: true,
@@ -182,7 +182,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
         if (kind === 'default' || kind === 'ref-metadata') assertReceiverReplacement(x, beforeReplacement);
         if (kind === 'unmount') await change(x, { show: false }, d => !d.views.some((v: any) => v.id === 'aa_1'));if (kind === 'close') x.host.beginInteractionClose();
         } finally { release.resolve(); await running.catch(() => undefined); }
-        const result = await running;expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'close' ? 'APP_INTERACTION_UNAVAILABLE' : 'VIEW_INSTANCE_REVOKED');expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+        const result = await running;expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'close' ? 'APP_STOPPED' : 'VIEW_INSTANCE_REVOKED');expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
     });
     it.each([5001, 10000])('R20 dispatches a legal %i-node Ref through the real Worker', async nodes => {
         const x = await start();await change(x, { capacityNodes: nodes }, d => Object.values(d.refs).some((r: any) => r.ownerViewId === 'aa_1' && r.id === 'capacity_alpha' && r.target.payload.list.length === nodes - 4));
@@ -195,8 +195,8 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
         const from = x.messages.length; await control(x, 'state', { patch: { capacityNodes: 10002 } });
         const failure = await wait(x, m => m.type === 'SNAPSHOT_PREPARE_FAILED', from);
         expect(failure.error.path).toContain('capacity_alpha');
-        expect(receipt(await s.invoke(s.request(o, 'capacity', { file: BIG_A }))).outcome).toMatchObject({
-            status: 'rejected', code: 'SNAPSHOT_UNREADY',
+        expect(await s.invoke(s.request(o, 'capacity', { file: BIG_A }))).toMatchObject({
+            kind:'refused', code: 'SNAPSHOT_UNREADY',
         });
         expect(s.authorizations).toHaveLength(0);expect(x.posts()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
     });
@@ -227,11 +227,11 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
     it('R14 last-matching-View re-mount revokes type activation; per-object D2 difference is covered by dual Producer', async () => {
         const x = await start(), s = scope(x), o = await s.observe(), old = s.request(o);
         await change(x, { enabled: false }, d => !Object.values(d.tools).some((t: any) => t.name === 'inspect'));
-        expect(receipt(await s.invoke(old)).outcome.status).toBe('rejected');expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+        expect(await s.invoke(old)).toMatchObject({kind:'refused',code:'TOOL_SOURCE_STALE'});expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
         await change(x, { enabled: true }, d => Object.values(d.tools).some((t: any) => t.name === 'inspect'));value(await s.invoke(s.request(await s.observe())));
         await change(x, { showSecond: false }, d => !d.views.some((v: any) => v.id === 'bb_1'));
         const before = await s.observe(['aa_1']), stale = s.request(before), handlersBeforeClose = x.handlerEntries().length;await change(x, { show: false }, d => !d.views.some((v: any) => v.id === 'aa_1'));
-        await change(x, { show: true }, d => d.views.some((v: any) => v.id === 'aa_2'));expect(receipt(await s.invoke(stale)).outcome.status).toBe('rejected');expect(x.handlerEntries()).toHaveLength(handlersBeforeClose);value(await s.invoke(s.request(await s.observe(['aa_2']), 'inspect', { file: '$ref.app.aa_2.alpha', choice: 'ok' }, 'aa_2')));
+        await change(x, { show: true }, d => d.views.some((v: any) => v.id === 'aa_2'));expect(await s.invoke(stale)).toMatchObject({kind:'refused',code:'VIEW_INSTANCE_REVOKED'});expect(x.handlerEntries()).toHaveLength(handlersBeforeClose);value(await s.invoke(s.request(await s.observe(['aa_2']), 'inspect', { file: '$ref.app.aa_2.alpha', choice: 'ok' }, 'aa_2')));
     });
     it('R10 actual Worker rejects a foreign App instance before entering its callable', async () => {
         const x = await start(), s = scope(x), o = await s.observe();value(await s.invoke(s.request(o)));const source = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE');

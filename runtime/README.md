@@ -1,12 +1,12 @@
 # @aotui/runtime
 
-Run trusted AOTUI Apps in a Node Host. Runtime owns Worker lifecycle, complete View snapshots, Observation adoption, and Tool dispatch. The App owns business state and effects. The Host owns execution policy, the model request, and its context budget.
+Run trusted AOTUI Apps in a Node Host. Runtime owns managed execution lifecycle, complete View snapshots, Observation adoption, and Tool dispatch. The App owns business state and effects. The Host owns execution policy, the model request, and its context budget.
 
 ## Install an App and make a call
 
 Build and package the note App from the README shipped with `@aotui/sdk`. Install `@aotui/runtime` in the Host. Save this example as `host.mjs` and pass the installed App's package directory or the entry file declared in `aoapp.json`. It prints the original note, the edited note, and the edit receipt.
 
-`readAppManifest(localPath)` returns the declared metadata and resolved module path without importing the App. The Host chooses an installation ID for each local package it registers. `desktop.openApp(installationId)` starts the Worker and returns a `RunningApp` with its `appId` and `instanceId`. Use distinct installation IDs to register multiple copies of a package.
+`readAppManifest(localPath)` returns the declared metadata and resolved module path without importing the App. The Host chooses an installation ID for each local package it registers. `desktop.openApp(installationId)` starts the App execution and returns a `RunningApp` with its `appId` and `instanceId`. Use distinct installation IDs to register multiple copies of a package.
 
 The Host owns its catalog, download policy, enabled Apps and auto-start. Catalog descriptions come from the manifest or the Host's bare-module installation options. For a trusted bare module, use `desktop.installDynamicWorkerApp(modulePath, { name })` with the factory's declared name. On either installation path, the Worker checks the factory's `app_name` against the registered name before business initialization. If you have the Desktop ID, use `runtime.getDesktop(desktopId)` to retrieve its handle.
 
@@ -77,12 +77,12 @@ The note example calls the Tool directly. A model Host follows this sequence:
 
 1. **Open an App.** Keep the returned `RunningApp`. To find it again use `desktop.getRunningApp(appId, instanceId)` with the original identity. Set a Desktop-wide interaction policy with `createDesktop({ id, policyForApp })` or override it at `openApp(installationId, { policy })`. The running instance keeps its selected policy.
 2. **Prepare candidates for the request.** Open `desktop.createCandidateScope()`. Its `scope.observe(app)` waits for queued projection commits and captures the complete published Views with compatible Refs and Tools. This process is independent of unrelated background business work. `app.preview()` reads current pages for diagnostics without creating a candidate. Call `scope.discard()` in a finally block and report any returned issues. An adopted candidate stays live through its turn. TypeScript hosts with explicit resource management can use `using scope = desktop.createCandidateScope()`.
-3. **Assemble and budget the actual request.** Render the selected View bodies as XML-wrapped Markdown User Messages. The Tool schemas use JSON Schema 2020-12. Check that the chosen Provider API and mode can represent the final Tools. Omit an incompatible App candidate with its Views and routes, and report its Tool and Schema path. Count history, instructions, all sources and reserved output. Try the budget hints or management-only layout below when needed.
+3. **Assemble and budget the actual request.** Render the selected View bodies as XML-wrapped Markdown User Messages. The Tool schemas use JSON Schema 2020-12. Check that the chosen Provider API and mode can represent the final Tools. If ordinary Tools cannot be represented, group their exact toolIds per App, discard the original unadopted candidate, and prepare at most once with `scope.observe(app, { excludeToolIds })`. Rebuild the entire presentation from the new candidates. Reject a failed replacement or a structurally invalid plan, preserving the previous adopted turn. Report Tool IDs and schema paths. Count history, instructions, all sources and reserved output. Try the budget hints or management-only layout below when needed.
 4. **Adopt once and send.** Call `desktop.adoptTurn({ apps })` with the complete selected candidates and windows, including an empty list for management-only. On rejection, the same scope can present a smaller selection and measure its request again before another adoption. The previous turn remains active wherever its sources and mounts are still live. Success replaces the whole turn at once and reports any cleanup issues. Keep the returned `ActiveTurn` with the request route.
 5. **Invoke from that turn.** Call `turn.invoke(appId, { observationId, toolId, invocationId, input })` with the exact model route and call ID. A single-instance View receives only business arguments. Multi-instance Tools also require the receiving XML `view_id`. Use the actual XML `app_id` and `view_id` to turn a local marker like `items[0]` into an address such as `$ref.notes.detail.items[0]`. Pass ordinary text like `"$HOME"` as written.
 6. **Read the receipt and close.** Save the invocation result's `locator` when present. Use `desktop.readReceipt(locator)` or pass its original `observationId` and `invocationId` to the original `app.readReceipt()`. Both apply the same instance and read-policy checks. A later adoption retires the old turn even when a candidate is reused. Call `turn.release()` when the Host no longer needs the current turn. At shutdown, await `runtime.beginClose().completion` and check both `ok` and `resourcesReleased`.
 
-For the repository's Driver, `@aotui/agent-driver-adapter` performs Source integration. When its Apps Source is enabled, `system-open_app` takes an `installation_id` from the Desktop and returns the running `app_id`. `system-close_app` takes the running `app_id`. Two installations of the same App have distinct installation keys. Runtime allocates public App IDs in start order, using the declared name and successive suffixes when needed. App Tool aliases and the adoption hook are documented in the adapter's README. Other Agent systems can use Runtime directly. A Host that assembles its own Desktop can use the exported `createCandidateScope` from `@aotui/runtime` as its scope factory. Each observed App supplies its own `observe()` method.
+For the repository's Driver, `@aotui/agent-driver-adapter` performs Source integration. When its Apps Source is enabled, `system-open_app` takes an `installation_id` from the Desktop and returns the running `app_id`. `system-close_app` takes the running `app_id`. Two installations of the same App have distinct installation keys. Runtime allocates public App IDs in start order, using the declared name and successive suffixes when needed. App Tool aliases and the adoption hook are documented in the adapter's README. Other Agent systems can use Runtime directly. A Host that assembles its own Desktop can use the exported `createCandidateScope` from `@aotui/runtime` as its scope factory. Each observed App supplies its own `observe(options?)` method. Exclusions are bounded canonical Tool IDs; duplicates and malformed IDs are rejected, unknown IDs are harmless. The original policy grant is fully validated before exclusions are applied; Refs and close grants are unchanged.
 
 The shared presenter puts `view_id`, `view_type`, `app_id`, `app_name` and `region` on every View's XML element. The Host uses the region to place messages. An unchanged static page can keep its previous position.
 
@@ -118,7 +118,7 @@ For model calls, pass the measured tool table, model tool name, original argumen
 
 ### Present and manage windows
 
-Read `desktop.getAppWindows(appId, instanceId)` for current mounts and their close capability. The Host owns folded presentation and optional notes keyed by the original App instance and View mount. On collapse, call `desktop.revokeWindowAccess(turn, target)` with the request's current `ActiveTurn` before recording the note. The target is `{ appId, instanceId }` for an App and includes `viewId` and `viewInstanceId` for a View. Stale turns and replaced mounts are rejected. On expand, change the Host layout and prepare a new observation. Previously revoked business or Ref access stays revoked. A collapsed View with `canClose` still supports `desktop.closeView(target, turn)`. The model's public `app_id` and `view_id` select targets captured in its request.
+Read `desktop.getAppWindows(appId, instanceId)` for current mounts and their close capability. The Host owns folded presentation and optional notes keyed by the original App instance and View mount. On collapse, call `desktop.revokeWindowAccess(turn, target, "body")` for a View or `desktop.revokeWindowAccess(turn, target, "all")` for a whole App with the request's current `ActiveTurn` before recording the note. The target is `{ appId, instanceId }` for an App and includes `viewId` and `viewInstanceId` for a View. Stale turns and replaced mounts are rejected. On expand, change the Host layout and prepare a new observation. Previously revoked business or Ref access stays revoked. A View with original granted close eligibility can be closed even if its body is folded. Use `desktop.closeView({ turn, target, invocationId }, { timeoutMs, signal })` with the original model call ID. The result uses the same Invocation/Receipt contract as a Tool. A successful close callback does not prove the View was removed; sample the new inventory before reporting removal. A repeated original call reads its original result, even after the mount is gone. Do not resolve its target again from the latest inventory. The model's public `app_id` and `view_id` select targets captured in its request.
 
 This single-App example builds one candidate for a complete request or a budget trial. A collapsed App contributes its note in the Desktop directory. A management-only request contributes the directory and its controls.
 
@@ -138,7 +138,7 @@ export function presentWindows(appName: string, observation: Observation, app: A
       presentation.hints.has(view.viewInstanceId) ? { kind: 'hint', text: hint(view.content.value) } : { kind: 'body' });
   }
   const result = projectDesktop({
-    apps: [{ observation, windows }], compact: presentation.managementOnly, capabilities: [],
+    apps: [{ observation, windows }], compact: presentation.managementOnly, capabilities: ['closeView'],
     catalog: [{
       app: { installationId: app.appId, name: appName, status: 'running', appId: app.appId, appInstanceId: app.instanceId },
       windows: { ...app, expanded: !notes.has(''), views: app.views.map(view =>
@@ -148,7 +148,7 @@ export function presentWindows(appName: string, observation: Observation, app: A
   if (result.issues.length) throw Error(JSON.stringify(result.issues));
   return {
     pages: result.views.map(({ region, content }) => ({ role: 'user' as const, region, content })),
-    tools: result.tools, selection: result.appSelections[0]?.windows ?? { activeViews: [] },
+    tools: result.tools, selection: result.appSelections[0]?.windows ?? { activeViews: [], closeViews: [] },
   };
 }
 ```
@@ -165,7 +165,7 @@ A successful close results in `closed` once Runtime confirms the original mount 
 
 An observation’s grant lists whole Ref identities. Add `consumers` to a grant to further restrict tool use to the listed App and View instances. Omit it to use the declared scope, or use an empty list for no receiving mounts. A body-visible Ref is inspectable in `schema` mode. In `value` mode the Ref must also be public in the original observation and still public on its publishing mount. Object keys and array indices select part of the original value without changing the permission. Host changes to grants take effect when adopting its next request; closing or folding a source immediately revokes the current turn’s related access.
 
-Use `projectDesktop` once for the whole filtered catalog. It projects business tools from eligible receiving pages and Refs from the displayed bodies. The adapter adds a Ref string branch only when a compatible source can reach a receiver. The Runtime rechecks the exact destination and argument at execution.
+Use `projectDesktop` once for the whole filtered catalog. It projects business tools from eligible receiving pages and Refs from the displayed bodies. The standard Schema is compiled from the declared Tool and multiplicity independently of current Ref availability. The Runtime rechecks the exact destination and argument at execution.
 
 Addresses have the form `$ref.app_id.view_id.ref_id` with optional paths, for example `$ref.contacts.list.people[0]["display.name"]`. Only a complete business argument or a direct array element is eligible for resolution. If a literal at one of those positions starts with one or more dollar signs followed by `ref.`, add one leading `$`. Send literal `$ref.x` as `$$ref.x` and literal `$$ref.x` as `$$$ref.x`.
 
@@ -203,20 +203,28 @@ python3 node_modules/@aotui/runtime/examples/python-host.py
 
 `node_modules/.bin/aotui-stdio` runs one Runtime and Desktop per local client. Send one JSON object per line on stdin with an `id` (string or integer), `method`, and optional `params` object. Read one JSON response per line on stdout with the same `id` and either `result` or `error` (`code`, `message`, optional `path`). App logs go to stderr. Semantic rejections such as a failed adoption are returned as a typed result, as they are in TypeScript.
 
-Start with `initialize({protocol: "aotui-stdio", majorVersion: 1, capabilities: {required: [], optional: ["output-events", "command-apps"]}})`. The response lists the accepted capabilities. With `output-events`, call `subscribeOutput({apps})` with the running App handles to receive separate `{event: "output", signal}` frames. `command-apps` enables local external App registration with a fixed executable and argument list.
+Start with `initialize({protocol: "aotui-stdio", majorVersion: 2, capabilities: {required: [], optional: ["output-events", "command-apps"]}})`. The response lists the accepted capabilities. With `output-events`, call `subscribeOutput({apps})` with the running App handles to receive separate `{event: "output", signal}` frames. `command-apps` enables local external App registration with a fixed executable and argument list.
 
 Register a package with `registerApp` and open its instance with `openApp`. To send a model request:
 
 1. Call `beginCandidateScope`, then `observe({scopeId, app})` for each selected App.
-2. Call `presentTurn` with the scope ID, filtered catalog installation IDs, supported control capabilities and each candidate’s display choices. Its response includes the View messages, desktop directory, default instruction, model tools and a `presentation` identifier. Measure the entire model request. A new trial in the same scope replaces the previous presentation.
+2. Call `presentTurn` with the scope ID, filtered catalog installation IDs, supported control capabilities and each candidate’s display choices. A ready response includes View messages, the desktop directory, default instruction, model tools and a `presentation` identifier. A reprepare response reports exact excluded tool IDs and no adoptable presentation; discard the original scope, prepare a new one with `observe({scopeId, app, options: {excludeToolIds}})`, and rebuild once. A rejected response cannot be adopted. Measure the entire model request. A new trial in the same scope replaces the previous presentation.
 3. Call `adoptTurn({scopeId, presentation})` for the chosen trial. Send its measured messages and tools after successful adoption. If adoption fails, revise the layout and measure again. In a finally block call `discardScope({scopeId})` and report cleanup issues. The adopted turn owns its selected observations.
 4. Pass the model’s business call directly to `invokeNative({turn, name, invocationId, input})`. A multi-page call carries its top-level `view_id` in the model input. Use the returned locator with `readDesktopReceipt`. End a turn with `releaseTurn`.
 
-The Python example keeps layout and notes in the Host. `getAppWindows` returns current mounts. `revokeWindowAccess` and `closeView` take the turn and the original App and View identities. Requests can overlap. Match replies by `id` and await dependent operations in order. Close stdin or request `shutdown` to finish and check the resource report.
+The Python example keeps layout and notes in the Host. `getAppWindows` returns current mounts. `revokeWindowAccess` accepts `channel: "body" | "close" | "all"` (default body; fold an entire App with all). `closeView` accepts `{turn, target: {appId, instanceId, viewId, viewInstanceId}, invocationId, timeoutMs?}`; the JSONL request ID is not the operation ID. Read registered results using their returned locator. Requests can overlap. Match replies by `id` and await dependent operations in order. Close stdin or request `shutdown` to finish and check the resource report.
+
+For a short independent close at a serial Host boundary, finish model output, tool consumption and any result-saving callback, then release the original turn. Prepare a candidate for the original instance/mount, choose no body Views and only the original closable mount (stdio compact layout with `closeMounts`), adopt, invoke close using its original target and call ID, and release the actual turn in finally. Do not interpret a successful callback as proof that the View was removed.
+
+`listApps()` includes the existing optional run facts: phase, execution resource and channel, projection health, availability, toolsEnabled, and resourcesReleased. They are diagnostics from the original owner, not invocation grants. Output notices including app_runtime_changed prompt a fresh directory read, not implicit model dispatch. Retain a closing instance until the owner is actually released. A closed/settled attempt alone does not prove release. With the original appId and instanceId, `desktop.beginCloseApp(appId, instanceId)` and stdio `closeApp({appId, instanceId})` address the same close owner; the stdio identity form is mutually exclusive with the app handle form. Explicitly reopen only after the installation is available.
+
+Ordinary startup failures retain INSTALL_FAILED with bounded startup details and independently verified cleanup/release summaries when available. Only trusted Runtime protocol diagnostics may be promoted to a protocol error. A business error with the same code is not a trusted protocol diagnostic.
+
+The presenter checks the actual XML 1.0 fields before adoption. Legal text is escaped exactly once, including CR preservation; illegal XML characters are diagnosed by field and identity rather than silently changed. Non-XML business JSON is unaffected.
 
 ### Close and reopen a Desktop
 
-Import `IKernel`, `IDesktop`, and close handles and reports from `@aotui/runtime`. Pass launch settings as `config` when registering each App. The App receives these settings in its author context.
+Import `IKernel`, `IDesktop`, and close handles and reports from `@aotui/runtime`. Pass launch settings as `config` when registering each App. The App receives these settings in its author context. For managed Node Apps, omission stays `undefined`; an explicit empty config remains an object. Runtime validates, copies, and deeply freezes the bounded JSON configuration at the execution boundary. A dynamic SDK declaration function and its initializer see that same captured value.
 
 Keep the `RunningApp` or `IDesktop` that owns the work. `app.beginClose()`, `desktop.beginClose()` and `runtime.beginClose()` return the same kind of handle. Closing immediately stops new work. Ordinary close preserves business data. To restart an App, check its close report and open the installation again for a fresh instance. Use the App's explicit business operations to delete its data.
 
@@ -226,19 +234,33 @@ Runtime shutdown stops admission and starts the registered Desktops and the Runt
 
 ## Managed execution and limits
 
+Set the invocation budgets at trusted App installation with `interactionLimits` (never in an App manifest or model input). Defaults are `maxPendingInvocations: 4`, `maxReads: 8`, `maxEntriesPerScope: 32`, `maxEntries: 32`, `maxReceiptContents: maxEntries`, `maxReceiptBytes: maxReceiptContents * 560 * 1024` and `receiptTtlMs: 60000`. Values are captured and frozen. Tools and business close share one FIFO, with execution concurrency one. Each admitted operation reserves its receipt-body capacity; a caller timing out or cancelling its wait cannot release an executing head. Expiring the body does not erase deduplication while the original source remains eligible. Use an original locator to query, never generate a fresh ID to recover an unknown outcome.
+
 The bundled Node Worker runs **trusted App code** with Host-granted system access. It provides execution and lifecycle boundaries, rather than a filesystem or network permission sandbox; see [Node Worker documentation](https://nodejs.org/api/worker_threads.html). Install with `toolsEnabled: false` for observation-only access. Host policy and live execution checks remain separate from Tool discovery.
 
 The default `worker.maxWorkers` is `Number.POSITIVE_INFINITY`; explicit finite settings keep their existing validation and counting. Projection limits and the Host model budget are separate. For a batch of selected Apps, register and open each installation separately and retain its specific result.
 
 The Host can lower an App's `projectionLimits` at installation. That immutable configuration is shared by Worker admission, Host observation and the SDK's read-only author context. It bounds complete per-App projection counts and JSON sizes. Snapshot, Ref payload and Tool Schema limits also apply. Managed opening admission uses `hostedObservationCapacityIssue` from `@aotui/core/host`, including the bytes of the Native Tool schemas with receiver routing and Ref hints. App pagination and reversible opening handle local capacity. The Host measures its assembled model request separately.
 
-The Worker submits the first frame on App open. Following commits send lightweight notices. `preview()` and `observe()` ask the Worker for a complete current projection or a short confirmation when it still matches the accepted frame. Both wait for queued App commits. The Host can coalesce preview reads while its preview is open. Formal observations go straight to Runtime and each successful `observe()` creates a fresh candidate with an observation ID. The candidate's `source.snapshotId` identifies the snapshot and `source.revision` tracks changes in its content.
+The execution supplies an accepted first frame during App open. Following commits send lightweight notices. `preview()` and `observe()` request a complete current projection or an exact confirmation of the current healthy publication. Both wait for queued App commits. The Host can coalesce preview reads while its preview is open. Formal observations go straight to Runtime and each successful `observe()` creates a fresh candidate with an observation ID. The candidate's `source.snapshotId` identifies the snapshot and `source.revision` tracks changes in its content.
 
-`desktop.output` carries `view_updated`, `projection_failed`, `projection_recovered`, `app_opened`, `app_closed`, and `attention_requested` with the originating `appId` and `instanceId`. Use projection and lifecycle notices to refresh an open preview. The Host decides whether a current, enabled App's `attention_requested` merits a new model request. Native calls and Ref reads confirm current eligibility even while preview is closed. An eligible value is read from the original observation.
+`desktop.output` carries `view_updated`, `projection_failed`, `projection_recovered`, `app_opened`, `app_closed`, `app_runtime_changed`, and `attention_requested` with the originating `appId` and `instanceId`. Use projection and lifecycle notices to refresh an open preview. The Host decides whether a current, enabled App's `attention_requested` merits a new model request. Native calls and Ref reads confirm current eligibility even while preview is closed. An eligible value is read from the original observation.
 
-Apps own their own business state, persistence and save confirmation. Hosts may pass data directory paths or launch settings through `config`. Close stops business admission, gives the App's cleanup callback time to settle (`appCleanup`), confirms physical Worker exit and interaction release (`resourcesReleased`), and preserves failures separately in the close report.
+Apps own their own business state, persistence and save confirmation. Hosts may pass data directory paths or launch settings through `config`. Close stops business admission, gives the App's cleanup callback time to settle (`appCleanup`), confirms actual execution exit with its result channel drained and interaction release (`resourcesReleased`), and preserves failures separately in the close report.
 
-For a low-level factory, `AppLifecyclePort.register(callbacks)` returns a function that starts those callbacks early. Formal close joins the same cleanup and reports its outcome. With the SDK, authors register callbacks using `registerCleanup`, which returns `void`.
+For a low-level factory, `AppLifecyclePort.register(callbacks)` returns `void`. The Runtime alone initiates stop and joins initialization, entered business work and cleanup before releasing its registries. With the SDK, authors register callbacks using `registerLifecycle`, also returning `void`. Factory initialization returns no instance or second cleanup callback.
+
+### Supply an execution backend
+
+Node Workers, command Apps and trusted custom backends share the same Runtime Controller, Receiver, observation and receipt contracts. Register a command App with a fixed argument vector as `command`; see the [external App protocol v2](examples/app-protocol-v2.md) and [Python reference App](examples/python-files.py). This is the App-side `aotui-app` protocol, distinct from the Host-side `aotui-stdio` protocol.
+
+For a custom backend, import the public `AppExecutionBackend`, `AppExecutionLaunch`, `AppExecutionProjection`, `AppExecutionRequest` and `AppExecutionEvent` types from `@aotui/runtime`. Configure `createRuntime({ executionBackends: { custom: backend } })` and register an installation with `{ installationId, name, backend: "custom" }`. Each `start(launch, emit)` returns a fresh execution handle synchronously; throw only if there is no execution to release. The handle accepts original requests through `send(request)` and requests termination through `terminate()`. A thrown send does not establish that an operation was never entered.
+
+- **Publication:** use `launch.acceptProjection(frame, mode, requestId)` for actual Receiver acceptance, not a preflight check. The first actually accepted complete frame includes `viewTypes`, the sealed minimal table of all declared type names and multiplicities (including types with no active Tools; an empty table is valid). Rejection does not seal it. Later accepted frames omit the table. Keep the Producer's local mount, activation, sequence, epoch and Ref continuity facts; the Receiver validates them. A candidate commits locally only after actual acceptance; a rejected candidate preserves the old state. Authoritative publication represents an already committed local frame; Receiver rejection does not undo business state.
+- **OPEN and observe:** for a sampled frame, pass the original OPEN/observe request ID as `requestId` and return `reply/done` with its exact accepted publication stamp. The stamp is `{ appId, instanceId, producerSeq, sourceEpoch }`. For an observe request whose optional `known` stamp exactly matches the current healthy local publication, emit `{ kind: "projectionCurrent", id: request.id, publication: request.known }` instead. A generic done without the correlated sample is not a confirmation. Unsolicited authoritative publications do not complete an unrelated request.
+- **Actual lifecycle:** report initialize ready, original lifecycle completions and their validated cleanup facts, and actual business terminals (`not-entered`, `entered-returned`, or `finished-unknown`) against their original request IDs. STOP seals new work; CLOSE joins actual initialization/open and entered business work before cleanup within the original close grace. Caller wait failure does not settle actual work or authorize a retry. Emit `channelEnded` only after all complete receipts have been delivered; channel end alone does not prove physical exit. Emit `exited` only when the execution has actually exited and its receipt channel has drained. Termination requests and cleanup results do not themselves prove release.
+
+Runtime owns admission, actual accepted publication, original observation/operation association and resource release. Read the existing directory `run` facts and original close reports for Host diagnostics; no backend-specific Worker protocol is required for Host observation or invocation.
 
 ## Versions and distribution
 
@@ -246,14 +268,16 @@ Use SDK 0.9.0 and Runtime 8.0.0 from the same delivery. Both select Core 0.1.0. 
 
 | Boundary | Current identifier |
 | --- | --- |
-| App factory and `aoapp.json` | `view-type-tools-v8` |
-| Snapshot | `schemaVersion: 8` |
-| Worker initialization and operation transport | `app-worker/v10` with App update notices, on-demand frames, mount-bound actions and local Ref checks |
-| App lifecycle | `app-lifecycle-v2` |
+| App factory and `aoapp.json` | `view-type-tools-v9` |
+| Snapshot | `schemaVersion: 9` |
+| Worker initialization and operation transport (private Node wire) | `app-worker/v12` with the initial sealed ViewType table, correlated publication, mount-bound actions and local Ref checks |
+| Command App JSONL | `aotui-app` major 2 |
+| Host JSONL | `aotui-stdio` major 2 |
+| App lifecycle | `app-lifecycle-v3` |
 
 Use the bundled Worker with its matching Runtime build. A mismatched initialization marker reports `WORKER_PROTOCOL_UNSUPPORTED`. The marker is internal to the handshake. Hosts can receive model usage through their model Driver.
 
-These identifiers are boundary checks, not a cross-version negotiation or fallback mechanism. Local release checks build and consume the matching Node ESM packages and run independent Python v1 clients.
+These identifiers are boundary checks, not a cross-version negotiation or fallback mechanism. Local release checks build and consume the matching Node ESM packages and run independent Python major 2 clients.
 
 ## Choose a package entry
 

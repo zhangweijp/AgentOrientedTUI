@@ -86,7 +86,7 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     cinemaClient.release(observation.observationId);
     const tuple = { type: 'array', minItems: 2, items: false,
         prefixItems: [{ type: 'string', description: 'Row' }, { type: 'integer', minimum: 1, description: 'Seat number' }] };
-    const native = (id, seat) => modelCall(id, 'cinema-lookup', { seat });
+    const native = (id, seat) => modelCall(id, 'cinema-Hall-lookup', { seat });
     const compare = async (label, calls = [], beforeReply) => {
         const { body, message } = await turn(label, calls, beforeReply);
         const tools = functions(body);
@@ -99,11 +99,8 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
         native('seat-number', ['A', '12']), native('seat-zero', ['A', 0])]);
     const observedSchema = JSON.parse(JSON.stringify(lookup.inputSchema));
     assert.deepEqual(observedSchema.properties.seat, tuple);
-    const receivers = observation.views.filter(view => view.type === lookup.viewType)
-        .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-    const nativeSchema = projectNativeToolSchema({ ...lookup, inputSchema: observedSchema }, observation.source, receivers,
-        observation.refs.map(ref => ({ source: observation.source, ref })));
-    assert.deepEqual(first.tools['cinema-lookup'].parameters, nativeSchema);
+    const nativeSchema = JSON.parse(JSON.stringify(projectNativeToolSchema({ ...lookup, inputSchema: observedSchema })));
+    assert.deepEqual(first.tools['cinema-Hall-lookup'].parameters, nativeSchema);
     const [literal, refInput] = nativeSchema.properties.seat.anyOf;
     assert.deepEqual(literal.prefixItems[0], tuple.prefixItems[0]);
     assert.deepEqual(literal.prefixItems[1].anyOf[0], tuple.prefixItems[1]);
@@ -119,11 +116,11 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     const deskPage = views(first.body).find(view => view.includes('\nDesk west\n'));
     const westId = / view_id="([^"]+)"/.exec(deskPage)?.[1];
     assert.ok(westId);
-    assert.equal(first.tools['cinema-lookup_at'].parameters.required[0], 'view_id');
+    assert.equal(first.tools['cinema-Desk-lookup_at'].parameters.required[0], 'view_id');
     const declaration = consoleDeclaration(first.body);
-    assert.match(declaration, /"cinema-lookup"\(args: .*readonly \[string, number(?: \| AppRefAddress)?\]/);
-    assert.match(declaration, /"cinema-lookup_at"\(args: .*\bview_id: string/);
-    assert.match(declaration, /"cinema-selection"\(args: .*AppRefAddress/);
+    assert.match(declaration, /"cinema-Hall-lookup"\(args: .*readonly \[string, number(?: \| AppRefAddress)?\]/);
+    assert.match(declaration, /"cinema-Desk-lookup_at"\(args: .*\bview_id: string/);
+    assert.match(declaration, /"cinema-Hall-selection"\(args: .*AppRefAddress/);
     codes.declaration = declaration;
 
     const snapshot = await compare('seat-original-ref', [native('old-ref', address)], async () => {
@@ -133,11 +130,11 @@ export async function exerciseCinema(turn, manifest, cinemaClient, captured) {
     });
     assert.ok(views(snapshot.body).some(view => view.includes('Reserved seat A 12')));
     assert.deepEqual(snapshot.result[0].parameters.seat, original);
-    const program = `await tools["cinema-lookup_at"]({view_id:${JSON.stringify(westId)}, seat:["$sale",7], label:"$$ref.cinema.hall.row", tags:["$ref.cinema.hall.row"]});
-await tools["cinema-selection"]({seat:"${address}"});
-await tools["cinema-lookup"]({seat:refs.cinema.hall.seat}); inspect(refs.cinema.hall.seat);`;
+    const program = `await tools["cinema-Desk-lookup_at"]({view_id:${JSON.stringify(westId)}, seat:["$sale",7], label:"$$ref.cinema.hall.row", tags:["$ref.cinema.hall.row"]});
+await tools["cinema-Hall-selection"]({seat:"${address}"});
+await tools["cinema-Hall-lookup"]({seat:refs.cinema.hall.seat}); inspect(refs.cinema.hall.seat);`;
     const active = await compare('seat-console', [modelCall('program-tuple', 'run_code', { code: program }),
-        modelCall('mixed-tags', 'cinema-lookup_at', { view_id: westId, seat: ['$ordinary', 3], label: 'native', tags: ['$ref.cinema.hall.row', 'keep', '$ref.cinema.hall.row'] })]);
+        modelCall('mixed-tags', 'cinema-Desk-lookup_at', { view_id: westId, seat: ['$ordinary', 3], label: 'native', tags: ['$ref.cinema.hall.row', 'keep', '$ref.cinema.hall.row'] })]);
     assert.ok(views(active.body).some(view => view.includes('Reserved seat B 9')));
     assert.equal(active.result[0].subcalls.length, 3, JSON.stringify(active.result[0]));
     assert.ok(active.result[0].subcalls.every(receipt => receipt.status === 'succeeded' && receipt.phase === 'entered-returned'));
@@ -187,7 +184,7 @@ await tools["cinema-lookup"]({seat:refs.cinema.hall.seat}); inspect(refs.cinema.
 export async function exerciseStrict(turn, label, manifest, captured) {
     const count = captured.events.length;
     const start = (await healthyLog(manifest)).length;
-    const calls = [modelCall(label + '-confirm', 'healthy-confirm', { text: label })];
+    const calls = [modelCall(label + '-confirm', 'healthy-Ready-confirm', { text: label })];
     const { body, message } = await turn(label, calls);
     const tools = functions(body);
     const pages = views(body);
@@ -197,10 +194,10 @@ export async function exerciseStrict(turn, label, manifest, captured) {
     assert.ok(Object.keys(tools).every(name => !name.startsWith('cinema-')));
     assert.ok(body.tools.every(({ function: fn }) => fn.strict === true));
     assert.ok(tools['system-open_app'] && tools['system-close_app']);
-    const issue = body.messages.find(item => item.role === 'user' && item.content.includes('cannot encode cinema-lookup'));
+    const issue = body.messages.find(item => item.role === 'user' && item.content.includes('cannot encode cinema-Hall-lookup'));
     assert.ok(issue?.content.includes('prefixItems'), JSON.stringify(body.messages));
     assert.deepEqual(tools.run_code.parameters.required, ['code', 'imports', 'reset']);
-    assert.ok(!consoleBindings(body).includes('"cinema-lookup"'), 'Console must keep the same App selection');
+    assert.ok(!consoleBindings(body).includes('"cinema-Hall-lookup"'), 'Console must keep the same App selection');
     assert.deepEqual(tools['system-collapse_view'].parameters.required, ['app_id', 'view_id', 'note']);
     assert.deepEqual(tools['system-collapse_app'].parameters.required, ['app_id', 'note']);
     assert.deepEqual(captured.events.slice(count).map(event => [event.appId, event.status]), [['healthy', 'adopted']]);

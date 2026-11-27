@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { jsonSchema, ProviderToolSchemaError, type ProviderToolSchemaPolicy, type Tool } from '@aotui/agent-driver-v2';
 import { collapsedWindowText, escapeXmlText, DESKTOP_TOOL_NAMES as desktopToolNames, DEFAULT_AOTUI_SYSTEM_INSTRUCTION,
-    inspectRefSchema as inspectSchema, projectDesktop, routeNativeInvocation, type DesktopCapability, type NativeTool,
+    inspectRefSchema as inspectSchema, projectDesktop, routeNativeInvocation, captureSystemInput, diagnosticXmlText, type DesktopCapability, type NativeTool, type CloseViewRoute,
     type PresentedAppWindows, type ViewPresentation, type WindowPresentation } from '@aotui/runtime/adapters';
 import { isInstanceName, type InteractionIssue } from '@aotui/core';
 import { loadAOTUIInstruction } from './load-aotui-instruction.js';
@@ -51,7 +51,7 @@ function semanticToolResult(toolName: string, toolCallId: string, result: Invoke
     }
     if (result.kind !== 'receipt') return unavailable(toolName, toolCallId, result.code,
         result.message + (result.kind === 'refused' && result.path ? ' At ' + result.path + '.' : ''),
-        result.kind === 'refused' || result.code === 'INVOCATION_DEADLINE_EXCEEDED' || result.code === 'INVOCATION_CANCELLED' ? 'rejected' : 'unknown');
+        result.kind === 'refused' || result.executionPhase === 'not-dispatched' ? 'rejected' : 'unknown');
     const outcome = result.receipt.outcome;
     const base = { toolName, toolCallId, outcomeStatus: outcome.status };
     if (outcome.status === 'succeeded') {
@@ -69,10 +69,11 @@ function semanticToolResult(toolName: string, toolCallId: string, result: Invoke
 }
 
 async function inspect(turn: ActiveTurn, input: unknown, toolCallId: string): Promise<ToolResult> {
-    if (!object(input) || Object.keys(input).length !== 2 || typeof input.address !== 'string' ||
-        (input.mode !== 'schema' && input.mode !== 'value')) return unavailable(INSPECT_REF, toolCallId,
+    const captured = captureSystemInput({ inputSchema: inspectSchema }, input);
+    if (captured.status === 'rejected') return unavailable(INSPECT_REF, toolCallId,
         'REF_INSPECTION_INVALID', 'Supply a complete $ref. address and schema or value mode.');
-    const result = await turn.inspectRef(input.address, input.mode);
+    const { address, mode } = captured.value;
+    const result = await turn.inspectRef(address as string, mode as 'schema' | 'value');
     return result.status === 'ready' ? { toolName: INSPECT_REF, toolCallId, outcomeStatus: 'succeeded',
         result: 'schema' in result ? { schema: result.schema } : { value: result.value } }
         : unavailable(INSPECT_REF, toolCallId, result.issue.code, result.issue.message);
@@ -92,7 +93,7 @@ type Expansion = { appId: AppID; instanceId: string; view?: ViewWindowTarget; bo
 type BudgetReportScope = readonly { installationId: string; appId: AppID; instanceId: string;
     views: ObservationWindowSelection['activeViews'] }[];
 type StoredReport = { report: WindowBudgetReport; scope: BudgetReportScope; key: string; until: number };
-type Control = (input: unknown, callId: string, current: () => ActiveTurn | undefined, budget?: ToolExecutionBudget) => Promise<ToolResult>;
+type Control = (input: unknown, callId: string, current: () => ActiveTurn | undefined, budget?: ToolExecutionBudget, signal?: AbortSignal) => Promise<ToolResult>;
 const windowKey = (appId: string, viewInstanceId: string) => JSON.stringify([appId, viewInstanceId]);
 
 function sameWindowEligibility(before: DisplayedWindows | undefined, after: DisplayedWindows | undefined): boolean {
@@ -113,7 +114,7 @@ class AppProjectionError extends Error {
 function boundedText(text: string, limit: number): string {
     let safe = '';
     for (const character of text) {
-        const escaped = /[\u0000-\u001f\u007f]/.test(character) ? ' ' : character;
+        const escaped = /[\r\n\t\u007f]/.test(character) ? ' ' : diagnosticXmlText(character);
         if (safe.length + escaped.length > limit) break;
         safe += escaped;
     }
@@ -174,9 +175,11 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
     private readonly pendingAttention = new Map<string, UpdateSignal>();
     private readonly update = () => { for (const listener of this.listeners) listener(); };
     private readonly requestAttention: Parameters<IDesktop['output']['subscribe']>[0] = signal => {
-        if (signal.reason !== 'attention_requested' || this.disposed || !this.enabled || !this.appsEnabled) return;
+        if (this.disposed || !this.enabled || !this.appsEnabled) return;
+        // Runtime notices are re-read hints for the Host preview, not model triggers.
+        if (signal.reason !== 'attention_requested') return;
         const app = this.desktop.listApps().find(item => item.appId === signal.appId && item.appInstanceId === signal.instanceId);
-        if (app?.status !== 'running' || !this.isAppEnabled(app.installationId)) return;
+        if (app?.status !== 'running' || app.run && app.run.phase !== 'opened' || !this.isAppEnabled(app.installationId)) return;
         this.pendingAttention.set(app.installationId, signal);
         this.update();
     };
@@ -203,7 +206,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
         return apps.map(app => ({ installationId: app.installationId,
             ...(app.appId && app.appInstanceId ? { appId: app.appId, appInstanceId: app.appInstanceId } : {}),
             name: app.name, status: app.status,
-            description: app.description, whatItIs: app.whatItIs, whenToUse: app.whenToUse }));
+            description: app.description, whatItIs: app.whatItIs, whenToUse: app.whenToUse, ...(app.run ? { run: app.run } : {}) }));
     }
 
     private currentApp(installationId: string): AppDiscoveryInfo | undefined {
@@ -228,6 +231,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 if (typeof name !== 'string') return undefined;
                 const appInstanceId = value('appInstanceId');
                 return { installationId, name, status: status as AppDiscoveryInfo['status'],
+                    ...(value('run') ? { run: value('run') as AppDiscoveryInfo['run'] } : {}),
                     ...(typeof appId === 'string' && typeof appInstanceId === 'string' ? { appId: appId as AppID, appInstanceId } : {}) };
             } catch { return undefined; }
         }
@@ -244,26 +248,29 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
 
     private async invokeApp(turn: ActiveTurn, route: ToolRoute, nativeTools: readonly NativeTool[], name: string, input: unknown,
         id: string, signal?: AbortSignal): Promise<ConsoleRoutedCall> {
-        if (signal?.aborted) return { result: unavailable(name, id, 'INVOCATION_CANCELLED', 'Cancelled before dispatch.') };
-        if (!this.allowed(route.app)) return { result: unavailable(name, id, 'APP_DISABLED', 'This application is disabled.') };
+        if (!this.allowed(route.app)) return { result: unavailable(name, id, 'APP_DISABLED', 'This application is disabled.'), executionPhase: 'not-dispatched' };
         const resolved = routeNativeInvocation(nativeTools, name, input, id);
         if (resolved.status === 'rejected')
-            return { result: unavailable(name, id, resolved.issue.code, resolved.issue.message) };
-        const { appId, instanceId: appInstanceId, ...request } = resolved.invocation;
-        const pending = (): PendingAppReceipt => Object.freeze({ desktopId: this.desktop.id, appId: appId as AppID, appInstanceId,
-            observationId: request.observationId, invocationId: id });
+            return { result: unavailable(name, id, resolved.issue.code, resolved.issue.message), executionPhase: 'not-dispatched' };
+        const { appId, instanceId: _instanceId, ...request } = resolved.invocation;
         try {
             const invoked = await turn.invoke(appId, request, undefined, signal);
-            const locator = invoked.locator;
-            return { result: semanticToolResult(name, id, invoked),
-                ...(invoked.kind === 'receipt' ? { receipt: invoked.receipt } : {}),
-                ...(invoked.kind === 'unavailable' && (invoked.code === 'INVOCATION_WAIT_TIMEOUT' || invoked.code === 'INVOCATION_WAIT_CANCELLED')
-                    ? { pending: locator ? { desktopId: locator.desktopId, appId: locator.appId, appInstanceId: locator.instanceId,
-                        observationId: locator.observationId, invocationId: locator.invocationId } : pending() } : {}) };
+            return this.routedResult(name, id, invoked);
         } catch {
-            return { result: unavailable(name, id, 'INVOCATION_RESULT_UNKNOWN', 'Execution could not be confirmed. Do not blindly retry.', 'unknown'),
-                pending: pending() };
+            return { result: unavailable(name, id, 'INVOCATION_RESULT_UNKNOWN', 'Execution could not be confirmed. Do not blindly retry.', 'unknown') };
         }
+    }
+
+    private routedResult(name: string, id: string, invoked: InvokeResult): ConsoleRoutedCall {
+        const result = semanticToolResult(name, id, invoked);
+        if (invoked.kind === 'receipt') return {result, receipt: invoked.receipt, executionPhase: invoked.receipt.executionPhase};
+        if (invoked.kind === 'refused') return {result, executionPhase: 'not-dispatched'};
+        const locator = invoked.locator;
+        return {result, ...(invoked.executionPhase === undefined ? {} : {executionPhase:invoked.executionPhase}),
+            ...(locator && invoked.code !== 'RESULT_EXPIRED' ? {pending:{
+                desktopId:locator.desktopId, appId:locator.appId, appInstanceId:locator.instanceId,
+                observationId:locator.observationId, invocationId:locator.invocationId,
+            }} : {})};
     }
 
     private reportPendingReceipt(locator: PendingAppReceipt, result: ToolResult, subcallId?: string): void {
@@ -330,7 +337,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             for (const app of apps) {
                 const { appId, name: appName, installationId } = app;
                 if (released || this.generation !== generation) break;
-                if (!appId || !app.appInstanceId || app.status !== 'running') continue;
+                if (!appId || !app.appInstanceId || app.status !== 'running' || app.run && app.run.phase !== 'opened') continue;
                 if (expansion?.appId !== appId && this.windowNotes.get(app.appInstanceId)?.has('')) continue;
                 try {
                     if (!isInstanceName(appName) || !isInstanceName(appId))
@@ -383,16 +390,91 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 displayCatalog.set(expansion.appId, mount === undefined ? { ...window, expanded: true } : { ...window,
                     views: window.views.map(view => view.viewInstanceId === mount ? { ...view, expanded: true } : view) });
             }
+            // Compile the initial actual candidates before any model measurement or adoption.
+            // A failed ordinary Tool is not merely hidden: its candidate must first be released.
+            const toolCheck = (name: string, schema: NativeTool['inputSchema']) => {
+                const rejected = toolSchema?.check?.(schema);
+                if (!rejected) return;
+                const error = new ProviderToolSchemaError(toolSchema!.label, name, rejected.path, rejected.reason);
+                return boundedIssue(error.code, error.message, error.path);
+            };
+            const excludedDiagnostics = new Map<string, (InteractionIssue & { readonly toolId?: string })[]>();
+            const projectionFor = ({ hints, managementOnly }: WindowPresentation, capabilities: readonly DesktopCapability[],
+                notice?: BudgetNotice, desktopSuffix?: string, requiredCapabilities: readonly DesktopCapability[] = []) => projectDesktop({
+                apps: projections.map(({ observation }) => ({
+                    observation,
+                    windows: new Map(observation.views.map(view => {
+                        const key = windowKey(observation.source.appId, view.viewInstanceId);
+                        const notes = this.windowNotes.get(observation.source.instanceId);
+                        const expanded = displayCatalog.get(observation.source.appId)?.views.find(item => item.viewInstanceId === view.viewInstanceId)?.expanded;
+                        const note = expanded === false ? notes?.get(view.viewInstanceId) ?? '' : undefined;
+                        const choice: ViewPresentation = note !== undefined ? { kind: 'collapsed', note }
+                            : hints.has(key) ? { kind: 'hint', text: budgetHint(notice!.full) } : { kind: 'body' };
+                        return [view.viewInstanceId, choice];
+                    })),
+                })),
+                catalog: apps.map(app => {
+                    const windows = app.appId ? displayCatalog.get(app.appId) : undefined;
+                    const note = windows?.expanded === false ? this.windowNotes.get(windows.instanceId)?.get('') ?? '' : undefined;
+                    return { app, windows, note, issue: issues.get(app.installationId), toolIssues: excludedDiagnostics.get(app.installationId) };
+                }),
+                capabilities, requiredCapabilities, includeInstruction: false, compact: managementOnly,
+                desktopSuffix, emptyCatalogText: installedApps.length ? '- No applications enabled for this context.' : '- No applications installed.',
+                checkTool: toolCheck,
+            });
+            const assertPlan = (plan: ReturnType<typeof projectDesktop>) => {
+                const issue = plan.systemIssues.find(item => item.required)?.issue ??
+                    (plan.status !== 'ready' ? plan.issues[0]?.issue : undefined);
+                if (plan.status !== 'ready')
+                    throw new AppProjectionError(issue?.code ?? 'MODEL_TOOL_SCHEMA_UNSUPPORTED',
+                        issue?.message ?? 'The final presentation could not be prepared.', issue?.path);
+            };
+            const initialLayout = { hints: new Set<string>(), managementOnly: false };
+            const initial = projectionFor(initialLayout, appsEnabled ? ['open', 'close'] : []);
+            if (initial.status === 'rejected') assertPlan(initial);
+            for (const { appId, excludeToolIds } of initial.exclusions) {
+                const index = projections.findIndex(item => item.observation.source.appId === appId);
+                const old = projections[index];
+                if (!old) throw new AppProjectionError('OBSERVATION_UNAVAILABLE', 'The original candidate is unavailable.');
+                const cleanup = old.candidate.discard();
+                if (cleanup.length) throw cleanupFailure(cleanup);
+                // The same scope owns all remaining candidates; the old adopted Turn is untouched.
+                const next = await candidateScope.observe(this.runningApp(old.app), { excludeToolIds });
+                if (next.status !== 'prepared')
+                    throw new AppProjectionError(next.issue.code, next.issue.message, next.issue.path);
+                const { candidate } = next;
+                const current = this.listApps().find(app => app.installationId === old.app.installationId);
+                const expected = catalog.get(appId);
+                const live = this.currentWindows(old.app.appId!, old.app.appInstanceId!);
+                if (released || this.generation !== generation || this.windowRevision !== windowRevision ||
+                    current?.appId !== appId || current.appInstanceId !== old.app.appInstanceId || current.status !== 'running' ||
+                    current.run && current.run.phase !== 'opened' ||
+                    candidate.observation.source.appId !== appId || candidate.observation.source.instanceId !== old.observation.source.instanceId ||
+                    !sameWindowEligibility(expected, live) ||
+                    old.observation.views.length !== candidate.observation.views.length ||
+                    old.observation.views.some(view => !candidate.observation.views.some(next =>
+                        next.id === view.id && next.viewInstanceId === view.viewInstanceId)) ||
+                    candidate.observation.tools.some(tool => excludeToolIds.includes(tool.id)))
+                    throw new AppProjectionError('SEMANTIC_WINDOW_CHANGED', 'The App or Window changed during narrow observation preparation.');
+                // No previous observation payload or route is retained for this App.
+                projections[index] = { app: current, candidate, observation: candidate.observation };
+                apps[apps.indexOf(old.app)] = current;
+                if (live) {
+                    catalog.set(appId, live);
+                    if (!expansion || expansion.appId !== appId) displayCatalog.set(appId, live);
+                }
+                const diagnostics = initial.issues.filter(item => item.appId === appId).map(item => item.issue);
+                if (diagnostics.length) excludedDiagnostics.set(old.app.installationId, diagnostics);
+            }
+            if (initial.exclusions.length) {
+                // A second incompatible declaration is a failed plan, not another retry.
+                assertPlan(projectionFor(initialLayout, appsEnabled ? ['open', 'close'] : []));
+            }
             const displayApp = (app: AppDiscoveryInfo): DisplayedApp =>
                 ({ ...app, status: displayedStatus(app, app.appId ? displayCatalog.get(app.appId) : undefined) });
             const displayed = apps.map(displayApp);
             const catalogApps = new Map<string, AppDiscoveryInfo>(apps.flatMap(app => app.appId ? [[app.appId, app]] : []));
             const candidates = new Map(projections.map(({ candidate }) => [candidate.observation.observationId, candidate]));
-            const viewNotes = new Map<string, string>();
-            for (const app of displayCatalog.values()) for (const view of app.views) {
-                if (!view.expanded) viewNotes.set(windowKey(app.appId, view.viewInstanceId),
-                    this.windowNotes.get(app.instanceId)?.get(view.viewInstanceId) ?? '');
-            }
             let logs: readonly { timestamp: number; message: string }[] = [];
             if (appsEnabled && !this.disabledApps.size) {
                 try { logs = this.desktop.getSystemLogs?.().slice(-5) ?? []; } catch { /* Optional diagnostic metadata. */ }
@@ -430,38 +512,12 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     : this.disabledApps.size ? '- Desktop-wide logs are hidden while application filtering is active.' : '- No recent activity.');
                 const budgetText = notice ? `\n\nContext budget: ${notice.full.estimated} estimated; ${notice.full.inputLimit} available. ` +
                     `Use the window controls or ${BUDGET_TOOL} with report_id ${notice.reportId}.\n` : '';
-                const projected = projectDesktop({
-                    apps: projections.map(({ observation }) => ({
-                        observation,
-                        windows: new Map(observation.views.map(view => {
-                            const key = windowKey(observation.source.appId, view.viewInstanceId);
-                            const note = viewNotes.get(key);
-                            const choice: ViewPresentation = note !== undefined ? { kind: 'collapsed', note }
-                                : hints.has(key) ? { kind: 'hint', text: budgetHint(notice!.full) } : { kind: 'body' };
-                            return [view.viewInstanceId, choice];
-                        })),
-                    })),
-                    catalog: apps.map(app => {
-                        const windows = app.appId ? displayCatalog.get(app.appId) : undefined;
-                        const note = windows?.expanded === false ? this.windowNotes.get(windows.instanceId)?.get('') ?? '' : undefined;
-                        return { app, windows, note, issue: issues.get(app.installationId) };
-                    }),
-                    capabilities, includeInstruction: false, compact: managementOnly, strict: toolSchema?.strict,
-                    desktopSuffix: activity + budgetText,
-                    emptyCatalogText: installedApps.length ? '- No applications enabled for this context.' : '- No applications installed.',
-                    checkTool: (name, schema, source) => {
-                        const rejected = toolSchema?.check?.(schema);
-                        if (!rejected) return;
-                        const error = new ProviderToolSchemaError(toolSchema!.label, name, rejected.path, rejected.reason);
-                        if ((expansion && source?.appId === expansion.appId) || (!source && name !== INSPECT_REF)) throw error;
-                        return boundedIssue(error.code, error.message, error.path);
-                    },
-                });
+                const requiredCapabilities: DesktopCapability[] = [];
+                if (notice || includeReportTool || hasReports) requiredCapabilities.push('readWindowBudget');
+                if (notice) requiredCapabilities.push('collapse', 'expand', 'collapseView', 'expandView');
+                const projected = projectionFor({ hints, managementOnly }, capabilities, notice, activity + budgetText, requiredCapabilities);
+                assertPlan(projected);
                 const visibleRefs = projected.refs;
-                if (expansion) {
-                    const failed = projected.issues.find(({ appId }) => appId === expansion.appId)?.issue;
-                    if (failed) throw new AppProjectionError(failed.code, failed.message, failed.path);
-                }
                 for (const { issue } of projected.systemIssues) {
                     const content = formatAppIssue(issue);
                     messages.push({ role: 'user', region: 'dynamic', content, timestamp: timestamp('ref-inspection-availability', content) });
@@ -490,17 +546,16 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     messages.push({ role: 'user', region: 'dynamic', content, timestamp: timestamp('desktop', content) });
                 }
                 const canInspect = Object.hasOwn(tools, INSPECT_REF);
-                const control = appsEnabled ? this.controls(displayed, displayCatalog, projected.tools, toolSchema) : undefined;
+                const control = appsEnabled ? this.controls(displayed, displayCatalog, projected.tools, projected.closeRoutes, toolSchema) : undefined;
                 let consoleTool = managementOnly ? undefined : createConsoleTool(
                     [...[...routes].map(([name, route]) => ({ name, input: route.programInput })),
                         ...(canInspect ? [{ name: INSPECT_REF, input: { schema: inspectSchema, refOnly: [] } }] : [])],
-                    visibleRefs, this.consoleExecutor, toolSchema);
+                    visibleRefs, this.consoleExecutor);
                 if (consoleTool) {
                     const issue = toolSchema?.check?.(consoleTool.schema);
                     if (issue) {
                         const content = formatAppIssue(boundedIssue('MODEL_TOOL_SCHEMA_UNSUPPORTED',
-                            `Optional tool ${RUN_CODE} is unavailable in ${toolSchema!.label}. ${issue.reason}` +
-                            (toolSchema?.strict ? ' Use non-strict mode to enable run_code.' : ''), issue.path));
+                            `Optional tool ${RUN_CODE} is unavailable in ${toolSchema!.label}. ${issue.reason}`, issue.path));
                         messages.push({ role: 'user', region: 'dynamic', content, timestamp: timestamp('console-availability', content) });
                         consoleTool = undefined;
                     } else {
@@ -510,6 +565,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     }
                 }
                 const toolsSettlingOnAbort = new Set(routes.keys());
+                if (control?.has(desktopToolNames.closeView)) toolsSettlingOnAbort.add(desktopToolNames.closeView);
                 if (consoleTool && this.consoleExecutor.settlesOnAbort) toolsSettlingOnAbort.add(RUN_CODE);
                 for (const { appId, timestamp } of attention.values()) {
                     const id = escapeXmlText(appId).replace(/"/g, '&quot;');
@@ -581,7 +637,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                         }
                         if (name === INSPECT_REF && canInspect) return inspect(active, args, callId);
                         const handler = control?.get(name);
-                        if (handler) return handler(args, callId, () => !released && active.isCurrent ? active : undefined, budget);
+                        if (handler) return handler(args, callId, () => !released && active.isCurrent ? active : undefined, budget, signal);
                         const route = routes.get(name);
                         if (!route) return undefined;
                         const called = await this.invokeApp(active, route, projected.tools, name, args, callId, signal);
@@ -652,7 +708,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             notes?.delete(key);
             if (!notes?.size) this.windowNotes.delete(instanceId);
         } else {
-            this.desktop.revokeWindowAccess(turn, target ?? { appId, instanceId });
+            this.desktop.revokeWindowAccess(turn, target ?? { appId, instanceId }, target ? 'body' : 'all');
             if (!notes) { notes = new Map(); this.windowNotes.set(instanceId, notes); }
             notes.set(key, note);
         }
@@ -669,7 +725,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
     }
 
     private controls(apps: readonly DisplayedApp[], catalog: ReadonlyMap<string, DisplayedWindows>,
-        tools: readonly NativeTool[], toolSchema?: ProviderToolSchemaPolicy): Map<string, Control> {
+        tools: readonly NativeTool[], closeRoutes: readonly CloseViewRoute[], toolSchema?: ProviderToolSchemaPolicy): Map<string, Control> {
         const handlers = new Map<string, Control>();
         const operations = new Map<string, { target: string; result: Promise<ToolResult> }>();
         const actions = {
@@ -682,29 +738,56 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             if (!tool) continue;
             const opening = action === 'open';
             const isView = action === 'collapseView' || action === 'expandView' || action === 'closeView';
-            const notes = action === 'collapse' || action === 'collapseView';
             const expanding = action === 'expand' || action === 'expandView';
             const fieldName = opening ? 'installation_id' : 'app_id';
             const required = tool.inputSchema.required as readonly string[];
             const allowsStatus = (status: DisplayedApp['status']) => (actions[action] as readonly DisplayedApp['status'][]).includes(status);
-            const targets = new Map(apps.filter(app => allowsStatus(app.status)).flatMap(app => {
+            const allowsTarget = (app: DisplayedApp) => action === 'open' ? !app.appId && !app.appInstanceId && !app.run && allowsStatus(app.status)
+                : action === 'close' ? !!app.appId && !!app.appInstanceId
+                : (!app.run || app.run.phase === 'opened') && allowsStatus(app.status);
+            const targets = new Map(apps.filter(allowsTarget).flatMap(app => {
                 const id = opening ? app.installationId : app.appId && app.appInstanceId ? app.appId : undefined;
                 return id ? [[id, app] as const] : [];
             }));
-            handlers.set(name, async (input, callId, current, budget) => {
-                const fields = object(input) ? Object.getOwnPropertyDescriptors(input) : undefined;
+            handlers.set(name, async (input, callId, current, budget, signal) => {
+                const guarded = captureSystemInput(tool, input);
+                if (guarded.status === 'rejected')
+                    return unavailable(name, callId, 'INVALID_APP_TARGET', guarded.issue.message + ' At ' + guarded.issue.path);
                 const value = (key: string): string | undefined => {
-                    const field = fields?.[key];
-                    return field?.enumerable && 'value' in field && typeof field.value === 'string' ? field.value : undefined;
+                    const field = guarded.value[key];
+                    return typeof field === 'string' ? field : undefined;
                 };
                 const target = value(fieldName);
                 const viewId = value('view_id');
                 const note = value('note');
                 const captured = target && targets.get(target);
-                if (!fields || !captured || required.some(key => value(key) === undefined) || Reflect.ownKeys(fields).some(key => typeof key !== 'string' ||
-                    (!required.includes(key) && !(notes && key === 'note')) || value(key) === undefined))
+                if (!captured)
                     return unavailable(name, callId, 'INVALID_APP_TARGET', 'Supply ' + required.join(', ') + ' using IDs from the current Desktop.');
                 if (!this.allowed(captured)) return unavailable(name, callId, 'APP_DISABLED', 'This application is disabled.');
+                // Use the original presented route, never the latest window inventory.
+                // Core owns both dedup and original close eligibility.
+                if (action === 'closeView') {
+                    const turn = current();
+                    if (!turn) return unavailable(name, callId, 'TURN_NOT_ACTIVE', 'Use the currently adopted Desktop turn.');
+                    const view = closeRoutes.find(route => route.appId === captured.appId && route.instanceId === captured.appInstanceId && route.viewId === viewId);
+                    if (!view || !captured.appId || !captured.appInstanceId)
+                        return unavailable(name, callId, 'VIEW_CLOSE_NOT_GRANTED', 'Choose a close action in the original request.');
+                    try {
+                        const invoked = await this.desktop.closeView({turn,invocationId:callId,target:{
+                            appId:captured.appId,instanceId:captured.appInstanceId,viewId:view.viewId,viewInstanceId:view.viewInstanceId,
+                        }}, {signal});
+                        const called = this.routedResult(name,callId,invoked);
+                        if (called.result.outcomeStatus === 'succeeded') {
+                            // No causal post-terminal sample was taken.
+                            called.result.result = {success:true,view_id:view.viewId,removal:'unconfirmed',data:called.result.result};
+                        }
+                        if (called.pending) this.reportPendingReceipt(called.pending,called.result);
+                        this.update();
+                        return called.result;
+                    } catch {
+                        return unavailable(name,callId,'INVOCATION_RESULT_UNKNOWN','The original close outcome could not be confirmed. Do not blindly retry.','unknown');
+                    }
+                }
                 const identity = JSON.stringify([name, target, viewId]);
                 const earlier = operations.get(callId);
                 if (earlier) return earlier.target === identity ? earlier.result
@@ -722,14 +805,12 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     appId: app.appId, instanceId: app.appInstanceId, viewId: capturedView.viewId, viewInstanceId: capturedView.viewInstanceId,
                 } : undefined;
                 const liveCatalog = app.appId && app.appInstanceId ? this.currentWindows(app.appId, app.appInstanceId) : undefined;
-                if (!allowsStatus(displayedStatus(app, liveCatalog)))
+                if (!allowsTarget({ ...app, status: displayedStatus(app, liveCatalog) }))
                     return unavailable(name, callId, 'APP_STATE_CHANGED', 'The application state changed; refresh the context.');
                 if (window) {
                     const live = liveCatalog?.views.find(view => view.viewId === window.viewId && view.viewInstanceId === window.viewInstanceId);
                     if (!live) return unavailable(name, callId, 'VIEW_INSTANCE_REVOKED', 'The selected View closed or was replaced.');
-                    if (action === 'closeView' && (!capturedView!.canClose || !live.canClose))
-                        return unavailable(name, callId, 'VIEW_CLOSE_UNAVAILABLE', 'This View has no independent close action. Collapse the View or close its App.');
-                    if (action !== 'closeView' && live.expanded === expanding)
+                    if (live.expanded === expanding)
                         return unavailable(name, callId, 'VIEW_STATE_CHANGED', 'The window state changed; refresh the context.');
                 }
 
@@ -757,8 +838,8 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                         if (!turn) return unavailable(name, callId, 'TURN_NOT_ACTIVE', 'Use the currently adopted Desktop turn.');
                         switch (action) {
                             case 'close': {
-                                const report = await this.runningApp(app).beginClose().completion;
-                                if (!report.ok) {
+                                const report = await this.desktop.beginCloseApp(appId, app.appInstanceId!).completion;
+                                if (!report.ok || !report.resourcesReleased) {
                                     this.update();
                                     return { ...success, outcomeStatus: 'failed', result: { success: false, app_id: appId,
                                         resources_released: report.resourcesReleased }, error: { code: 'APP_CLOSE_FAILED',
@@ -769,16 +850,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                             }
                             case 'collapse': case 'expand': case 'collapseView': case 'expandView':
                                 this.setVisibility(turn, appId, app.appInstanceId!, expanding, window, note); break;
-                            case 'closeView': {
-                                const closed = await this.desktop.closeView(window!, turn);
-                                this.update();
-                                if ('issue' in closed) return { ...unavailable(name, callId, closed.issue.code, closed.issue.message,
-                                    closed.status === 'unknown' ? 'unknown' : 'rejected'),
-                                    ...(closed.status === 'rejected' && closed.result?.data ? { result: closed.result.data } : {}) };
-                                const result = { ...closed.result.data, success: true, view_id: window!.viewId, closed: closed.status === 'closed' };
-                                return closed.status === 'closed' ? { ...success, result } : { ...success, outcomeStatus: 'accepted', result,
-                                    error: { code: 'VIEW_CLOSE_ACCEPTED', message: 'The App accepted the close; removal of this mount is still unconfirmed.' } };
-                            }
+
                         }
                         if (bodies.size) {
                             const next = new Map(this.presentations);
@@ -790,7 +862,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     } catch (error) {
                         const code = object(error) && typeof error.code === 'string' ? error.code : '';
                         if (code === 'TURN_NOT_ACTIVE') return unavailable(name, callId, code, 'Use the currently adopted Desktop turn.');
-                        if (code === 'APP_INSTANCE_CHANGED' || code === 'VIEW_INSTANCE_REVOKED')
+                        if (code === 'APP_INSTANCE_CHANGED' || code === 'APP_INSTANCE_MISMATCH' || code === 'APP_INTERACTION_UNAVAILABLE' || code === 'VIEW_INSTANCE_REVOKED')
                             return unavailable(name, callId, code, 'The selected window was replaced. Refresh the Desktop.');
                         if (expanding && budget && error instanceof ProviderToolSchemaError)
                             return unavailable(name, callId, error.code, error.message + ' The window remains collapsed.');
@@ -802,14 +874,18 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 if (opening && operations.size >= this.maxApps)
                     return unavailable(name, callId, 'APP_LIFECYCLE_CAPACITY', 'Prepare a new observation to start another application.');
                 const result = apply();
-                if (opening || action === 'closeView') operations.set(callId, { target: identity, result });
+                if (opening) operations.set(callId, { target: identity, result });
                 return result;
             });
         }
-        if (tools.some(tool => tool.name === BUDGET_TOOL)) {
+        const budgetTool = tools.find(tool => tool.name === BUDGET_TOOL);
+        if (budgetTool) {
             handlers.set(BUDGET_TOOL, async (args, callId) => {
-                const report = object(args) && typeof args.report_id === 'string' ? this.reports.get(args.report_id) : undefined;
-                const page = object(args) ? args.page : undefined;
+                const captured = captureSystemInput(budgetTool, args);
+                if (captured.status === 'rejected')
+                    return unavailable(BUDGET_TOOL, callId, 'WINDOW_BUDGET_REPORT_UNAVAILABLE', captured.issue.message);
+                const report = typeof captured.value.report_id === 'string' ? this.reports.get(captured.value.report_id) : undefined;
+                const page = captured.value.page;
                 if (!report || !this.budgetReportReadable(report) || typeof page !== 'number' || !Number.isSafeInteger(page) || page < 1)
                     return unavailable(BUDGET_TOOL, callId, 'WINDOW_BUDGET_REPORT_UNAVAILABLE', 'Use the report and page from this conversation.');
                 const result = budgetPage(report.report, page);

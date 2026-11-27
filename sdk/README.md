@@ -61,14 +61,16 @@ const Note = defineViewType<{ edit(text: string): void }>()({
 
 export default createApp({
   app_name: 'notes', viewTypes: [Note],
-  initialize({ prepareProjection }) {
+  initialize(app) {
     let text = 'Draft';
-    const page = createView(Note, { id: 'note', render: () => ({
-      body: text,
-      context: { edit(next) { text = next; publish(); } },
-    }) });
-    function publish() { prepareProjection({ views: [page] }); }
-    publish();
+    const page = createView(Note, { id: 'note' });
+    function publish() {
+      return app.publish(() => [page.frame({
+        body: text, context: { edit(next) { text = next; publish(); } },
+      })]);
+    }
+    const first = publish();
+    if (!first.ok) throw first.cause ?? new Error(first.issue.message);
   },
 });
 ```
@@ -99,19 +101,23 @@ npm pack
 
 ## 页面、实例和工具
 
-`defineViewType` 一次声明类型、实例数和工具。页面各自提供 `context`。`createView` 可指定 `static` 或 `dynamic` 区域，也可沿用类型的默认区域。类型和页面中至少有一处指定区域。
+`defineViewType` 一次声明类型、实例数和工具。页面各自提供 `context`。`createView` 可指定 `static` 或 `dynamic` 区域，也可沿用类型的默认区域。类型和页面中至少有一处指定区域。 声明的默认 region 若是可选属性或值可能为 `undefined`，创建页面时必须传入具体 region。
+
+`createApp` 的 `viewTypes` 可以是静态声明数组，也可以是同步的 `(launchConfig) => declarations`。静态数组在创建 factory 时捕获；动态函数每次 App 实例初始化前只执行一次。框架验证并登记声明后，将实际冻结的声明集合作为 `initialize(app, viewTypes)` 的第二个参数，保留 tuple 与 context 推导。使用该集合中的 descriptor 创建页面。Node Worker 托管路径中，省略配置时为 `undefined`，显式空对象仍为对象；配置在执行端经有界 JSON 捕获并深冻结，声明函数与作者 initializer 使用同一份配置。
 
 单实例默认用类型名作 ID，挂载可传 `id`，调用只填业务参数。多实例共享一组工具，调用必须填接收页面的 XML `view_id`。多实例由框架从 1 开始按 `<prefix>_1`、`<prefix>_2` 顺序编号，挂载可传 `idPrefix`，同一挂载更新或重排时沿用原 ID，同名页关闭后重开会获得新的内部实例标识。`view_type` 区分大小写，仅使用 ASCII 字母、数字或下划线且至少包含一个 ASCII 字母（如 `x_y`、`x_4`）；`id`、`idPrefix` 仅使用 ASCII 字母、数字或下划线且至少包含一个非数字字符。
 
-收据需要引用新页面时，先成功完成 `prepareOpeningProjection`，再用初始化上下文的 `readViewId(handle)` 取得该页面在最近健康提交中的 ID。
+Handle 只包含静态放置信息，可以在模块级共享；实例 context、正文、Ref、名称与业务目标 key 在 `handle.frame({...})` 中提供。收据需要引用新页面时，使用成功的 PublishResult 的 `viewId(handle)` 取得本次提交的 ID；`app.readViewId(handle)` 查询当前健康提交。
 
-打开且满足 `enabled(context)` 的页面让工具进入观察。页面的 `render()` 返回业务 Markdown，正文由 Runtime 的呈现入口统一包装。Root 说明业务流程。当轮 Tools 提供当前可用的工具名称、说明与 Schema。
+打开且满足 `enabled(context)` 的页面让工具进入观察。页面的 `frame({ body, context, refs })` 提供业务 Markdown，正文由 Runtime 的呈现入口统一包装。Root 说明业务流程。当轮 Tools 提供当前可用的工具名称、说明与 Schema。
 
-`createView` 可声明 `onClose?: () => ToolResult | Promise<ToolResult>`。由 App 检查业务约束并提交移除该页的新投影。Runtime 分别报告回调已接受与原挂载已移除。宿主收起窗口或替换预算提示时，App 继续持有页面。
+`defineViewType` 可声明 `onClose: { execute({ context }) { ... } }`，也可设置 `enabled(context)`。关闭使用本次 Frame 提供的 context。由 App 检查业务约束并提交移除该页的新投影。关闭回调的成功收据不证明原挂载已经移除；下一次观察确认页面是否仍在。宿主收起窗口或替换预算提示时，App 继续持有页面。
+
+同一挂载切换业务目标时设置 `bindingKey`（字符串或安全整数，不含负零）。key 变化会更新 Tool 和 onClose 的激活资格，旧调用不会转向新目标；Ref 仍以原观察的值和可用连续期为准。
 
 ## Markdown 正文
 
-`render()` 返回 `{ body: markdown }`。框架保留原文的缩进、换行和空白，并在模型消息边界包装 View XML。作者在正文中直接写 Markdown 表格、代码围栏和 Mermaid。
+`handle.frame({ body: markdown })` 提供正文。框架保留原文的缩进、换行和空白，并在模型消息边界包装 View XML。作者在正文中直接写 Markdown 表格、代码围栏和 Mermaid。
 
 ## 声明业务参数和 Ref 值
 
@@ -126,7 +132,7 @@ npm pack
 
 工具的 `inputSchema` 根是参数对象。业务字段可用 `{}` 接收任意有界 JSON，也可用于数组元素和嵌套字段。Tool 对象的必填项、额外键策略和调用容量仍参与校验。为 Ref 或 `refParam` 声明值结构时，用 `type`、`enum` 或 `const` 约束根形状。如果根形状完全由 `anyOf` 给出，每个备选都要有明确形状，这条规则也适用于嵌套的备选。`{ type: 'object' }` 表示开放对象。Host 根据模型供应商的编码能力判断哪些参数能进入原生 Tools。
 
-地址可以沿已授权的对象键和数组下标取值。以下是普通 TypeScript 通讯录的 `contacts.list` 页使用的 Ref。把 `body` 和 `refs` 随页面 `context` 一起交给 `render()` 的返回值。
+地址可以沿已授权的对象键和数组下标取值。以下是普通 TypeScript 通讯录的 `contacts.list` 页使用的 Ref。把 `body` 和 `refs` 连同需要的页面 `context` 交给 `handle.frame({ body, refs, context })`，再由 `app.publish` 提交完整 Frame。
 
 ```ts
 import { formatRef, ref } from '@aotui/sdk';
@@ -149,9 +155,9 @@ const refs = [people];
 
 ## 投影与资源
 
-用 `prepareProjection({ views })` 提交全部打开的页面。只需交付业务结果时，工具直接返回 `ToolResult`。业务已写入而投影失败时，保留真实写入结果，再从当前业务状态修复页面。
+用 `app.publish(() => [handle.frame({...}), ...])` 提交全部打开的页面。默认 authoritative，失败返回 `{ ok: false, state: 'degraded', issue, cause? }`；成功为 `{ ok: true, epoch, viewId }`。只需交付业务结果时，工具直接返回 `ToolResult`。业务已写入而投影失败时，保留真实写入结果，再从当前业务状态修复页面。
 
-开新页时用 `prepareOpeningProjection({ views })` 提交候选。若超出本地容量，结果为 `{ status: 'rejected', issue }`，上一份健康投影仍可用。App 可以提示先关闭一页，并在成功后提交业务侧的导航变更。用 `registerCleanup({ close })` 登记关闭时的清理或显式保存。登记绑定本次 App 实例，返回 `void`。 [SDK 声明](dist/index.d.ts)
+开新页时用 `app.publish(() => frames, { mode: 'candidate' })` 提交候选。候选拒绝返回 `{ ok: false, state: 'preserved', issue, cause? }`，上一份健康投影仍可用；本地已降级时只能用 authoritative 修复。App 可以提示先关闭一页，并在成功后提交业务侧的导航变更。用 `registerLifecycle({ close })` 登记关闭时的清理或显式保存。登记绑定本次 App 实例，返回 `void`。 [SDK 声明](dist/index.d.ts)
 
 ### 同一个双文件 App
 

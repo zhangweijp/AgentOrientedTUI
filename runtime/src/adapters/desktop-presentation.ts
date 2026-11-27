@@ -1,11 +1,12 @@
-import { SnapshotDataError } from '@aotui/core';
+import { copyWireJson } from '@aotui/core';
+import { RAW_TOOL_ARGUMENT_LIMITS, parseRefAddress } from '@aotui/core/host';
 import type { AppInvocation, InteractionIssue, JsonValue, Observation, ObservationWindowSelection } from '@aotui/core';
 import type { AppDiscoveryInfo } from '../spi/runtime/kernel.interface.js';
 import type { AppWindows } from '../spi/runtime/windows.js';
 import { DESKTOP_TOOL_NAMES, projectNativeToolNames } from './public-tool-name.js';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from './system-instruction.js';
-import { projectNativeToolSchema, type PresentedRef } from './tool-projection.js';
-import { buildViewMessageMarkup, collapsedWindowText, escapeXmlText } from './view-message.js';
+import { ModelToolSchemaError, projectNativeToolSchema, type PresentedRef } from './tool-projection.js';
+import { buildViewMessageMarkup, collapsedWindowText, escapeXmlText, assertXmlText, diagnosticXmlText } from './view-message.js';
 
 export type ViewPresentation = { kind: 'body' } | { kind: 'omitted' } | { kind: 'hint'; text?: string } |
     { kind: 'collapsed'; note?: string };
@@ -19,6 +20,14 @@ interface CatalogEntry {
     windows?: PresentedAppWindows;
     note?: string;
     issue?: InteractionIssue;
+    toolIssues?: readonly (InteractionIssue & { readonly toolId?: string })[];
+}
+export interface CloseViewRoute {
+    readonly appId: string;
+    readonly instanceId: string;
+    readonly observationId: string;
+    readonly viewId: string;
+    readonly viewInstanceId: string;
 }
 export interface NativeTool {
     readonly name: string;
@@ -45,12 +54,13 @@ export const inspectRefSchema = {
 const status = ({ app, windows }: CatalogEntry) => app.status === 'running' && windows?.expanded === false ? 'collapsed' : app.status;
 
 export function projectDesktop(input: {
-    apps: readonly { observation: Observation; windows?: ReadonlyMap<string, ViewPresentation> }[];
+    apps: readonly { observation: Observation; windows?: ReadonlyMap<string, ViewPresentation>; closeMounts?: ReadonlySet<string> }[];
     catalog: readonly CatalogEntry[];
     capabilities: readonly DesktopCapability[];
     includeInstruction?: boolean;
     compact?: boolean;
-    strict?: boolean;
+    strict?: boolean; // Provider mode does not alter standard input.
+    requiredCapabilities?: readonly DesktopCapability[];
     checkTool?: (name: string, schema: NativeTool['inputSchema'], source?: Observation['source']) => InteractionIssue | undefined;
     desktopSuffix?: string;
     emptyCatalogText?: string;
@@ -60,7 +70,7 @@ export function projectDesktop(input: {
         const { app, windows } = entry;
         if (!windows) return entry;
         if (windows.appId !== app.appId || windows.instanceId !== app.appInstanceId)
-            return { app, ...(entry.issue ? { issue: entry.issue } : {}) };
+            return { app, ...(entry.issue ? { issue: entry.issue } : {}), ...(entry.toolIssues ? { toolIssues: entry.toolIssues } : {}) };
         const captured = byApp.get(windows.appId);
         if (captured?.observation.source.instanceId !== windows.instanceId) return entry;
         const mounts = new Set(captured.observation.views.map(view => view.viewInstanceId));
@@ -69,77 +79,107 @@ export function projectDesktop(input: {
     });
     const catalog = new Map<string, CatalogEntry>(entries.flatMap(entry =>
         entry.app.appId ? [[entry.app.appId, entry]] : []));
-    const observed = input.apps.filter(({ observation: { source } }) => {
-        const entry = catalog.get(source.appId);
-        return entry?.app.status === 'running' && entry.app.appInstanceId === source.instanceId;
+    // Do not let a catalog Map's last entry select a winner for contradictory live instances.
+    const runningInstances = new Set(entries.filter(({ app }) => app.status === 'running' && (!app.run || app.run.phase === 'opened'))
+        .map(({ app }) => JSON.stringify([app.appId, app.appInstanceId])));
+    const observed = input.apps.filter(({ observation: { source } }) =>
+        runningInstances.has(JSON.stringify([source.appId, source.instanceId])));
+    // Closing is an independent action granted by the original observation.
+    // Current window inventory decides which pages are listed, never their activation.
+    const closeCandidates: CloseViewRoute[] = observed.flatMap(({ observation, closeMounts }) => {
+        const { observationId, source: { appId, instanceId } } = observation;
+        const windows = catalog.get(appId)?.windows;
+        if (!windows || !windows.expanded || windows.instanceId !== instanceId) return [];
+        return observation.views.filter(view => view.canClose && (!closeMounts || closeMounts.has(view.viewInstanceId)) && windows.views.some(listed =>
+            listed.viewId === view.id && listed.viewInstanceId === view.viewInstanceId))
+            .map(view => ({ appId, instanceId, observationId, viewId: view.id, viewInstanceId: view.viewInstanceId }));
     });
-    const issues: { observationId: string; appId: string; issue: InteractionIssue }[] = [];
+    const blocked = new Set<string>();
+    const exclusions = new Map<string, Set<string>>();
+    const exclude = (appId: string, toolId: string) => {
+        const ids = exclusions.get(appId) ?? new Set<string>(); ids.add(toolId); exclusions.set(appId, ids);
+    };
+    const issues: { observationId: string; appId: string; issue: InteractionIssue & { readonly toolId?: string } }[] = [];
     const names = projectNativeToolNames(observed.map(({ observation }) => observation));
     const active = observed.flatMap(({ observation, windows }, index) => {
         const named = names[index]!;
         const { observationId, source: { appId } } = observation;
         if (named.status === 'rejected') {
             issues.push({ observationId, appId, issue: named.issue });
+            blocked.add(appId);
             return [];
         }
         if (input.compact || catalog.get(appId)?.windows?.expanded === false) return [];
-        if (observation.tools.some(({ inputSchema }) => inputSchema === null || typeof inputSchema !== 'object' || Array.isArray(inputSchema))) {
-            issues.push({ observationId, appId, issue: { code: 'AOTUI_TOOL_SCHEMA_INVALID',
-                message: 'This App Tool has an invalid input schema. Declare a JSON Schema object and refresh the context.' } });
-            return [];
-        }
         const views = observation.views.map(view => ({
             view, presentation: windows?.get(view.viewInstanceId) ?? { kind: 'body' } as const,
         }));
+        // Report every failing name even when another Tool also fails compilation.
+        for (const issue of named.excluded) { issues.push({ observationId, appId, issue }); exclude(appId, issue.toolId); }
         const bodies = views.filter(({ presentation }) => presentation.kind === 'body').map(({ view }) => view);
         const refs = observation.refs.filter(ref => bodies.some(view => view.viewInstanceId === ref.viewInstanceId && view.id === ref.viewId));
         return [{ observation, views, bodies, refs, named: named.tools }];
     });
 
-    const denied = new Set<string>();
-    let refs: PresentedRef[];
-    let business: NativeTool[];
-    for (;;) {
-        const current = active.filter(({ observation }) => !denied.has(observation.source.appId));
-        refs = current.flatMap(({ observation, refs }) => refs.map(ref => ({ source: observation.source, ref })));
-        business = [];
-        for (const { observation, bodies, named } of current) {
-            const { observationId, source } = observation;
-            const { appId, instanceId } = source;
-            for (const [name, tool] of named) {
-                const receivers = bodies.filter(view => view.type === tool.viewType &&
-                    (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id)))
-                    .map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-                if (!receivers.length) continue;
-                let issue: InteractionIssue | undefined;
-                try {
-                    const inputSchema = projectNativeToolSchema(tool, source, receivers, refs);
-                    issue = input.checkTool?.(name, inputSchema, source);
-                    if (!issue) business.push({ name, description: tool.description + '\nApp ID ' + appId +
-                        ', view_type ' + tool.viewType + ' (' + tool.multiplicity + ').', inputSchema,
+    const denied = new Set(blocked);
+    const business: NativeTool[] = [];
+    for (const { observation, bodies, named } of active) {
+        const { observationId, source } = observation;
+        const { appId, instanceId } = source;
+        const appTools: NativeTool[] = [];
+        for (const [name, tool] of named) {
+            if (!bodies.some(view => view.type === tool.viewType &&
+                (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id)))) continue;
+            let issue: InteractionIssue | undefined;
+            try {
+                const inputSchema = projectNativeToolSchema(tool);
+                issue = input.checkTool?.(name, inputSchema, source);
+                if (!issue) appTools.push({ name, description: tool.description + '\nApp ID ' + appId +
+                    ', view_type ' + tool.viewType + ' (' + tool.multiplicity + ').', inputSchema,
                     route: { appId, instanceId, observationId, toolId: tool.id, multiplicity: tool.multiplicity, businessSchema: tool.inputSchema } });
-                } catch (error) {
-                    if (!(error instanceof SnapshotDataError)) throw error;
-                    issue = { code: error.code, message: name + ': ' + error.message, ...(error.path ? { path: error.path } : {}) };
-                }
-                if (issue) {
-                    issues.push({ observationId, appId, issue });
-                    denied.add(appId);
-                    break;
-                }
+            } catch (error) {
+                if (!(error instanceof ModelToolSchemaError)) throw error;
+                issue = { code: error.code, message: name + ': ' + error.message, path: error.path };
+            }
+            if (issue) {
+                issues.push({ observationId, appId, issue: { ...issue, toolId: tool.id } });
+                exclude(appId, tool.id);
             }
         }
-        if (current.every(({ observation }) => !denied.has(observation.source.appId))) break;
+        if (exclusions.has(appId)) denied.add(appId);
+        if (!denied.has(appId)) business.push(...appTools);
     }
+    const refs: PresentedRef[] = active.filter(({ observation }) => !denied.has(observation.source.appId))
+        .flatMap(({ observation, refs }) => refs.map(ref => ({ source: observation.source, ref })));
 
-    const views = [];
-    const appSelections = [];
-    for (const { observation, views: pages, bodies, refs } of active) {
+    const systemIssues: { name: string; issue: InteractionIssue; required: boolean }[] = [];
+    const tools = [...business];
+    const capabilities = new Set(input.capabilities);
+    if (capabilities.size || entries.length || observed.length) { capabilities.add('open'); capabilities.add('close'); }
+    const required = new Set<DesktopCapability>(['open', 'close', ...input.requiredCapabilities ?? []]);
+    const allowedCloses = closeCandidates.filter(route => !denied.has(route.appId));
+    for (const tool of systemTools(entries, [...capabilities], refs.length > 0, allowedCloses.length > 0)) {
+        const issue = input.checkTool?.(tool.name, tool.inputSchema);
+        if (issue) systemIssues.push({ name: tool.name, issue, required: [...required].some(key => DESKTOP_TOOL_NAMES[key] === tool.name) });
+        else tools.push(tool);
+    }
+    const offered = new Set(tools.map(({ name }) => name));
+    const closeRoutes = offered.has(DESKTOP_TOOL_NAMES.closeView) ? allowedCloses : [];
+    const appSelections = observed.flatMap(({ observation }) => {
         const { observationId, source: { appId } } = observation;
+        const body = active.find(item => item.observation === observation);
+        const activeViews = !body || denied.has(appId) ? [] : body.bodies.map(view => ({
+            viewId: view.id, viewInstanceId: view.viewInstanceId,
+        }));
+        const closeViews = closeRoutes.filter(route => route.observationId === observationId && route.appId === appId)
+            .map(({ viewId, viewInstanceId }) => ({ viewId, viewInstanceId }));
+        const windows: ObservationWindowSelection = { activeViews, closeViews };
+        return activeViews.length || closeViews.length ? [{ observationId, appId, windows }] : [];
+    });
+    const views = [];
+    for (const { observation, views: pages, refs } of active) {
+        const { source: { appId } } = observation;
         if (denied.has(appId)) continue;
         const appName = catalog.get(appId)?.app.name ?? appId;
-        const windows: ObservationWindowSelection = { activeViews: bodies.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })) };
-        if (windows.activeViews.length) appSelections.push({ observationId, appId, windows });
         for (const { view, presentation } of pages) {
             if (presentation.kind === 'omitted') continue;
             const { id: viewId, viewInstanceId, region } = view;
@@ -152,52 +192,60 @@ export function projectDesktop(input: {
         }
     }
 
-    const systemIssues: { name: string; issue: InteractionIssue }[] = [];
-    const tools = [...business];
-    for (const tool of systemTools(entries, input.capabilities, refs.length > 0, input.strict === true)) {
-        const issue = input.checkTool?.(tool.name, tool.inputSchema);
-        if (issue) systemIssues.push({ name: tool.name, issue });
-        else tools.push(tool);
-    }
-    const offered = new Set(tools.map(({ name }) => name));
     const directory = entries.map((entry, index) => {
         const { app, windows, note } = entry;
         const appStatus = status(entry);
-        const issue = entry.issue ?? issues.find(issue => issue.appId === app.appId)?.issue;
-        const esc = escapeXmlText;
+        const diagnostics = [...(entry.issue ? [entry.issue] : []), ...(entry.toolIssues ?? []),
+            ...issues.filter(item => item.appId === app.appId).map(item => item.issue)];
+        const esc = (value: string, field: string) => {
+            const path = '$.catalog[' + index + '].' + field;
+            assertXmlText(value, path, app.appId);
+            return escapeXmlText(value, path);
+        };
         const action = (key: DesktopCapability) => offered.has(DESKTOP_TOOL_NAMES[key]);
-        const appActions = appStatus === 'running' ? ['collapse', 'close'] as const : appStatus === 'collapsed'
-            ? ['expand', 'close'] as const : ['open'] as const;
-        const actions = (appStatus === 'running' || appStatus === 'collapsed') && (!app.appId || !app.appInstanceId)
-            ? '' : appActions.filter(action).join(', ');
+        const owns = !!app.appId && !!app.appInstanceId;
+        const appActions: readonly DesktopCapability[] = owns
+            ? app.run && app.run.phase !== 'opened' ? ['close'] : appStatus === 'running' ? ['collapse', 'close'] :
+                appStatus === 'collapsed' ? ['expand', 'close'] : ['close']
+            : appStatus === 'running' || appStatus === 'collapsed' ? [] : ['open'];
+        const actions = appActions.filter(action).join(', ');
         return [
-            `${index + 1}. ${esc(app.name)}`, `    - installation_id: ${esc(app.installationId)}`,
-            ...(app.appId ? [`    - app_id: ${esc(app.appId)}`] : []),
-            `    - Status: ${{ pending: 'available (not started)', closed: 'not launched', running: 'running', collapsed: 'minimized' }[appStatus]}`,
+            `${index + 1}. ${esc(app.name, 'name')}`, `    - installation_id: ${esc(app.installationId, 'installationId')}`,
+            ...(app.appId ? [`    - app_id: ${esc(app.appId, 'appId')}`] : []),
+            `    - Status: ${app.run && app.run.phase !== 'opened' ? app.run.phase + ' (owner retained)' : { pending: 'available (not started)', closed: 'not launched', running: 'running', collapsed: 'minimized' }[appStatus]}`,
+            ...(app.run ? [
+                '    - Runtime: ' + app.run.phase + '; ' + app.run.execution.resource + '/' + app.run.execution.channel +
+                    '; projection ' + app.run.projection.health + '; resources ' + (app.run.resourcesReleased ? 'released' : 'held'),
+                ...(app.run.availability.status === 'unavailable' ? ['    - Availability: ' +
+                    esc(diagnosticXmlText(app.run.availability.issue.code + ': ' + app.run.availability.issue.message), 'run.availability.issue')] : []),
+            ] : []),
             ...(actions ? [`    - Actions: ${actions}`] : []),
-            ...(appStatus === 'collapsed' && !input.compact ? ['    - ' + esc(collapsedWindowText(note ?? ''))] : []),
-            ...(!input.compact ? [`    - What it is: ${esc(app.whatItIs || app.description || 'Not provided')}`,
-                `    - When to use: ${esc(app.whenToUse || 'Not provided')}`] : []),
-            ...(issue ? [`    - Semantic status: ${esc(issue.code)}: ${esc(issue.message)}${issue.path ? ` (at ${esc(issue.path)})` : ''}`] : []),
+            ...(appStatus === 'collapsed' && !input.compact ? ['    - ' + esc(collapsedWindowText(note ?? ''), 'note')] : []),
+            ...(!input.compact ? [`    - What it is: ${esc(app.whatItIs || app.description || 'Not provided', app.whatItIs ? 'whatItIs' : 'description')}`,
+                `    - When to use: ${esc(app.whenToUse || 'Not provided', 'whenToUse')}`] : []),
+            ...diagnostics.map((issue, i) => `    - Semantic status: ${esc(diagnosticXmlText(issue.code), 'issues[' + i + '].code')}: ${esc(diagnosticXmlText(issue.message), 'issues[' + i + '].message')}${issue.path ? ` (at ${esc(diagnosticXmlText(issue.path), 'issues[' + i + '].path')})` : ''}${'toolId' in issue && typeof issue.toolId === 'string' ? ' [Tool ' + esc(diagnosticXmlText(issue.toolId), 'issues[' + i + '].toolId') + ']' : ''}`),
             ...(appStatus === 'running' ? (windows?.views ?? []).map(view => {
                 const actions = [view.expanded ? 'open' : 'collapsed', ...(view.expanded && action('collapseView') ? ['collapse'] : []),
-                    ...(!view.expanded && action('expandView') ? ['expand'] : []), ...(view.canClose && action('closeView') ? ['close'] : [])];
-                return `    - view_id: ${esc(view.viewId)} [${actions[0]}${actions.length > 1 ? '; ' + actions.slice(1).join(', ') : ''}]`;
+                    ...(!view.expanded && action('expandView') ? ['expand'] : []), ...(closeRoutes.some(route => route.appId === app.appId && route.instanceId === app.appInstanceId &&
+                    route.viewId === view.viewId && route.viewInstanceId === view.viewInstanceId) ? ['close'] : [])];
+                return `    - view_id: ${esc(view.viewId, 'views[' + view.viewInstanceId + '].viewId')} [${actions[0]}${actions.length > 1 ? '; ' + actions.slice(1).join(', ') : ''}]`;
             }) : []),
         ].join('\n');
     });
     const desktop = '<desktop>\n\n## Installed TUI Applications\n' +
-        (directory.length ? directory.join('\n') : input.emptyCatalogText ?? '- No applications installed.') +
-        (input.desktopSuffix === undefined ? '' : escapeXmlText(input.desktopSuffix)) + '\n\n</desktop>';
+        (directory.length ? directory.join('\n') : escapeXmlText(input.emptyCatalogText ?? '- No applications installed.', '$.emptyCatalogText')) +
+        (input.desktopSuffix === undefined ? '' : escapeXmlText(input.desktopSuffix, '$.desktopSuffix')) + '\n\n</desktop>';
     return { views, desktop, instruction: input.compact || input.includeInstruction === false ? undefined : DEFAULT_AOTUI_SYSTEM_INSTRUCTION,
-        appSelections, tools, issues, systemIssues, refs };
+        appSelections, closeRoutes, tools, issues, systemIssues, refs,
+        exclusions: [...exclusions].map(([appId, ids]) => ({ appId, excludeToolIds: [...ids] })),
+        status: blocked.size || systemIssues.some(issue => issue.required) ? 'rejected' as const : exclusions.size ? 'reprepare' as const : 'ready' as const };
 }
 
-function systemTools(catalog: readonly CatalogEntry[], capabilities: readonly DesktopCapability[], hasRefs: boolean, strict: boolean): NativeTool[] {
+function systemTools(catalog: readonly CatalogEntry[], capabilities: readonly DesktopCapability[], hasRefs: boolean, hasCloses: boolean): NativeTool[] {
     const available = new Set(capabilities);
     const has = (predicate: (entry: CatalogEntry) => boolean) => catalog.some(predicate);
     const live = ({ app }: CatalogEntry) => !!app.appId && !!app.appInstanceId;
-    const running = (entry: CatalogEntry) => live(entry) && status(entry) === 'running';
+    const running = (entry: CatalogEntry) => live(entry) && (!entry.app.run || entry.app.run.phase === 'opened') && status(entry) === 'running';
     const viewExists = (predicate: (view: PresentedAppWindows['views'][number]) => boolean) =>
         has(entry => running(entry) && (entry.windows?.views.some(predicate) ?? false));
     const tools: NativeTool[] = [];
@@ -211,16 +259,16 @@ function systemTools(catalog: readonly CatalogEntry[], capabilities: readonly De
     add('open', 'Start an application using its installation_id from the Desktop.', { installation_id: { type: 'string' } });
     add('close', 'Close the current application selected by app_id.', app);
     if (has(running)) add('collapse', 'Collapse an application. Keep an optional note in its place.',
-        { ...app, note }, strict ? ['app_id', 'note'] : ['app_id']);
+        { ...app, note }, ['app_id']);
     if (has(entry => live(entry) && status(entry) === 'collapsed')) add('expand', 'Expand a collapsed application when the model budget allows it.', app);
     if (viewExists(view => view.expanded)) add('collapseView', 'Collapse an open View and optionally leave a note.',
-        { ...view, note }, strict ? ['app_id', 'view_id', 'note'] : ['app_id', 'view_id']);
+        { ...view, note }, ['app_id', 'view_id']);
     if (viewExists(view => !view.expanded)) add('expandView', 'Expand a collapsed View when the model budget allows it.', view);
-    if (viewExists(view => view.canClose)) add('closeView', 'Ask an independently closable View to close, including when collapsed.', view);
+    if (hasCloses) add('closeView', 'Ask an independently closable View to close, including when collapsed.', view);
     if (hasRefs && available.has('inspectRef')) tools.push({ name: DESKTOP_TOOL_NAMES.inspectRef,
         description: 'Read a visible Ref’s declared schema or the original value of a public Ref.', inputSchema: inspectRefSchema });
     add('readWindowBudget', 'Read one page of the window budget report for this conversation.',
-        { report_id: { type: 'string' }, page: { type: 'integer', ...(strict ? {} : { minimum: 1 }) } });
+        { report_id: { type: 'string' }, page: { type: 'integer', minimum: 1 } });
     return tools;
 }
 
@@ -244,4 +292,27 @@ export function routeNativeInvocation(tools: readonly NativeTool[], name: string
     const { appId, instanceId, observationId, toolId } = route;
     return { status: 'ready', invocation: { appId, instanceId, observationId, toolId, invocationId,
         ...(typeof viewId === 'string' ? { viewId } : {}), input: Object.defineProperties(Object.create(null), fields) } };
+}
+
+
+/** Capture exact system input from the selected fixed standard, before any Host action. */
+export function captureSystemInput(tool: Pick<NativeTool, 'inputSchema'>, input: unknown):
+    { status: 'ready'; value: Readonly<Record<string, JsonValue>> } | { status: 'rejected'; issue: InteractionIssue } {
+    const invalid = (path: string): {status: 'rejected'; issue: InteractionIssue} =>
+        ({ status: 'rejected', issue: { code: 'INVALID_SYSTEM_INPUT', path, message: 'Input does not match the original system Tool schema.' } });
+    let value: JsonValue;
+    try { value = copyWireJson(input, RAW_TOOL_ARGUMENT_LIMITS); } catch { return invalid('$'); }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalid('$');
+    const fields = value as Readonly<Record<string, JsonValue>>;
+    const properties = tool.inputSchema.properties as Readonly<Record<string, Record<string, JsonValue>>>;
+    const required = tool.inputSchema.required as readonly string[];
+    for (const name of required) if (!Object.hasOwn(fields, name)) return invalid('$.' + name);
+    for (const [name, field] of Object.entries(fields)) {
+        const rule = Object.hasOwn(properties, name) ? properties[name] : undefined;
+        if (!rule || (rule.type === 'string' && typeof field !== 'string') ||
+            (rule.type === 'integer' && (typeof field !== 'number' || !Number.isSafeInteger(field) || typeof rule.minimum === 'number' && field < rule.minimum)) ||
+            (Array.isArray(rule.enum) && !rule.enum.includes(field))) return invalid('$.' + name);
+        if (name === 'address' && (typeof field !== 'string' || !parseRefAddress(field))) return invalid('$.address');
+    }
+    return { status: 'ready', value: fields };
 }

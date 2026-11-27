@@ -12,8 +12,8 @@ const Ready = defineViewType<object>()({ name: 'Ready', region: 'dynamic', multi
 } });
 
 export default createApp({ app_name: 'healthy', viewTypes: [Ready],
-    initialize({ prepareProjection }) {
-        const view = createView(Ready, { render: () => ({ body: 'Healthy app is ready', context: {} }) });
-        prepareProjection({ views: [view] });
+    initialize({ publish: commit }) {
+        const view = (() => { const handle = createView(Ready); return { handle, frame: () => handle.frame({ body: 'Healthy app is ready', context: {} }) }; })();
+        commit(() => ([view]).map(page => page.frame()));
     },
 });
